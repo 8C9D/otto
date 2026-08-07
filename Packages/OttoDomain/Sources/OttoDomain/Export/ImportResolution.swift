@@ -169,28 +169,23 @@ private func replaceCounts<Record: ImportableRecord>(
 
 /// At most one cancellation episode per subscription is OPEN (spec §5.3a). A
 /// merge can legitimately unite two open ones (each side cancelled
-/// independently, different ids): the newest stays open and the others close
-/// with `.superseded` at its start instant - recorded as what happened rather
-/// than deleted, and COUNTED as updated so nothing about the outcome is silent.
-/// This is the episode-table win over v1's single slot: the losing side's
-/// cancellation used to be discarded outright; now it stays history.
+/// independently, different ids): `closingSupersededRivals` - one rule with
+/// the post-sync reconciliation pass - keeps the newest open and closes the
+/// others with `.superseded` at its start instant, recorded as what happened
+/// rather than deleted, and COUNTED as updated so nothing about the outcome
+/// is silent. This is the episode-table win over v1's single slot: the losing
+/// side's cancellation used to be discarded outright; now it stays history.
 private func resolveSingleOpenCancellation(in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts) {
     var openBySubscription: [UUID: [CancellationEpisode]] = [:]
     for episode in snapshot.cancellationEpisodes where episode.isOpen && episode.deletedAt == nil {
         openBySubscription[episode.subscriptionID, default: []].append(episode)
     }
-    for (_, rivals) in openBySubscription where rivals.count > 1 {
-        let sorted = rivals.sorted {
-            ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString)
-        }
-        let winner = sorted[0]
-        for loser in sorted.dropFirst() {
-            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == loser.id }) else {
+    for (_, rivals) in openBySubscription {
+        for closed in CancellationEpisode.closingSupersededRivals(among: rivals) {
+            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == closed.id }) else {
                 continue
             }
-            snapshot.cancellationEpisodes[index].endedAt = winner.markedCancelledAt
-            snapshot.cancellationEpisodes[index].outcome = .superseded
-            snapshot.cancellationEpisodes[index].updatedAt = winner.markedCancelledAt
+            snapshot.cancellationEpisodes[index] = closed
             counts.updated += 1
         }
     }

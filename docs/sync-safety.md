@@ -31,3 +31,14 @@ Two deliberate boundaries:
 Reads are pure: the repair exists in the returned value and is re-derived identically on every read (and on every device - the rules are functions of record data only, no clocks). It persists when the value is next saved, or when the reconciliation pass runs. `subscriptionReadRepairs()` reports the repairs the current read applies - the recompute-on-read shape of `unreadableSubscriptionCount` - and Today renders one aggregate needs-review card naming the affected subscriptions, because a repair that closed an open pause episode decided something for the user.
 
 The repaired episode's `updatedAt` is deliberately untouched: a repair is not a user statement, and stamping it would need a clock the domain does not read.
+
+## The reconciliation pass (spec §5.3 v2.0)
+
+`reconcile(at:)` on the store is the deterministic post-sync convergence pass Wave 6B will run after sync settles.
+It is safe to run at any time (on an unsynced store it does nothing), idempotent, and every decision inside is a pure domain rule over record data, so devices running it independently converge:
+
+1. **Duplicate ledger twins** - live rows sharing `(subscriptionID, expectedDate)`, the shape two devices' independent materialization passes produce. The earliest `createdAt` (tie: id) survives; any acknowledgement counts (earliest non-nil folds in) and any confirmation counts (the earliest-created non-`.upcoming` twin donates state, `userConfirmedAt`, `actualAmountCents`; an already-confirmed winner keeps its own answer). Losers are tombstoned.
+2. **Rival open cancellation episodes** - `CancellationEpisode.closingSupersededRivals`, the same rule the import merge uses (one function, two callers): newest `markedCancelledAt` stays open, the rest close as `.superseded` at its start.
+3. **Read-repair persistence** - subscriptions whose §4a read closes an episode are written back, so convergence is durable rather than re-derived per read. The two held shapes persist nothing; they self-heal when their child record arrives.
+
+What it does NOT do: it never resurrects a tombstone, never touches watermarks, and never merges records that are individually valid and distinct - it only resolves the three shapes above.
