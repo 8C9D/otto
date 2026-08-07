@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.5** — revised Aug 7 against Claude Code's Wave 5 report. Waves 0–5 complete and committed (`~/dev/otto`, 252 tests passing).
+**Status:** **v1.6** — revised Aug 7 against Claude Code's Wave 5.5 report. Waves 0–5.5 complete; **verified from a clean clone of HEAD** (`5a2799e`, 275 tests). **Wave order changed: 7 and 8 now precede 6.**
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -282,6 +282,21 @@ On conversion, the paid sequence takes over: **anchor becomes `conversionDate`, 
 
 **Persistence is an optimisation, not the mechanism.** When the app next runs and observes a converted trial, it may write the status through and record the price transition — but **no behaviour may depend on that write having happened.** If it does, the six-weeks-in-a-drawer case fails again.
 
+#### Pause resume is derived too — **the founding scenario's fourth escape route** *(added v1.6)*
+
+A pause with a known end date is structurally identical to a trial with a known conversion date, and it had the identical bug. Wave 5.5 found that **the materialization watermark advances while a subscription is paused**, so:
+
+> Subscription paused with `pauseEndsOn` = Sep 1. The user doesn't open Otto until Oct 15. The vendor resumed billing on schedule and charged on Sep 1 and Oct 1. Otto's status is still `.paused`, so nothing materialized — and the watermark has moved past both dates, so a manual resume **cannot backfill them.** Two real charges, permanently invisible.
+
+**This is the fourth distinct mechanism** through which "the user wasn't looking" has produced silent failure — after status derivation (v1.3), the notification ladder (v1.4), and the ledger window (v1.5). The fix is the §5.2a pattern applied where it was missed:
+
+| Case | Rule |
+|---|---|
+| `pauseEndsOn` **set** | `effectiveStatus(asOf:)` treats a paused subscription past `pauseEndsOn` as **`.active`**. The resume is **derived, never awaited** — exactly like trial conversion. Materialization then proceeds from `pauseEndsOn` with no backfill needed |
+| `pauseEndsOn` **nil** (indefinite) | There is no derivable resume date, so **the watermark must not advance while paused.** It freezes at the pause, and a manual resume backfills from it |
+
+**The generalization, now stated as a design rule:** *any state whose exit is a known future date must exit by derivation.* Trials, pauses, and anything added later. A state that waits to be told it has ended will eventually not be told.
+
 #### ⚠ Derive before you mutate *(added v1.5, after this exact bug shipped in Wave 4)*
 
 Wave 4's `startCancelling` flipped the status **before** computing the verification check date. Because `billingAnchor(asOf:)` keys off the stored status, a converted-but-unflipped trial cancelled after conversion computed its watch date from the **trial-start** anchor rather than the **conversion** anchor.
@@ -350,6 +365,12 @@ Every expected charge is a row. This is the backbone of both verification and re
 
 The watermark also bounds the work: a Mode B subscription entered today does not backfill years of history it never had rows for, because the watermark starts at entry.
 
+**The watermark is device-local and is NOT synced** *(decided in v1.6; Wave 5.5 correctly flagged that its merge behaviour was undefined)*. It records *what this device has done*, not anything about the subscription — so it is stored outside the CloudKit-backed schema, per device.
+
+The reasoning is that last-write-wins is the wrong merge for it in a dangerous direction. A **regressed** watermark is harmless: re-materialization is idempotent and dedups on `(subscriptionID, expectedDate)`, so the cost is wasted work. An **advanced** watermark is not: if device A's watermark syncs ahead of the rows it corresponds to, device B skips charge dates that were never materialized anywhere. Since CloudKit cannot express "merge by taking the minimum," the safe move is not to sync it at all. Each device materializes independently; the dedup makes the duplication invisible.
+
+Corollary: watermark writes are bookkeeping, not user edits, and **must not bump `updatedAt`** — doing so would make every scheduler pass look like a user modification to conflict resolution.
+
 *Noted for the pattern file:* §5.2a fixed the founding scenario in **status derivation**, v1.5 fixes it in the **ledger**. Each fix was correct and each left a different mechanism through which the same failure could recur. **Every new subsystem should be tested against the phone-in-a-drawer case explicitly**, not assumed to inherit the property.
 
 The charge window is therefore slightly wider than the reminder horizon, by the largest lead time in use. Deriving it from the charge window instead leaves the outermost reminders with no row to attach to.
@@ -392,7 +413,7 @@ The justification is that a row only earns storage once there is **user-facing s
 | `subscriptionID` | UUID |
 | `markedCancelledAt` | Date | UTC instant — records *when the user acted*, and is **never** used for date arithmetic (see below) |
 | `nextChargeDateIfNotCancelled` | CalendarDay | **Non-optional. Renamed and made required in v1.1.** |
-| `expectedChargeAmountCents` | Int | ⭐ **Added v1.5.** The date is stored at cancellation because it is unrecoverable afterwards — **the amount has exactly the same property and was not stored**, leaving the dispute summary to infer it heuristically (by checking whether the anchor equals the conversion date). Correct for every flow-produced state, defeatable by a hand-edited price. **The dispute summary is the deliverable that ends at a bank; nothing in it should be a heuristic.** Computed once, at cancellation, like the date |
+| `expectedChargeAmountCents` | Int**?** | ⭐ **Added v1.5; corrected to optional in v1.6.** Wave 5.5 was right that there is no honest non-optional default for a record whose amount was never captured — **`nil` means "legacy record predating v1.5,"** and a fabricated zero would be worse than an absence in a document destined for a bank. The roll-forward backfills it where it can. The date is stored at cancellation because it is unrecoverable afterwards — **the amount has exactly the same property and was not stored**, leaving the dispute summary to infer it heuristically (by checking whether the anchor equals the conversion date). Correct for every flow-produced state, defeatable by a hand-edited price. **The dispute summary is the deliverable that ends at a bank; nothing in it should be a heuristic.** Computed once, at cancellation, like the date |
 | `verificationState` | `.pending` `.verifiedStopped` `.stillCharging` `.needsManualReview` |
 | `unansweredCheckCount` | Int, default 0 | **Added v1.3** — §5.4's three-cycle cap needs somewhere to count. Wave 5 lands before CloudKit, so this is still a field addition rather than a migration |
 | `verifiedAt` | Date? |
@@ -612,10 +633,19 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **3** ✅ | Store layer (`Packages/OttoUI`, `@MainActor @Observable`, protocol-dependent) then Today / Subscriptions / Add-Edit / Detail. Native components only | ✅ **Done** — commits `9982746`–`909777e`; **156 tests**; layering verified by a failing `import OttoPersistence`. ⚠ Hands-on add-a-subscription pass still unsigned-off by the owner |
 | **4** ✅ | Notification engine as a layer-4 `OttoServices` target behind a `NotificationClient` protocol, so the whole engine tests host-side | ✅ **Done** — commits `768525c`–`29811ca`; **203 tests**. Both ⛔ gates pass, incl. the derivation-path test (conversion announcement fires with stored status still `.trial`). ⚠ `BGAppRefreshTask` **not yet observed to run** — by this spec's own standard it does not exist until it is |
 | **5** ✅ | Trial, cancellation and verification flows, behind one `SubscriptionFlowService` actor so both entry points share a single state-change path | ✅ **Code done** — commits `30e2e99`–`cb3486f`; **252 tests**. ⛔ **Gate NOT met** — the compressed-timeline trial test on a real device is still outstanding |
-| **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall |
-| **7** | Insights, payment methods, zombie detection | Numbers reconcile against a hand-computed fixture |
-| **8** | Export/import (JSON + CSV), settings, accessibility, Dynamic Type, VoiceOver | Export → wipe → import restores exactly |
+| **5.5** ✅ | Hardening: `scripts/verify.sh` (clean-clone build/test/lint), CI covering every package + simulator job, the two pre-CloudKit field additions, ordering guards, the phone-in-a-drawer harness, `docs/manual-verification.md` | ✅ **Done** — HEAD `5a2799e` **verified from a clean clone**: 270 host + 5 simulator = **275 tests**. ⚠ One `OttoPersistence` segfault on the first run, then 9 clean — deliberately left unmasked |
+| **7** ⬅ *moved ahead of 6 in v1.6* | Insights, payment methods, zombie detection | Numbers reconcile against a hand-computed fixture |
+| **8** ⬅ *moved ahead of 6 in v1.6* | Export/import (JSON + CSV), settings, accessibility, Dynamic Type, VoiceOver | Export → wipe → import restores exactly |
+| **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall. ⛔ **Blocked on §10 Decision 2** |
 | **9** | Real-data dogfood; then TestFlight to the second user | The owner runs it as his only tracker for two weeks |
+
+**Waves 7 and 8 now precede Wave 6** *(reordered in v1.6)*. Three reasons, in ascending order of importance:
+
+1. **Neither depends on CloudKit.** Insights and export/import are pure local features; the original ordering had no technical basis.
+2. **Both will surface further §5 model changes** — Insights exercises the paused-burn and zombie fields for the first time, and export/import exercises every field at once. **Model changes are field additions before Wave 6 and schema migrations after.** Every defect these two waves surface is one found on the cheap side of the cliff.
+3. **Export/import *is* the CloudKit escape hatch** (§3.5). Building it *after* the one-way door means the migration path is untested at the exact moment data starts flowing through a store the developer cannot read. Building it first means the escape hatch exists before it can be needed.
+
+Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives time to answer properly rather than under deadline.
 
 **Wave 1 before anything else, deliberately.** The date engine is the part that is silently wrong rather than loudly broken, and it is far easier to trust when it exists as pure functions with no UI attached.
 
@@ -627,6 +657,16 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 - ⚠ <cite index="18-1">iOS 27 is in developer beta since June 8, 2026, with public release expected September 2026</cite> — which lands right in the middle of this build. **Develop against the iOS 26 SDK; test on an iOS 27 beta device before shipping to the second user.** Notification behaviour and Focus-mode handling are exactly the sort of thing that shifts in a major release.
 - Swift 6 language mode, strict concurrency on from Wave 0. Retrofitting it later is significantly worse.
 - Xcode's current release; **SwiftLint only** in CI. *(v1.0 named swift-format alongside it; the two overlap and the second earns nothing. Dropped so the spec and the repo agree.)*
+
+---
+
+## 9a. Known issues
+
+| Issue | Status |
+|---|---|
+| **`OttoPersistence` segfault (signal 11)** on the first-ever clean-clone verify run, then 9 consecutive clean runs. Suspected SwiftData under swift-testing's parallel suites | **Deliberately unmasked** — no retry wrapper, so CI can reproduce it and it stops being an anecdote. If CI does reproduce, serialize *that suite specifically* with a comment saying why; do **not** serialize broadly, which would hide the signal. Most likely a test-harness artifact (multiple in-memory `ModelContainer`s racing) rather than production behaviour, but that is a hypothesis, not a finding |
+| **§5.4 paused-cancellation is specified but not implemented** — the defer-and-ask path needs UI, which Wave 5.5 forbade | **The one place code and spec knowingly disagree.** Must be reconciled; now assigned to Wave 7, which has the UI budget |
+| **Test counting has no single command** — 5 Dynamic Type tests are `#if canImport(UIKit)` and compile to nothing under `swift test` on a Mac | Resolved by `verify.sh`, which prints what it can see and **explicitly names what it cannot.** The historical "252" was arithmetically honest; the counting method had simply never been written down |
 
 ---
 
@@ -649,6 +689,13 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.6 — revised against the Wave 5.5 report)** — **HEAD is now verified from a clean clone** (`5a2799e`, 270 host + 5 simulator = 275 tests), `verify.sh` exists as the pre-report gate, CI covers every package, and the two pre-CloudKit field additions have landed. The Wave 4 non-compiling-HEAD problem now has a mechanism preventing it rather than a resolution to be careful.
+  - **⭐⭐ The founding scenario escaped a *fourth* time — through the pause subsystem.** The watermark advances while a subscription is paused, so a pause ending Sep 1 with the app unopened until Oct 15 leaves two real charges **permanently unbackfillable**. Fixed by applying §5.2a's pattern where it had been missed: **a pause with `pauseEndsOn` resumes by derivation**, and an indefinite pause **freezes the watermark** instead. Generalized into a design rule: ***any state whose exit is a known future date must exit by derivation.*** A state that waits to be told it has ended will eventually not be told. Four escapes through four mechanisms is the strongest evidence yet that this scenario needs structural enforcement rather than per-wave vigilance — which is what Wave 5.5's `PhoneInADrawerTests` harness, with its file-level contract requiring new time-dependent subsystems to add a test, now provides.
+  - **The watermark is device-local and unsynced** (decided rather than deferred to Wave 6). Wave 5.5 correctly flagged its merge behaviour as undefined; LWW is dangerous in one direction — a *regressed* watermark merely repeats idempotent work, but an *advanced* one causes a device to skip charge dates never materialized anywhere. CloudKit cannot express "merge by minimum," so the answer is not to sync it. Watermark writes also must not bump `updatedAt`, or every scheduler pass looks like a user edit.
+  - **`expectedChargeAmountCents` corrected to optional.** There is no honest non-optional default for a record whose amount was never captured, and **a fabricated zero in a document destined for a bank is worse than an absence.**
+  - **⚠ Wave order changed: 7 and 8 now precede 6.** Neither depends on CloudKit; both will surface further §5 changes while those are still field additions rather than migrations; and **export/import *is* the CloudKit escape hatch**, so building it after the one-way door leaves the migration path untested exactly when data starts flowing into a store the developer cannot read.
+  - **Known-issues section added (§9a)**, recording the unmasked segfault, the one place code and spec knowingly disagree, and the test-counting resolution. The "252" figure was arithmetically honest all along — 5 simulator-only tests compile to nothing under `swift test`; what was missing was a written counting method.
 
 - **2026-08-07 (v1.5 — revised against the Wave 5 report)** — Wave 5 shipped: **252 tests**, both cancellation entry points routed through one `SubscriptionFlowService` actor so identical state is guaranteed *by construction* rather than by test. Six findings, one of which is about process rather than code:
   - **⚠⚠ Wave 4's committed HEAD did not compile.** A commit changed `NotificationPlanIdentifier.snooze` without updating a domain test that called it, so **"203 tests passing" was not reproducible from the commit.** Not dishonesty — the suite passed before a final refactor — but it means a green report is not evidence about the artifact. **This is the concrete cost of five waves without CI**, and it converts the remote-and-CI item from hygiene into the fix for a demonstrated failure. Repaired by updating the call and *adding* an assertion rather than deleting the test.
