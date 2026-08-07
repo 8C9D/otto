@@ -36,6 +36,10 @@ public actor OttoStore {
     /// can be engaged mid-session, and `restore()` (spec §8, v2.1) must see
     /// the switch as it is NOW. Defaulted for the macro's unused init.
     var syncState: @Sendable () -> SyncState = { .load() }
+    /// The sync mode the main container was OPENED with - the flags alone
+    /// cannot prove the live store is not mirroring, because the kill switch
+    /// acts at the next launch. Defaulted for the macro's unused init.
+    var mainSyncMode: OttoContainerFactory.MainStoreSyncMode = .off
 
     public init(
         containers: OttoContainers,
@@ -46,6 +50,7 @@ public actor OttoStore {
         self.modelContainer = containers.main
         self.deviceStateContainer = containers.deviceState
         self.syncState = syncState
+        self.mainSyncMode = containers.mainSyncMode
     }
 
     /// Lazily created on the actor so its use is serialized with `modelContext`.

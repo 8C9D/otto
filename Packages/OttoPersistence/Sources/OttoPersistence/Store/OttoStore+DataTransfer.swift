@@ -168,13 +168,20 @@ extension OttoStore: DataTransferRepository {
     /// "Engage the kill switch before restoring during an incident" was a
     /// documented rule, and this project's history is documentation failing
     /// where structure holds - a rule that must be remembered DURING an
-    /// incident will not be. Restoring into a live mirror would let other
-    /// devices' syncing edits land on rows mid-restore, so a restore runs
-    /// only while sync cannot: either never enabled, or braked by the kill
-    /// switch. The error's message tells the user exactly what to do.
+    /// incident will not be. Restoring into a live mirror would let syncing
+    /// edits land on rows mid-restore, so a restore runs only while sync
+    /// cannot - which takes BOTH checks: the flags must be disengaged (never
+    /// enabled, or braked), AND the container this session actually opened
+    /// must be sync-off, because the kill switch acts at the next launch and
+    /// an incident is exactly when it was engaged mid-session, minutes ago.
+    /// The mode check cannot fire until 6B gives the mode a second case; it
+    /// is wired now, like the factory's own rails, so it is load-bearing
+    /// before the day it first matters. The error's message tells the user
+    /// exactly what to do - engage the switch, relaunch, restore again.
     private func refuseUnlessSyncDisengaged() throws {
         let sync = syncState()
-        if sync.isEnabled && !sync.killSwitchEngaged {
+        let flagsDisengaged = !sync.isEnabled || sync.killSwitchEngaged
+        if !flagsDisengaged || mainSyncMode != .off {
             throw RepositoryError.restoreRequiresSyncDisengaged
         }
     }

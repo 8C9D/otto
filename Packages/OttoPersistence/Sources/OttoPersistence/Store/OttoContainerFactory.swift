@@ -12,6 +12,11 @@ import SwiftData
 public struct OttoContainers: Sendable {
     public let main: ModelContainer
     public let deviceState: ModelContainer
+    /// The sync decision the main container was actually OPENED with. The §8
+    /// restore guard needs the session's real mode, not the current flags: the
+    /// kill switch acts at the next launch, so mid-session flags and the live
+    /// container can disagree in exactly the window an incident occupies.
+    let mainSyncMode: OttoContainerFactory.MainStoreSyncMode
 }
 
 /// Builds the app's containers without exposing any model type.
@@ -61,12 +66,14 @@ public enum OttoContainerFactory {
         let deviceConfiguration = ModelConfiguration(
             "OttoDeviceState", schema: deviceStateSchema, cloudKitDatabase: .none
         )
+        let syncMode = mainStoreSyncMode(for: syncState)
         return try containers(
             mainConfiguration: ModelConfiguration(
                 schema: mainSchema,
-                cloudKitDatabase: mainStoreSyncMode(for: syncState).cloudKitDatabase
+                cloudKitDatabase: syncMode.cloudKitDatabase
             ),
-            deviceConfiguration: deviceConfiguration
+            deviceConfiguration: deviceConfiguration,
+            mainSyncMode: syncMode
         )
     }
 
@@ -78,7 +85,8 @@ public enum OttoContainerFactory {
             ),
             deviceConfiguration: ModelConfiguration(
                 schema: deviceStateSchema, isStoredInMemoryOnly: true, cloudKitDatabase: .none
-            )
+            ),
+            mainSyncMode: .off
         )
     }
 
@@ -90,7 +98,8 @@ public enum OttoContainerFactory {
             ),
             deviceConfiguration: ModelConfiguration(
                 schema: deviceStateSchema, url: deviceStateURL, cloudKitDatabase: .none
-            )
+            ),
+            mainSyncMode: .off
         )
     }
 
@@ -104,7 +113,8 @@ public enum OttoContainerFactory {
 
     private static func containers(
         mainConfiguration: ModelConfiguration,
-        deviceConfiguration: ModelConfiguration
+        deviceConfiguration: ModelConfiguration,
+        mainSyncMode: MainStoreSyncMode
     ) throws -> OttoContainers {
         // The V2→V3 stage needs the device store's location BEFORE the main
         // container opens: the watermark carry-over happens inside the
@@ -123,6 +133,6 @@ public enum OttoContainerFactory {
             for: deviceStateSchema,
             configurations: [deviceConfiguration]
         )
-        return OttoContainers(main: main, deviceState: deviceState)
+        return OttoContainers(main: main, deviceState: deviceState, mainSyncMode: mainSyncMode)
     }
 }
