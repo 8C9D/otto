@@ -275,13 +275,19 @@ struct DisputeSummaryTests {
             nextChargeDateIfNotCancelled: try day(2026, 8, 31),
             expectedChargeAmountCents: 1100
         )
-        record.evidenceNote = "confirmation #4821, spoke to Dana"
+        let evidence = EvidenceNote(
+            id: try fixtureUUID(650),
+            text: "confirmation #4821, spoke to Dana",
+            createdAt: Date(timeIntervalSince1970: 5_000),
+            updatedAt: Date(timeIntervalSince1970: 5_000)
+        )
+        record.evidenceNotes = [evidence]
         let answered = record.reportingStillCharging(at: Date(timeIntervalSince1970: 10_000))
 
         let summary = try #require(disputeSummary(for: answered, subscription: subscription))
         #expect(summary.subscriptionName == subscription.name)
         #expect(summary.markedCancelledAt == record.markedCancelledAt)
-        #expect(summary.evidenceNote == "confirmation #4821, spoke to Dana")
+        #expect(summary.evidenceNotes == [evidence])
         #expect(summary.chargeDate == (try day(2026, 8, 31)))
         #expect(summary.chargeAmountCents == 1100)
         #expect(summary.currencyCode == "CAD")

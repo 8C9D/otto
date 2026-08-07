@@ -30,7 +30,12 @@ struct VerificationFlowTests {
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),
             nextChargeDateIfNotCancelled: try day(2026, 8, 15),
             verificationState: .pending,
-            evidenceNote: "Confirmation: 4821",
+            evidenceNotes: [EvidenceNote(
+                id: try fixtureUUID(650),
+                text: "Confirmation: 4821",
+                createdAt: Date(timeIntervalSince1970: 4_000),
+                updatedAt: Date(timeIntervalSince1970: 4_000)
+            )],
             createdAt: Date(timeIntervalSince1970: 4_000),
             updatedAt: Date(timeIntervalSince1970: 4_000)
         )])
@@ -84,7 +89,7 @@ struct VerificationFlowTests {
         ))
         #expect(summary.subscriptionName == subscription.name)
         #expect(summary.markedCancelledAt == Date(timeIntervalSince1970: 4_000))
-        #expect(summary.evidenceNote == "Confirmation: 4821")
+        #expect(summary.evidenceNotes.map(\.text) == ["Confirmation: 4821"])
         #expect(summary.chargeDate == (try day(2026, 8, 15)))
         #expect(summary.chargeAmountCents == subscription.amountCents)
         #expect(summary.currencyCode == "CAD")

@@ -14,6 +14,8 @@ struct CancellationSectionView: View {
     @Environment(AppModel.self) private var model
     @State private var isEditingEvidence = false
     @State private var evidenceDraft = ""
+    /// Nil while the alert is adding a NEW note; set while editing an existing one.
+    @State private var editingEvidenceNoteID: UUID?
     @State private var resumeDateDraft: CalendarDay?
 
     @ViewBuilder
@@ -93,22 +95,23 @@ struct CancellationSectionView: View {
         }
     }
 
-    /// The captured evidence, editable in place - the confirmation number usually
-    /// arrives only after the vendor page has been fought through.
+    /// The captured evidence, one row per artifact (spec §5.4, a list since
+    /// v1.9) - a call, then an email, then a chargeback filing, each editable
+    /// in place, because the confirmation number usually arrives only after
+    /// the vendor page has been fought through. Clearing a note's text
+    /// removes it.
     @ViewBuilder
     private func evidenceRow(record: CancellationEpisode) -> some View {
+        ForEach(record.liveEvidenceNotes, content: evidenceNoteRow)
         Button {
-            evidenceDraft = record.evidenceNote ?? ""
+            evidenceDraft = ""
+            editingEvidenceNoteID = nil
             isEditingEvidence = true
         } label: {
-            if let note = record.evidenceNote {
-                LabeledContent(String(localized: "Evidence"), value: note)
-            } else {
-                Label(
-                    String(localized: "Add a confirmation number or note"),
-                    systemImage: "square.and.pencil"
-                )
-            }
+            Label(
+                String(localized: "Add a confirmation number or note"),
+                systemImage: "square.and.pencil"
+            )
         }
         .alert(
             String(localized: "Cancellation evidence"),
@@ -119,10 +122,17 @@ struct CancellationSectionView: View {
                 text: $evidenceDraft
             )
             Button(String(localized: "Save")) {
+                let noteID = editingEvidenceNoteID
                 perform {
-                    try await model.updateCancellationEvidence(
-                        subscriptionID: detail.subscription.id, note: evidenceDraft
-                    )
+                    if let noteID {
+                        try await model.updateCancellationEvidence(
+                            subscriptionID: detail.subscription.id, noteID: noteID, text: evidenceDraft
+                        )
+                    } else {
+                        try await model.appendCancellationEvidence(
+                            subscriptionID: detail.subscription.id, text: evidenceDraft
+                        )
+                    }
                 }
             }
             Button(String(localized: "Cancel"), role: .cancel) {}
@@ -131,6 +141,19 @@ struct CancellationSectionView: View {
             Whatever a dispute would need later: confirmation number, \
             who you spoke to, a screenshot's whereabouts.
             """))
+        }
+    }
+
+    private func evidenceNoteRow(_ note: EvidenceNote) -> some View {
+        Button {
+            evidenceDraft = note.text
+            editingEvidenceNoteID = note.id
+            isEditingEvidence = true
+        } label: {
+            LabeledContent(
+                note.createdAt.formatted(date: .abbreviated, time: .omitted),
+                value: note.text
+            )
         }
     }
 

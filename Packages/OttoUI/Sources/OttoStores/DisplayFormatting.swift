@@ -67,8 +67,11 @@ extension DisputeSummary {
             String(localized: "I cancelled my \(subscriptionName) subscription on \(cancelled)."),
             String(localized: "A charge of \(amount) was still made on \(charge).")
         ]
-        if let evidenceNote {
-            lines.append(String(localized: "Cancellation evidence: \(evidenceNote)."))
+        for note in evidenceNotes {
+            let noted = note.createdAt.formatted(
+                Date.FormatStyle(date: .abbreviated, timeZone: timeZone).locale(locale)
+            )
+            lines.append(String(localized: "Cancellation evidence (\(noted)): \(note.text)."))
         }
         lines.append(String(localized: "I am disputing this charge."))
         return lines.joined(separator: "\n")

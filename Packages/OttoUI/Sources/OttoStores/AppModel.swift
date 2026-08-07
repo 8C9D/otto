@@ -199,11 +199,20 @@ public final class AppModel {
         await flowFinished()
     }
 
-    /// Saves the evidence captured after the fact - the confirmation number the
-    /// vendor page produced once the cancellation actually happened.
-    public func updateCancellationEvidence(subscriptionID: UUID, note: String?) async throws {
+    /// Adds evidence captured after the fact - the confirmation number the
+    /// vendor page produced once the cancellation actually happened, or the
+    /// next artifact of a long fight (spec §5.4, a list since v1.9).
+    public func appendCancellationEvidence(subscriptionID: UUID, text: String) async throws {
+        try await flows.appendCancellationEvidence(
+            subscriptionID: subscriptionID, text: text, now: dates.now()
+        )
+        await subscriptionsStore.refresh()
+    }
+
+    /// Edits (or, with empty text, tombstones) one existing evidence note.
+    public func updateCancellationEvidence(subscriptionID: UUID, noteID: UUID, text: String?) async throws {
         try await flows.updateCancellationEvidence(
-            subscriptionID: subscriptionID, note: note, now: dates.now()
+            subscriptionID: subscriptionID, noteID: noteID, text: text, now: dates.now()
         )
         await subscriptionsStore.refresh()
     }

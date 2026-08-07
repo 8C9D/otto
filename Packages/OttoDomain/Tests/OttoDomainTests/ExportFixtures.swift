@@ -202,7 +202,12 @@ private func exportCancellation(
         verificationState: state,
         unansweredCheckCount: state == .needsManualReview ? 3 : 0,
         verifiedAt: outcome == .verifiedStopped ? fixtureUpdated : nil,
-        evidenceNote: "conf #ABC-123",
+        evidenceNotes: [EvidenceNote(
+            id: try fixtureUUID(index + 50),
+            text: "conf #ABC-123",
+            createdAt: fixtureCreated,
+            updatedAt: fixtureUpdated
+        )],
         endedAt: endedAt,
         outcome: outcome,
         createdAt: fixtureCreated,

@@ -19,9 +19,11 @@ import SwiftData
 // yyyymmdd form, billing cycles are two scalar columns, enums are stable raw
 // strings, money is integer cents, and UUIDs are client-generated (spec §3.5).
 //
-// V3 is Wave 6A's relocation (spec §5.3): `lastMaterializedThrough` leaves
+// V3 is Wave 6A (spec §5.3, §5.4 v1.9): `lastMaterializedThrough` leaves
 // `StoredSubscription` for the device-state store, so the schema CloudKit will
-// sync no longer contains anything device-scoped. This is the frozen schema.
+// sync no longer contains anything device-scoped; the single `evidenceNote`
+// column becomes the one-to-many `StoredEvidenceNote` table; and pre-fold
+// verification states are rewritten. This is the frozen schema.
 enum OttoSchemaV3: VersionedSchema {
     static let versionIdentifier = Schema.Version(3, 0, 0)
 
@@ -31,6 +33,7 @@ enum OttoSchemaV3: VersionedSchema {
             StoredTrialTerm.self,
             StoredBillingEvent.self,
             StoredCancellationEpisode.self,
+            StoredEvidenceNote.self,
             StoredPauseEpisode.self,
             StoredPriceChange.self,
             StoredPaymentMethod.self
@@ -44,6 +47,7 @@ typealias StoredSubscription = OttoSchemaV3.StoredSubscription
 typealias StoredTrialTerm = OttoSchemaV3.StoredTrialTerm
 typealias StoredBillingEvent = OttoSchemaV3.StoredBillingEvent
 typealias StoredCancellationEpisode = OttoSchemaV3.StoredCancellationEpisode
+typealias StoredEvidenceNote = OttoSchemaV3.StoredEvidenceNote
 typealias StoredPauseEpisode = OttoSchemaV3.StoredPauseEpisode
 typealias StoredPriceChange = OttoSchemaV3.StoredPriceChange
 typealias StoredPaymentMethod = OttoSchemaV3.StoredPaymentMethod

@@ -28,6 +28,15 @@ import Foundation
 //   `statusAtStart`, `endedAt` and `outcome`); v1's `cancellationRecords` key
 //   is no longer written
 //
+// Format v3 (Wave 6A, spec §5.4 v1.9): `evidenceNote` became the
+// `evidenceNotes` array - one note per dispute artifact, each with the §5.0
+// quartet. Reading a pre-v3 file upgrades the single note by
+// `EvidenceNote.legacyNote`: a DERIVED id (so re-importing cannot duplicate
+// it) and timestamps borrowed from the episode. The version bumps under the
+// v2 policy above even though the change is additive-shaped, because the
+// removed `evidenceNote` key would otherwise be silently dropped by an older
+// app reading a newer file.
+//
 // Reading a v1 file remains supported, with these documented defaults:
 // - a subscription's pause fields become ONE open pause episode (started on
 //   `pausedOn`, scheduled to resume on `pauseEndsOn`), with an id DERIVED from
@@ -41,7 +50,7 @@ import Foundation
 
 /// A whole database as the export format describes it.
 public struct OttoExport: Hashable, Sendable {
-    public static let currentFormatVersion = 2
+    public static let currentFormatVersion = 3
 
     /// The version THE FILE declared - 1 for an upgraded legacy file. Encoding
     /// a fresh export always writes `currentFormatVersion`.

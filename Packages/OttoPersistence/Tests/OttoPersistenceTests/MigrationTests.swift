@@ -163,7 +163,14 @@ extension SerializedPersistenceTests {
             #expect(watch.expectedChargeAmountCents == 1004)
             #expect(watch.verificationState == .pending)
             #expect(watch.unansweredCheckCount == 1)
-            #expect(watch.evidenceNote == "conf #V1-777")
+            // The v1 evidence string arrived as one note (spec §5.4, v1.9),
+            // with the derived id and the record's own timestamps.
+            let evidence = try #require(watch.evidenceNotes.first)
+            #expect(watch.evidenceNotes.count == 1)
+            #expect(evidence.text == "conf #V1-777")
+            #expect(evidence.id == EvidenceNote.legacyNote(
+                episodeID: watch.id, text: "", episodeUpdatedAt: watch.updatedAt
+            ).id)
             #expect(watch.statusAtStart == nil)
             #expect(watch.updatedAt == Date(timeIntervalSince1970: 4_500))
             // The watermark the un-cancel rewind guards against survived as data.

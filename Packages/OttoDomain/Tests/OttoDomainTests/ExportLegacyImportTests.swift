@@ -83,6 +83,7 @@ private let v1File = Data("""
       "markedCancelledAt" : 776304100,
       "nextChargeDateIfNotCancelled" : "2026-09-01",
       "expectedChargeAmountCents" : 1899,
+      "evidenceNote" : "conf #V1-777",
       "verificationState" : "pending",
       "unansweredCheckCount" : 0,
       "createdAt" : 776304100,
@@ -155,6 +156,16 @@ struct ExportLegacyImportTests {
         #expect(pending.outcome == nil)
         // v1 never captured what the cancellation interrupted.
         #expect(pending.statusAtStart == nil)
+        // The single v1 evidence string became one note (spec §5.4, v1.9):
+        // derived id, timestamps borrowed from the episode, so re-importing
+        // the same file cannot duplicate it.
+        let note = try #require(pending.evidenceNotes.first)
+        #expect(pending.evidenceNotes.count == 1)
+        #expect(note.text == "conf #V1-777")
+        #expect(note.createdAt == pending.updatedAt)
+        #expect(note.id == EvidenceNote.legacyNote(
+            episodeID: pending.id, text: "", episodeUpdatedAt: pending.updatedAt
+        ).id)
 
         let verified = try #require(snapshot.cancellationEpisodes.first { $0.id == (try fixtureUUID(602)) })
         #expect(!verified.isOpen)

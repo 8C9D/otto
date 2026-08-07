@@ -133,7 +133,10 @@ enum PreviewData {
         fixtures.cancellations.append(CancellationEpisode(
             id: uuid(601), subscriptionID: cancelled.id, markedCancelledAt: now,
             nextChargeDateIfNotCancelled: checkDate, verificationState: .pending,
-            evidenceNote: "Confirmation #58291", createdAt: now, updatedAt: now
+            evidenceNotes: [EvidenceNote(
+                id: uuid(611), text: "Confirmation #58291", createdAt: now, updatedAt: now
+            )],
+            createdAt: now, updatedAt: now
         ))
     }
 

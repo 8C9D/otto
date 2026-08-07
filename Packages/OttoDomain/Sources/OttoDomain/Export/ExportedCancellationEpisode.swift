@@ -8,10 +8,31 @@ private struct FoldUpgradedState {
     var outcome: String?
 }
 
+/// The wire record for `EvidenceNote` (spec §5.4, a list since format v3).
+public struct ExportedEvidenceNote: Codable, Hashable, Sendable {
+    public let id: UUID
+    public var text: String
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var deletedAt: Date?
+
+    public init(_ domain: EvidenceNote) {
+        id = domain.id
+        text = domain.text
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
+    }
+
+    public func domainValue() -> EvidenceNote {
+        EvidenceNote(id: id, text: text, createdAt: createdAt, updatedAt: updatedAt, deletedAt: deletedAt)
+    }
+}
+
 /// The wire record for `CancellationEpisode` (spec §5.4, §3.5) - split from
 /// ExportFormatRecords because it carries the format's heaviest upgrade logic:
-/// the §5.3a open-or-closed pairing, the v1 closure rule, and the §5.4 v1.9
-/// fold upgrade.
+/// the §5.3a open-or-closed pairing, the v1 closure rule, the §5.4 v1.9 fold
+/// upgrade, and the pre-v3 single-evidence-note upgrade.
 public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
     public let id: UUID
     public let subscriptionID: UUID
@@ -24,7 +45,13 @@ public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
     public var verificationState: String
     public var unansweredCheckCount: Int
     public var verifiedAt: Date?
-    public var evidenceNote: String?
+    /// Pre-v3's single note - read forever, never written (fresh exports carry
+    /// a nil here, which synthesized Codable omits from the file).
+    public var legacyEvidenceNote: String?
+    /// Absent (nil) exactly in pre-v3 files; `domainValue` upgrades the legacy
+    /// single note by `EvidenceNote.legacyNote` - one rule with the SwiftData
+    /// migration, so the paths cannot drift.
+    public var evidenceNotes: [ExportedEvidenceNote]?
     /// Absent in v1 files; `upgradedFromV1` closes what v1 semantics say was
     /// finished and leaves the rest open (spec §5.3a).
     public var endedAt: Date?
@@ -32,6 +59,15 @@ public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, subscriptionID, markedCancelledAt, statusAtStart, nextChargeDateIfNotCancelled
+        case expectedChargeAmountCents, verificationState, unansweredCheckCount, verifiedAt
+        /// v3 renamed the concept; the old key is read, never written.
+        case legacyEvidenceNote = "evidenceNote"
+        case evidenceNotes
+        case endedAt, outcome, createdAt, updatedAt, deletedAt
+    }
 
     public init(_ domain: CancellationEpisode) {
         id = domain.id
@@ -43,7 +79,10 @@ public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
         verificationState = domain.verificationState.rawValue
         unansweredCheckCount = domain.unansweredCheckCount
         verifiedAt = domain.verifiedAt
-        evidenceNote = domain.evidenceNote
+        legacyEvidenceNote = nil
+        evidenceNotes = domain.evidenceNotes
+            .map(ExportedEvidenceNote.init)
+            .sorted { $0.id.uuidString < $1.id.uuidString }
         endedAt = domain.endedAt
         outcome = domain.outcome?.rawValue
         createdAt = domain.createdAt
@@ -99,7 +138,7 @@ public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
             verificationState: state,
             unansweredCheckCount: unansweredCheckCount,
             verifiedAt: verifiedAt,
-            evidenceNote: evidenceNote,
+            evidenceNotes: upgradedEvidenceNotes(),
             endedAt: wireEndedAt,
             outcome: domainOutcome,
             createdAt: createdAt,
@@ -135,6 +174,25 @@ public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
             endedAt: wireEndedAt,
             outcome: wireOutcome
         )
+    }
+
+    /// The pre-v3 evidence upgrade, applied at read forever: a file written
+    /// before format v3 carries at most one `evidenceNote` string, which
+    /// becomes one `EvidenceNote` with a DERIVED id and borrowed timestamps
+    /// (`EvidenceNote.legacyNote` - one rule with the SwiftData migration), so
+    /// re-importing the same old file cannot duplicate the note. A v3 file's
+    /// array passes through verbatim.
+    private func upgradedEvidenceNotes() -> [EvidenceNote] {
+        if let evidenceNotes {
+            return evidenceNotes.map { $0.domainValue() }
+        }
+        guard let legacyEvidenceNote else { return [] }
+        return [EvidenceNote.legacyNote(
+            episodeID: id,
+            text: legacyEvidenceNote,
+            episodeUpdatedAt: updatedAt,
+            episodeDeletedAt: deletedAt
+        )]
     }
 
     /// The v1 upgrade: one rule with the SwiftData migration

@@ -28,7 +28,9 @@ public struct CancellationStart: Hashable, Sendable {
 public actor SubscriptionFlowService {
 
     private let subscriptions: any SubscriptionRepository
-    private let cancellations: any CancellationRepository
+    // fileprivate would be tighter, but the evidence methods live in a
+    // same-module extension file; internal is the narrowest level that reaches.
+    let cancellations: any CancellationRepository
     private let billingEvents: any BillingEventRepository
     private let priceChanges: any PriceChangeRepository
 
@@ -225,9 +227,13 @@ public actor SubscriptionFlowService {
         if let existing = try await cancellations.openEpisode(forSubscription: subscriptionID) {
             episode = existing
             // Redelivery never blanks or overwrites captured evidence; the UI's
-            // deliberate edits go through updateCancellationEvidence.
-            if let evidenceNote, episode.evidenceNote == nil {
-                episode.evidenceNote = evidenceNote
+            // deliberate edits go through the evidence methods below. A note is
+            // only added when the episode has none, so a redelivered start
+            // cannot duplicate the capture.
+            if let evidenceNote, episode.liveEvidenceNotes.isEmpty {
+                episode.evidenceNotes.append(EvidenceNote(
+                    id: UUID(), text: evidenceNote, createdAt: now, updatedAt: now
+                ))
                 episode.updatedAt = now
                 try await cancellations.save(episode)
             }
@@ -245,8 +251,11 @@ public actor SubscriptionFlowService {
                 try await subscriptions.save(restored)
                 subscription = restored
             }
+            let evidence = evidenceNote.map {
+                EvidenceNote(id: UUID(), text: $0, createdAt: now, updatedAt: now)
+            }
             guard let opened = subscription.openingCancellationEpisode(
-                id: UUID(), evidenceNote: evidenceNote, asOf: today, at: now
+                id: UUID(), evidence: evidence, asOf: today, at: now
             ) else { return nil }
             episode = opened
             try await cancellations.save(episode)
@@ -316,23 +325,6 @@ public actor SubscriptionFlowService {
         if supplied != record {
             try await cancellations.save(supplied)
         }
-    }
-
-    /// Replaces the record's evidence note - the user coming back from the vendor
-    /// page with a confirmation number, or correcting an earlier note. A nil or
-    /// empty note clears it deliberately.
-    public func updateCancellationEvidence(
-        subscriptionID: UUID,
-        note: String?,
-        now: Date
-    ) async throws {
-        guard var record = try await cancellations.openEpisode(forSubscription: subscriptionID) else { return }
-        let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newValue = (trimmed?.isEmpty ?? true) ? nil : trimmed
-        guard record.evidenceNote != newValue else { return }
-        record.evidenceNote = newValue
-        record.updatedAt = now
-        try await cancellations.save(record)
     }
 
     // MARK: - The verification flow

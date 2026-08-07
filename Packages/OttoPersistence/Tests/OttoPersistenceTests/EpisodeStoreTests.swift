@@ -46,7 +46,12 @@ extension SerializedPersistenceTests {
 
             // Saving an edit rewrites the row carrying that id - no new row.
             var updated = current
-            updated.evidenceNote = "conf #999"
+            updated.evidenceNotes.append(EvidenceNote(
+                id: try fixtureUUID(660),
+                text: "conf #999",
+                createdAt: Date(timeIntervalSince1970: 8_000),
+                updatedAt: Date(timeIntervalSince1970: 8_000)
+            ))
             updated.updatedAt = Date(timeIntervalSince1970: 8_000)
             try await store.save(updated)
             #expect(try await store.episodes(forSubscription: subscription.id).count == 2)

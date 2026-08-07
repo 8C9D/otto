@@ -199,9 +199,10 @@ public struct DisputeSummary: Hashable, Sendable {
     /// When the user performed the cancellation - a UTC instant, displayed in
     /// the user's zone by the UI.
     public let markedCancelledAt: Date
-    /// Confirmation number, rep's name, screenshot reference - whatever was
-    /// captured at cancellation time.
-    public let evidenceNote: String?
+    /// Confirmation numbers, reps' names, screenshot references - every live
+    /// note captured during the fight, each with its own date (spec §5.4, a
+    /// list since v1.9), oldest first.
+    public let evidenceNotes: [EvidenceNote]
     /// The day the disputed charge landed.
     public let chargeDate: CalendarDay
     public let chargeAmountCents: Int
@@ -210,14 +211,14 @@ public struct DisputeSummary: Hashable, Sendable {
     public init(
         subscriptionName: String,
         markedCancelledAt: Date,
-        evidenceNote: String?,
+        evidenceNotes: [EvidenceNote],
         chargeDate: CalendarDay,
         chargeAmountCents: Int,
         currencyCode: String
     ) {
         self.subscriptionName = subscriptionName
         self.markedCancelledAt = markedCancelledAt
-        self.evidenceNote = evidenceNote
+        self.evidenceNotes = evidenceNotes
         self.chargeDate = chargeDate
         self.chargeAmountCents = chargeAmountCents
         self.currencyCode = currencyCode
@@ -241,7 +242,7 @@ public func disputeSummary(
     return DisputeSummary(
         subscriptionName: subscription.name,
         markedCancelledAt: record.markedCancelledAt,
-        evidenceNote: record.evidenceNote,
+        evidenceNotes: record.liveEvidenceNotes,
         chargeDate: chargeDate,
         // The amount stored at cancellation (spec §5.4, v1.5): the summary that
         // ends at a bank contains no heuristics. The derivation is only the
@@ -270,7 +271,7 @@ extension Subscription {
     /// mint a fresh cancellation for an archived subscription.
     public func openingCancellationEpisode(
         id episodeID: UUID,
-        evidenceNote: String?,
+        evidence: EvidenceNote?,
         asOf today: CalendarDay,
         at now: Date
     ) -> CancellationEpisode? {
@@ -290,7 +291,7 @@ extension Subscription {
             nextChargeDateIfNotCancelled: checkDate,
             expectedChargeAmountCents: checkDate.map { wouldBeChargeAmountCents(on: $0, for: self) },
             verificationState: checkDate == nil ? .awaitingResumeDate : .pending,
-            evidenceNote: evidenceNote,
+            evidenceNotes: evidence.map { [$0] } ?? [],
             createdAt: now,
             updatedAt: now
         )

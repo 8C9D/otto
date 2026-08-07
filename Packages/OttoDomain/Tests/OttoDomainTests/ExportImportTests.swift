@@ -80,6 +80,14 @@ struct WireFormatTests {
         let text = try #require(String(data: data, encoding: .utf8))
         #expect(text.contains("\"cycleStartDay\" : \"2024-01-31\""))
     }
+
+    @Test("a fresh export writes the evidenceNotes array and never the pre-v3 key")
+    func evidenceNotesWireShape() throws {
+        let data = try exportData(from: try fullSnapshot(), exportedAt: Date(timeIntervalSinceReferenceDate: 0))
+        let text = try #require(String(data: data, encoding: .utf8))
+        #expect(text.contains("\"evidenceNotes\" :"))
+        #expect(!text.contains("\"evidenceNote\" :"))
+    }
 }
 
 // MARK: - Version handling
@@ -90,16 +98,16 @@ struct ExportVersionTests {
     @Test("a future format version fails clearly, before anything is applied")
     func futureVersionRefused() throws {
         let data = Data("""
-        {"formatVersion": 3, "exportedAt": 0, "subscriptions": [], "paymentMethods": [],
+        {"formatVersion": 4, "exportedAt": 0, "subscriptions": [], "paymentMethods": [],
          "billingEvents": [], "cancellationEpisodes": [], "priceChanges": []}
         """.utf8)
 
-        #expect(throws: ExportFormatError.unsupportedFormatVersion(found: 3, supported: 2)) {
+        #expect(throws: ExportFormatError.unsupportedFormatVersion(found: 4, supported: 3)) {
             try decodeExport(data)
         }
-        let message = ExportFormatError.unsupportedFormatVersion(found: 3, supported: 2)
+        let message = ExportFormatError.unsupportedFormatVersion(found: 4, supported: 3)
             .errorDescription ?? ""
-        #expect(message.contains("format 3"))
+        #expect(message.contains("format 4"))
         #expect(message.contains("Nothing was changed"))
     }
 

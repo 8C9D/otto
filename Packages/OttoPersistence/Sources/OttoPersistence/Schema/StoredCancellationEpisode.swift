@@ -29,7 +29,6 @@ extension OttoSchemaV3 {
         /// stored field; mapping reads nil as 0, so pre-v1.3 rows need no migration.
         var unansweredCheckCount: Int?
         var verifiedAt: Date?
-        var evidenceNote: String?
         /// When the episode closed; nil while it is current (spec §5.3a). The
         /// mapping enforces the pairing with `outcome`.
         var endedAt: Date?
@@ -39,6 +38,9 @@ extension OttoSchemaV3 {
         var deletedAt: Date?
 
         var subscription: StoredSubscription?
+
+        @Relationship(deleteRule: .cascade, inverse: \StoredEvidenceNote.episode)
+        var evidenceNotes: [StoredEvidenceNote]?
 
         init() {}
     }

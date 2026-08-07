@@ -91,7 +91,12 @@ struct DynamicTypeTests {
         let summary = DisputeSummary(
             subscriptionName: "FoodApp",
             markedCancelledAt: PreviewData.now,
-            evidenceNote: "Confirmation: 4821, spoke to Dana",
+            evidenceNotes: [EvidenceNote(
+                id: UUID(),
+                text: "Confirmation: 4821, spoke to Dana",
+                createdAt: PreviewData.now,
+                updatedAt: PreviewData.now
+            )],
             chargeDate: try #require(CalendarDay(year: 2026, month: 8, day: 31)),
             chargeAmountCents: 1100,
             currencyCode: "CAD"

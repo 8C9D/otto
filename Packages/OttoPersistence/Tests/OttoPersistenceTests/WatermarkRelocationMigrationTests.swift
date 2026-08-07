@@ -50,6 +50,13 @@ extension SerializedPersistenceTests {
             // removed) verifiedStopped live state.
             let subscriptions = try context.fetch(FetchDescriptor<OttoSchemaV2.StoredSubscription>())
             let parent = try #require(subscriptions.first { $0.id == (try fixtureUUID(1)) })
+            try preFoldVerifiedEpisode(on: parent, in: context)
+            try context.save()
+        }
+
+        private func preFoldVerifiedEpisode(
+            on parent: OttoSchemaV2.StoredSubscription, in context: ModelContext
+        ) throws {
             let episode = OttoSchemaV2.StoredCancellationEpisode()
             context.insert(episode)
             episode.subscription = parent
@@ -59,12 +66,12 @@ extension SerializedPersistenceTests {
             episode.nextChargeDateIfNotCancelled = 20_260_901
             episode.verificationState = "verifiedStopped"
             episode.unansweredCheckCount = 0
+            episode.evidenceNote = "conf #V2-4821, spoke to Dana"
             episode.verifiedAt = Date(timeIntervalSince1970: 6_000)
             episode.endedAt = Date(timeIntervalSince1970: 6_000)
             episode.outcome = "verifiedStopped"
             episode.createdAt = Date(timeIntervalSince1970: 4_000)
             episode.updatedAt = Date(timeIntervalSince1970: 6_000)
-            try context.save()
         }
 
         @Test("the V2→V3 relocation carries every watermark across, and the synced store file provably loses the column")
@@ -107,15 +114,39 @@ extension SerializedPersistenceTests {
             #expect(!episode.isOpen)
             #expect(episode.outcome == .verifiedStopped)
             #expect(episode.verificationState == .pending)
+
+            // The single evidence string became one note (spec §5.4 v1.9), by
+            // the same rule the wire format uses: derived id, borrowed
+            // timestamps.
+            let note = try #require(episode.evidenceNotes.first)
+            #expect(episode.evidenceNotes.count == 1)
+            #expect(note.text == "conf #V2-4821, spoke to Dana")
+            #expect(note.createdAt == Date(timeIntervalSince1970: 6_000))
+            #expect(note.id == EvidenceNote.legacyNote(
+                episodeID: episode.id, text: "", episodeUpdatedAt: note.createdAt
+            ).id)
+
+            try assertStoreFileArtifacts(urls)
+        }
+
+        /// The artifact itself, not the schema declaration (the Wave 4 lesson):
+        /// raw SQLite inspection of both migrated store FILES.
+        private func assertStoreFileArtifacts(_ urls: (main: URL, deviceState: URL)) throws {
+            // The fold rewrote the stored state string...
             let rawStates = try sqliteStrings(
                 at: urls.main,
                 query: "SELECT ZVERIFICATIONSTATE FROM ZSTOREDCANCELLATIONEPISODE"
             )
             #expect(rawStates == ["pending"])
-
-            // The artifact itself, not the schema declaration (the Wave 4
-            // lesson): the migrated MAIN store file has no watermark column and
-            // no watermark table; the DEVICE store file has the table.
+            // ...the evidence text moved into its own table and the old column
+            // is gone...
+            let episodeColumns = try sqliteColumns(of: "ZSTOREDCANCELLATIONEPISODE", at: urls.main)
+            #expect(!episodeColumns.contains("ZEVIDENCENOTE"))
+            #expect((try sqliteStrings(
+                at: urls.main, query: "SELECT ZTEXT FROM ZSTOREDEVIDENCENOTE"
+            )) == ["conf #V2-4821, spoke to Dana"])
+            // ...and the MAIN store file has no watermark column and no
+            // watermark table; the DEVICE store file has the table.
             let mainColumns = try sqliteColumns(of: "ZSTOREDSUBSCRIPTION", at: urls.main)
             #expect(mainColumns.contains("ZNAME"))
             #expect(!mainColumns.contains("ZLASTMATERIALIZEDTHROUGH"))

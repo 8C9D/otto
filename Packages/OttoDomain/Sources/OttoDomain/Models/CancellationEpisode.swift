@@ -1,5 +1,56 @@
 import Foundation
 
+/// One piece of dispute evidence (spec §5.4, made a list in v1.9): a call, then
+/// an email, then a chargeback filing - a long cancellation fight produces many
+/// artifacts, each with its own date. The same one-to-one-for-something-
+/// recurring error §5.3a was written to eliminate, caught while a schema change
+/// was still cheap. Carries the §5.0 quartet like every persisted record;
+/// `createdAt` IS the note's own timestamp.
+public struct EvidenceNote: Identifiable, Codable, Hashable, Sendable {
+    /// Client-generated (spec §5.0).
+    public let id: UUID
+    /// Confirmation number, screenshot reference, rep's name.
+    public var text: String
+    public var createdAt: Date
+    public var updatedAt: Date
+    /// Soft-delete tombstone: a hard delete cannot be synced (spec §3.5).
+    public var deletedAt: Date?
+
+    public init(id: UUID, text: String, createdAt: Date, updatedAt: Date, deletedAt: Date? = nil) {
+        self.id = id
+        self.text = text
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    /// The note a pre-v1.9 single `evidenceNote` string becomes - ONE rule,
+    /// shared by the SwiftData V2→V3 migration and the export format's pre-v3
+    /// import so the two paths cannot drift. The id is DERIVED from the
+    /// episode's id (the mask is "EvidNote" in ASCII, arbitrary but frozen), so
+    /// re-importing or re-migrating the same data cannot duplicate the note;
+    /// the timestamp borrows the episode's `updatedAt` - the last touch that
+    /// could have written the note is the closest honest instant the old shape
+    /// recorded, and neither caller may read a clock.
+    public static func legacyNote(
+        episodeID: UUID,
+        text: String,
+        episodeUpdatedAt: Date,
+        episodeDeletedAt: Date? = nil
+    ) -> EvidenceNote {
+        var bytes = episodeID.uuid
+        bytes.0 ^= 0x45; bytes.1 ^= 0x76; bytes.2 ^= 0x69; bytes.3 ^= 0x64
+        bytes.4 ^= 0x4E; bytes.5 ^= 0x6F; bytes.6 ^= 0x74; bytes.7 ^= 0x65
+        return EvidenceNote(
+            id: UUID(uuid: bytes),
+            text: text,
+            createdAt: episodeUpdatedAt,
+            updatedAt: episodeUpdatedAt,
+            deletedAt: episodeDeletedAt
+        )
+    }
+}
+
 /// One cancellation in a subscription's life (spec §5.4, §5.3a) - the record
 /// that keeps watching after a cancellation, and the fix for the failure nothing
 /// else in the category addresses: a cancellation performed, charges continuing,
@@ -107,8 +158,10 @@ public struct CancellationEpisode: Identifiable, Hashable, Sendable {
 
     public var verifiedAt: Date?
 
-    /// Confirmation number, screenshot reference, rep's name - the dispute evidence.
-    public var evidenceNote: String?
+    /// The dispute evidence, one note per artifact (spec §5.4, a list since
+    /// v1.9). Tombstoned notes ride along as communicable history (spec §3.5);
+    /// `liveEvidenceNotes` is the read every consumer wants.
+    public var evidenceNotes: [EvidenceNote]
 
     /// When the episode closed. Nil while it is current (spec §5.3a: the
     /// current episode is the one with no end date).
@@ -134,7 +187,7 @@ public struct CancellationEpisode: Identifiable, Hashable, Sendable {
         verificationState: VerificationState,
         unansweredCheckCount: Int = 0,
         verifiedAt: Date? = nil,
-        evidenceNote: String? = nil,
+        evidenceNotes: [EvidenceNote] = [],
         endedAt: Date? = nil,
         outcome: Outcome? = nil,
         createdAt: Date,
@@ -158,7 +211,7 @@ public struct CancellationEpisode: Identifiable, Hashable, Sendable {
         self.verificationState = verificationState
         self.unansweredCheckCount = unansweredCheckCount
         self.verifiedAt = verifiedAt
-        self.evidenceNote = evidenceNote
+        self.evidenceNotes = evidenceNotes
         self.endedAt = endedAt
         self.outcome = outcome
         self.createdAt = createdAt
@@ -169,6 +222,14 @@ public struct CancellationEpisode: Identifiable, Hashable, Sendable {
     /// Current, in §5.3a's sense. Deleted episodes are tombstoned history and
     /// never current; callers filter those where it matters.
     public var isOpen: Bool { endedAt == nil }
+
+    /// The evidence a dispute (or the UI) actually shows: live notes, oldest
+    /// first, ties broken by id so identical data always reads identically.
+    public var liveEvidenceNotes: [EvidenceNote] {
+        evidenceNotes
+            .filter { $0.deletedAt == nil }
+            .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
+    }
 }
 
 // MARK: - Upgrading pre-episode records (spec §5.3a)
@@ -228,7 +289,7 @@ extension CancellationEpisode: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, subscriptionID, markedCancelledAt, statusAtStart, nextChargeDateIfNotCancelled
         case expectedChargeAmountCents, verificationState, unansweredCheckCount
-        case verifiedAt, evidenceNote, endedAt, outcome, createdAt, updatedAt, deletedAt
+        case verifiedAt, evidenceNotes, endedAt, outcome, createdAt, updatedAt, deletedAt
     }
 
     // Hand-written so decoding routes through both construction invariants
@@ -262,7 +323,7 @@ extension CancellationEpisode: Codable {
             verificationState: state,
             unansweredCheckCount: try container.decode(Int.self, forKey: .unansweredCheckCount),
             verifiedAt: try container.decodeIfPresent(Date.self, forKey: .verifiedAt),
-            evidenceNote: try container.decodeIfPresent(String.self, forKey: .evidenceNote),
+            evidenceNotes: try container.decodeIfPresent([EvidenceNote].self, forKey: .evidenceNotes) ?? [],
             endedAt: endedAt,
             outcome: outcome,
             createdAt: try container.decode(Date.self, forKey: .createdAt),
@@ -282,7 +343,7 @@ extension CancellationEpisode: Codable {
         try container.encode(verificationState, forKey: .verificationState)
         try container.encode(unansweredCheckCount, forKey: .unansweredCheckCount)
         try container.encodeIfPresent(verifiedAt, forKey: .verifiedAt)
-        try container.encodeIfPresent(evidenceNote, forKey: .evidenceNote)
+        try container.encode(evidenceNotes, forKey: .evidenceNotes)
         try container.encodeIfPresent(endedAt, forKey: .endedAt)
         try container.encodeIfPresent(outcome, forKey: .outcome)
         try container.encode(createdAt, forKey: .createdAt)

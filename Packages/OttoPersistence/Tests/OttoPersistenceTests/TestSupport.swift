@@ -175,7 +175,14 @@ func makeCancellationEpisode(
         expectedChargeAmountCents: expectedChargeAmountCents,
         verificationState: verificationState,
         unansweredCheckCount: unansweredCheckCount,
-        evidenceNote: evidenceNote,
+        evidenceNotes: try evidenceNote.map { text in
+            [EvidenceNote(
+                id: try fixtureUUID(index + 50),
+                text: text,
+                createdAt: Date(timeIntervalSince1970: 1_500),
+                updatedAt: Date(timeIntervalSince1970: 1_500)
+            )]
+        } ?? [],
         createdAt: Date(timeIntervalSince1970: 1_000),
         updatedAt: Date(timeIntervalSince1970: 2_000)
     )

@@ -31,7 +31,7 @@ struct CancellationFlowTests {
                 verificationState: record.verificationState,
                 unansweredCheckCount: record.unansweredCheckCount,
                 verifiedAt: record.verifiedAt,
-                evidenceNote: record.evidenceNote,
+                evidenceNotes: record.evidenceNotes,
                 createdAt: record.createdAt,
                 updatedAt: record.updatedAt,
                 deletedAt: record.deletedAt
@@ -148,21 +148,40 @@ struct CancellationFlowTests {
         let start = try await flows.startCancellation(
             subscriptionID: subscription.id, evidenceNote: "Confirmation: 4821", now: now, today: today
         )
-        #expect(start?.record.evidenceNote == "Confirmation: 4821")
+        #expect(start?.record.liveEvidenceNotes.map(\.text) == ["Confirmation: 4821"])
 
         // A redelivered start - with or without a note - changes nothing.
         _ = try await flows.startCancellation(
             subscriptionID: subscription.id, evidenceNote: "something else", now: now, today: today
         )
-        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id)?.evidenceNote
-            == "Confirmation: 4821")
+        let afterRedelivery = try await fixture.cancellations.openEpisode(forSubscription: subscription.id)
+        #expect(afterRedelivery?.liveEvidenceNotes.map(\.text) == ["Confirmation: 4821"])
 
-        // The deliberate edit path does replace it.
-        try await flows.updateCancellationEvidence(
-            subscriptionID: subscription.id, note: "Confirmation: 4821, rep was Dana", now: now
+        // The deliberate paths do change it: an appended note accumulates
+        // (spec §5.4, a list since v1.9)...
+        try await flows.appendCancellationEvidence(
+            subscriptionID: subscription.id, text: "rep was Dana", now: now.addingTimeInterval(60)
         )
-        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id)?.evidenceNote
-            == "Confirmation: 4821, rep was Dana")
+        let appended = try await fixture.cancellations.openEpisode(forSubscription: subscription.id)
+        #expect(appended?.liveEvidenceNotes.map(\.text) == ["Confirmation: 4821", "rep was Dana"])
+
+        // ...an edit rewrites one note in place...
+        let firstID = try #require(appended?.liveEvidenceNotes.first?.id)
+        try await flows.updateCancellationEvidence(
+            subscriptionID: subscription.id, noteID: firstID,
+            text: "Confirmation: 4821 (email)", now: now.addingTimeInterval(120)
+        )
+        let edited = try await fixture.cancellations.openEpisode(forSubscription: subscription.id)
+        #expect(edited?.liveEvidenceNotes.map(\.text) == ["Confirmation: 4821 (email)", "rep was Dana"])
+
+        // ...and clearing a note's text tombstones it, never hard-deletes
+        // (spec §3.5): the history keeps the row.
+        try await flows.updateCancellationEvidence(
+            subscriptionID: subscription.id, noteID: firstID, text: "", now: now.addingTimeInterval(180)
+        )
+        let removed = try await fixture.cancellations.openEpisode(forSubscription: subscription.id)
+        #expect(removed?.liveEvidenceNotes.map(\.text) == ["rep was Dana"])
+        #expect(removed?.evidenceNotes.count == 2)
     }
 
     @Test("a failed status save cannot leave a cancellation status without a record - the record lands first")

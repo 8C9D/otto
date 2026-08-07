@@ -49,17 +49,11 @@ extension OttoSchemaV3.StoredCancellationEpisode {
                 value: "\(upgraded.endedAt.map(String.init(describing:)) ?? "nil")/\(domainOutcome?.rawValue ?? "nil")"
             )
         }
-        // A status no cancellation can interrupt is data damage; nil (a
-        // migrated pre-8.5 episode) is the honest absence the restore derives
-        // from, so damage maps to nil rather than to a lie.
-        let statusAtStart: SubscriptionStatus? = self.statusAtStart
-            .flatMap(SubscriptionStatus.init(rawValue:))
-            .flatMap { [.trial, .active, .paused].contains($0) ? $0 : nil }
         return CancellationEpisode(
             id: try require(id, entity: entity, field: "id"),
             subscriptionID: try require(subscriptionID, entity: entity, field: "subscriptionID"),
             markedCancelledAt: try require(markedCancelledAt, entity: entity, field: "markedCancelledAt"),
-            statusAtStart: statusAtStart,
+            statusAtStart: domainStatusAtStart,
             nextChargeDateIfNotCancelled: checkDate,
             // Nil means written before v1.5 stored the amount; the domain
             // backfills it on the next roll-forward rather than inventing one here.
@@ -68,13 +62,30 @@ extension OttoSchemaV3.StoredCancellationEpisode {
             // Written before the field existed means never rolled forward: 0.
             unansweredCheckCount: unansweredCheckCount ?? 0,
             verifiedAt: verifiedAt,
-            evidenceNote: evidenceNote,
+            evidenceNotes: try domainEvidenceNotes(),
             endedAt: upgraded.endedAt,
             outcome: domainOutcome,
             createdAt: try require(createdAt, entity: entity, field: "createdAt"),
             updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
             deletedAt: deletedAt
         )
+    }
+
+    /// A status no cancellation can interrupt is data damage; nil (a migrated
+    /// pre-8.5 episode) is the honest absence the restore derives from, so
+    /// damage maps to nil rather than to a lie.
+    private var domainStatusAtStart: SubscriptionStatus? {
+        statusAtStart
+            .flatMap(SubscriptionStatus.init(rawValue:))
+            .flatMap { [.trial, .active, .paused].contains($0) ? $0 : nil }
+    }
+
+    /// Tombstoned notes ride along - communicable history (spec §3.5) - in
+    /// deterministic order so identical stores map to identical values.
+    private func domainEvidenceNotes() throws -> [EvidenceNote] {
+        try (evidenceNotes ?? [])
+            .map { try $0.toDomain() }
+            .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
     }
 
     /// The v1.9 folding upgrade, mirrored from the wire format: a stored
@@ -116,9 +127,59 @@ extension OttoSchemaV3.StoredCancellationEpisode {
         verificationState = domain.verificationState.rawValue
         unansweredCheckCount = domain.unansweredCheckCount
         verifiedAt = domain.verifiedAt
-        evidenceNote = domain.evidenceNote
         endedAt = domain.endedAt
         outcome = domain.outcome?.rawValue
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
+        syncEvidenceNotes(with: domain)
+    }
+
+    /// Notes sync by id, exactly like a subscription's pause episodes: each
+    /// domain note updates its record or inserts a new one, and a stored note
+    /// the domain value no longer carries is soft-deleted at the episode's
+    /// `updatedAt` - the domain array is the whole history, so absence is
+    /// deliberate removal, never drift.
+    private func syncEvidenceNotes(with domain: CancellationEpisode) {
+        let storedNotes = evidenceNotes ?? []
+        let storedByID = Dictionary(
+            storedNotes.compactMap { record in record.id.map { ($0, record) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let domainIDs = Set(domain.evidenceNotes.map(\.id))
+        for note in domain.evidenceNotes {
+            if let existing = storedByID[note.id] {
+                existing.update(from: note)
+            } else {
+                let record = OttoSchemaV3.StoredEvidenceNote()
+                record.episode = self
+                record.update(from: note)
+            }
+        }
+        for orphan in storedNotes
+        where orphan.id.map({ !domainIDs.contains($0) }) ?? true {
+            if orphan.deletedAt == nil { orphan.deletedAt = domain.updatedAt }
+        }
+    }
+}
+
+extension OttoSchemaV3.StoredEvidenceNote {
+    private static let entityName = "StoredEvidenceNote"
+
+    func toDomain() throws -> EvidenceNote {
+        let entity = Self.entityName
+        return EvidenceNote(
+            id: try require(id, entity: entity, field: "id"),
+            text: try require(text, entity: entity, field: "text"),
+            createdAt: try require(createdAt, entity: entity, field: "createdAt"),
+            updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
+            deletedAt: deletedAt
+        )
+    }
+
+    func update(from domain: EvidenceNote) {
+        id = domain.id
+        text = domain.text
         createdAt = domain.createdAt
         updatedAt = domain.updatedAt
         deletedAt = domain.deletedAt

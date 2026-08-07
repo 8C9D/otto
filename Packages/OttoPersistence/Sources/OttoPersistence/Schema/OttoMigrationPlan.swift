@@ -175,17 +175,47 @@ enum OttoMigrationPlan: SchemaMigrationPlan {
         }
     )
 
-    /// The Wave 6A stage (spec §5.3). All the work happens in `willMigrate`,
-    /// deliberately: the watermarks are written into the device-state store -
-    /// their own file, their own container - and VERIFIED by readback while the
-    /// V2 column still exists. A crash or failure at any point leaves the main
-    /// store at V2 and the carry-over re-runs (the upsert makes it idempotent);
-    /// only after the values durably exist twice does the destructive stage
-    /// drop the column. There is no window in which the values exist nowhere.
+    /// What the V2→V3 stage's `willMigrate` reads out of the V2 store for
+    /// `didMigrate` to convert - the single evidence note per episode, carried
+    /// across the schema swap in memory (same arrangement as the V1→V2 stash)
+    /// because V2's `evidenceNote` column and V3's note table never exist in
+    /// the same context.
+    private struct LegacyEvidence: Sendable {
+        let episodeID: UUID
+        let text: String
+        let updatedAt: Date?
+        let createdAt: Date?
+        let deletedAt: Date?
+    }
+
+    private static let evidenceStash = Mutex<[LegacyEvidence]>([])
+
+    /// The Wave 6A stage (spec §5.3, §5.4 v1.9). The watermark work happens in
+    /// `willMigrate`, deliberately: the watermarks are written into the
+    /// device-state store - their own file, their own container - and VERIFIED
+    /// by readback while the V2 column still exists. A crash or failure at any
+    /// point leaves the main store at V2 and the carry-over re-runs (the
+    /// upsert makes it idempotent); only after the values durably exist twice
+    /// does the destructive stage drop the column. There is no window in which
+    /// the values exist nowhere. The evidence notes and the fold rewrite stay
+    /// inside the main store, in `didMigrate`.
     static let migrateV2toV3 = MigrationStage.custom(
         fromVersion: OttoSchemaV2.self,
         toVersion: OttoSchemaV3.self,
         willMigrate: { context in
+            var evidence: [LegacyEvidence] = []
+            for record in try context.fetch(FetchDescriptor<OttoSchemaV2.StoredCancellationEpisode>()) {
+                guard let episodeID = record.id, let text = record.evidenceNote else { continue }
+                evidence.append(LegacyEvidence(
+                    episodeID: episodeID,
+                    text: text,
+                    updatedAt: record.updatedAt,
+                    createdAt: record.createdAt,
+                    deletedAt: record.deletedAt
+                ))
+            }
+            evidenceStash.withLock { $0 = evidence }
+
             var carried: [(subscriptionID: UUID, watermark: Int)] = []
             for record in try context.fetch(FetchDescriptor<OttoSchemaV2.StoredSubscription>()) {
                 guard let id = record.id, let watermark = record.lastMaterializedThrough else { continue }
@@ -232,6 +262,12 @@ enum OttoMigrationPlan: SchemaMigrationPlan {
             }
         },
         didMigrate: { context in
+            let evidence = evidenceStash.withLock { staged in
+                let taken = staged
+                staged = []
+                return taken
+            }
+
             // The §5.4 v1.9 folding: `.verifiedStopped` left `verificationState`
             // (reaching that result closes the episode; it does not set a
             // state). Rows written before the fold are rewritten by the same
@@ -241,8 +277,10 @@ enum OttoMigrationPlan: SchemaMigrationPlan {
             // verification instant (`CancellationEpisode.legacyClosure` - one
             // rule, three callers, no drift).
             var rewrote = false
-            for record in try context.fetch(FetchDescriptor<OttoSchemaV3.StoredCancellationEpisode>())
-            where record.verificationState == "verifiedStopped" {
+            var episodesByID: [UUID: OttoSchemaV3.StoredCancellationEpisode] = [:]
+            for record in try context.fetch(FetchDescriptor<OttoSchemaV3.StoredCancellationEpisode>()) {
+                if let id = record.id { episodesByID[id] = record }
+                guard record.verificationState == "verifiedStopped" else { continue }
                 if record.endedAt == nil && record.outcome == nil {
                     let closure = CancellationEpisode.legacyClosure(
                         verificationStateRaw: record.verificationState,
@@ -255,6 +293,28 @@ enum OttoMigrationPlan: SchemaMigrationPlan {
                 record.verificationState = CancellationEpisode.VerificationState.pending.rawValue
                 rewrote = true
             }
+
+            // The §5.4 v1.9 list conversion: each single evidence note becomes
+            // one row, by the same rule the wire format applies to pre-v3
+            // files (`EvidenceNote.legacyNote`) - derived id, borrowed
+            // timestamps. A corrupt V2 row missing both timestamps borrows the
+            // epoch: deterministic, and keeping the text with a wrong date
+            // beats dropping evidence.
+            for legacy in evidence {
+                guard let episode = episodesByID[legacy.episodeID] else { continue }
+                let note = EvidenceNote.legacyNote(
+                    episodeID: legacy.episodeID,
+                    text: legacy.text,
+                    episodeUpdatedAt: legacy.updatedAt ?? legacy.createdAt ?? Date(timeIntervalSince1970: 0),
+                    episodeDeletedAt: legacy.deletedAt
+                )
+                let record = OttoSchemaV3.StoredEvidenceNote()
+                context.insert(record)
+                record.episode = episode
+                record.update(from: note)
+                rewrote = true
+            }
+
             if rewrote {
                 try context.save()
             }
