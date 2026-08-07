@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.9 — SCHEMA FROZEN** pending the Wave 6A relocation below. Revised Aug 7 against Claude Code's Wave 8.5 report. Waves 0–8.5 complete; HEAD `3a69893` **verified twice from a clean clone** (**414 tests**). Remaining: **Wave 6A (watermark relocation — CloudKit stays off)**, four manual gates, then **Wave 6B (CloudKit enablement)**.
+**Status:** **v2.0 — SCHEMA FROZEN (V3).** Revised Aug 7 against Claude Code's Wave 6A report and its CloudKit readiness audit. Waves 0–6A complete; HEAD `bc5b86d` **verified twice from clean clones** (**420 tests**). ⚠ **The readiness audit found that enabling CloudKit as planned would cause silent data loss.** Remaining: **Wave 6B-Prep (sync safety)**, four manual gates, then **6B**.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -245,6 +245,18 @@ Both write the same fields. Mode B is what most existing subscriptions will use,
 
 *(Added Aug 6 after a competitive scan — every shipping tracker in the category models paused as a first-class state, and retrofitting it once the `BillingEvent` ledger has history is materially harder than including it now.)*
 
+### 4a. Sync-safety principles *(added v2.0 — from the Wave 6A readiness audit)*
+
+The audit's central finding is that **several contracts that are true for a single device are false under per-record sync**, and each failure is silent. These are stated as principles because the individual bugs are instances of them:
+
+**1. Absence is not deletion.** The aggregate save path soft-deletes any stored child (pause episode, evidence note, trial) missing from the in-memory array, on the contract that *"absence is deliberate removal."* Under per-record sync **that contract is simply false**: device A saving a stale snapshot tombstones device B's just-synced episode, with no error anywhere. **Deletion must be an explicit operation on an identified record**, never inferred from a collection's contents. This is the single most severe item found before 6B.
+
+**2. Invariants are enforced at write and repaired at read — never thrown at read.** Two devices pausing independently produces two open pause episodes, and the at-most-one-open invariant then **throws in mapping, making the subscription unreadable on every device**, permanently, with no repair flow. Under sync, any invariant reachable from two devices *will* be violated eventually. **Reading must degrade and repair; it must not fail.** *(Same lesson as v1.9's backup bug, generalised: an invariant that throws at read time converts a sync artifact into a dead record.)*
+
+**3. A guard pinned to a version silently stops guarding.** The Wave 2 CloudKit-compatibility assertion **stayed green while asserting `OttoSchemaV2` after V3 became real** — checking nothing, reporting success. Guards must fail when the thing they guard changes: assert the current schema *and* count the models, so adding one without updating the guard breaks the build.
+
+---
+
 ### 5.0 The audit quartet — on **every** persisted record *(added v1.2)*
 
 **⚠ v1.0 and v1.1 contradicted themselves here, and the contradiction is resolved in §3.5's favour.** §3.5 called client UUID + `createdAt`/`updatedAt` + soft-delete tombstone "non-negotiable on every persisted record," while the §5 tables below gave them to `Subscription` alone — `BillingEvent`, `CancellationRecord`, `PriceChange` and `PaymentMethod` had no timestamps, and `TrialTerm` and `CancellationRecord` had no `id` at all.
@@ -337,7 +349,7 @@ The derived-status design in §5.2a is correct and is not what failed. **What fa
 
 Three states are representable in the types but meaningless in the domain. Each was silently no-op'd somewhere in Wave 3 — and **silent no-ops in separate switch arms are how two code paths eventually disagree.** Each is now a declared invariant, enforced at construction and surfaced loudly, never skipped quietly.
 
-**⚠ Status-coupled invariants apply to LIVE records only** *(added v1.9)*. Wave 8.5 caught its own newly-introduced bug in self-review: deleting a paused subscription tombstones its episodes, after which the *"a paused subscription must have an open pause episode"* check refused the row — making a **full backup fail because a deleted gym membership existed.** An invariant enforced against tombstones turns ordinary history into a permanent export failure. Tombstones are outside every status-coupled invariant, with a regression test on the export path.
+**⚠ Status-coupled invariants apply to LIVE records only** *(added v1.9)*. Wave 8.5 caught its own newly-introduced bug in self-review: deleting a paused subscription tombstones its episodes, after which the *"a paused subscription must have an open pause episode"* check refused the row — making a **full backup fail because a deleted gym membership existed.** An invariant enforced against tombstones turns ordinary history into a permanent export failure. Tombstones are outside every status-coupled invariant, with a regression test on the export path. **v2.0 generalises this** — see §4a principle 2: invariants are enforced at write and **repaired** at read, never thrown at read.
 
 **⚠ "Loudly" needs a definition, added in v1.4.** The established read policy is skip-with-log, which is loud *in the console* and invisible *in the UI* — the opposite of how §7.1 treats the cancelled-without-record invariant, and it means an unmappable `.trial` record simply vanishes from the user's view. For a product whose whole promise is that nothing slips past unnoticed, a subscription disappearing silently is the worst available failure.
 
@@ -386,6 +398,8 @@ Every expected charge is a row. This is the backbone of both verification and re
 
 The watermark also bounds the work: a Mode B subscription entered today does not backfill years of history it never had rows for, because the watermark starts at entry.
 
+**⚠ An absent watermark is a hazard, not a neutral default** *(corrected in v2.0)*. It was previously described — including in the Wave 6A prompt — as meaning "re-materialize from the anchor: safe but wasteful." **That is wrong, and the code was right.** A nil watermark materializes **from today**, skipping the entire unobserved window. That is not waste; **it is the founding hazard**, silently. This is why the migration *refuses* rather than degrading when it cannot carry watermarks across. A watermark is initialised to the anchor or `createdAt`, **never to today**, and there is no safe fallback for a missing one.
+
 **The watermark is device-local and is NOT synced** *(decided in v1.6; Wave 5.5 correctly flagged that its merge behaviour was undefined)*. It records *what this device has done*, not anything about the subscription — so it is stored outside the CloudKit-backed schema, per device.
 
 **How, concretely** *(specified in v1.7 — Wave 7 correctly noted the watermark still physically lives on `StoredSubscription`, and SwiftData cannot exclude a single property from CloudKit sync)*:
@@ -402,7 +416,13 @@ Wave 8's export already excludes it, since exporting one device's progress marke
 
 > **Any edit that moves a subscription's billing sequence earlier must rewind the watermark to the earliest affected date.**
 
-The reasoning is that last-write-wins is the wrong merge for it in a dangerous direction. A **regressed** watermark is harmless: re-materialization is idempotent and dedups on `(subscriptionID, expectedDate)`, so the cost is wasted work. An **advanced** watermark is not: if device A's watermark syncs ahead of the rows it corresponds to, device B skips charge dates that were never materialized anywhere. Since CloudKit cannot express "merge by taking the minimum," the safe move is not to sync it at all. Each device materializes independently; the dedup makes the duplication invisible.
+The reasoning is that last-write-wins is the wrong merge for it in a dangerous direction. A **regressed** watermark is harmless: re-materialization is idempotent and dedups on `(subscriptionID, expectedDate)`, so the cost is wasted work. An **advanced** watermark is not: if device A's watermark syncs ahead of the rows it corresponds to, device B skips charge dates that were never materialized anywhere. Since CloudKit cannot express "merge by taking the minimum," the safe move is not to sync it at all. Each device materializes independently.
+
+**⚠ "The dedup makes the duplication invisible" was wrong** *(corrected in v2.0)*. The `(subscriptionID, expectedDate)` uniqueness check only **prevents** a duplicate at write time; it never **reconciles** one that arrives later. Two devices materializing the same charge date concurrently — which is the normal case once sync is on, since materialization is deliberately per-device — produce **permanently duplicated ledger rows**, each with its own independent acknowledgement and confirmation state.
+
+> **A post-sync reconciliation pass is required**: for each `(subscriptionID, expectedDate)` group, keep the row with the earliest `createdAt`, **merge** the acknowledgement and confirmation state from the rest (any acknowledgement counts, any confirmation counts), and tombstone the losers. Deterministic, so every device reaches the same result without coordination.
+
+Prevention alone is only sufficient in a single-writer world, which is exactly what enabling sync stops being.
 
 Corollary: watermark writes are bookkeeping, not user edits, and **must not bump `updatedAt`** — doing so would make every scheduler pass look like a user modification to conflict resolution.
 
@@ -719,8 +739,16 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **7** ✅ | Insights, payment methods, zombie detection, plus the pause UI and the paused-cancellation defer-and-ask path | ✅ **Done** — HEAD `99c3050`, **347 tests**, all Insights figures tested against hand-computed fixtures written *before* implementation. Wave 5.5's segfault did not recur |
 | **8** ✅ | Export/import (JSON + CSV), settings, accessibility pass | ✅ **Done** — HEAD `f38eec6`, **403 tests**. Round-trip bit-exact incl. tombstones and fractional-second instants; corruption tested at seven offsets. A SwiftLint custom rule now makes any mention of `storedStatus` an **error** above layer 2 — which caught a live display bug ("Resumes Sep 1" shown forever after Sep 1) |
 | **8.5** ✅ | **Model lock**: `CancellationEpisode` + `PauseEpisode`, schema V2 with a custom migration, un-cancel, invalidation fix, export format v2, and the schema-freeze sweep | ✅ **Done** — HEAD `3a69893`, **414 tests**, `verify.sh` green twice from clean clones. `docs/schema-freeze-review.md` written |
-| **6A** | **Watermark relocation to the local-only `ModelConfiguration` + v1.9 reconciliation. CloudKit stays OFF.** | ⛔ Committed and verified before 6B is written |
-| **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall. ⛔ **Blocked on all four manual gates and on 6A being green** |
+| **6A** ✅ | Watermark relocated to a **separate local-only `ModelContainer`** (`OttoDeviceState.store`), plus the §5.4 folding and `evidenceNotes` child table. CloudKit untouched | ✅ **Done** — HEAD `bc5b86d`, **420 tests**, verified twice from clean clones. Schema V3. Migration **refuses rather than degrades** if watermarks can't be carried |
+| **6B-Prep** | **Sync safety.** §4a's three principles implemented; ledger reconciliation; remove the domain-side watermark; the four §6B prerequisites below | ⛔ **Required before 6B.** The readiness audit found enabling CloudKit without these causes silent data loss |
+| **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
+
+**⛔ Hard prerequisites for enabling CloudKit** *(added v2.0; the audit answered "what is the rollback story" with **"there is no rollback story — there is a backup story," which is not the same thing**)*. `restore()` hard-deletes and re-inserts, which under mirroring is a **mass cloud deletion plus a resurrection vector for offline devices**; sync cannot be switched off without shipping a build; and nothing can purge the zone. All four must exist first:
+
+1. **An automatic pre-enable export snapshot** — taken before the first sync, unprompted
+2. **A runtime kill switch** for sync, so disabling it never requires an App Store release
+3. **A zone-purge action**
+4. **A sync-aware `restore()`** that does not express a restore as a mass deletion
 | **9** | Real-data dogfood; then TestFlight to the second user | The owner runs it as his only tracker for two weeks |
 
 **Waves 7 and 8 now precede Wave 6** *(reordered in v1.6)*. Three reasons, in ascending order of importance:
@@ -781,6 +809,16 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 ---
 
 ## Update log
+
+- **2026-08-07 (v2.0 — revised against the Wave 6A report and its CloudKit readiness audit)** — Wave 6A done: **420 tests**, watermark relocated to a **separate `ModelContainer`** rather than a second configuration (that design was **probed empirically first** — SwiftData's staged migration refuses any container whose schema isn't exactly a plan version, so it could never sweep device state out of a synced configuration). Migration **asserts the carry-over while the old column still exists** and **refuses to migrate at all** if the destination is missing. **⚠ The readiness audit is the most consequential document produced in this project: enabling CloudKit as planned would have caused silent data loss.** New §4a states the three principles behind the findings:
+  - **⚠⚠ Absence is not deletion.** The aggregate save path soft-deletes any stored child absent from the in-memory array, on the contract that absence means deliberate removal. **Under per-record sync that contract is false** — device A saving a stale snapshot **tombstones device B's just-synced episode, silently.** Now covers evidence notes and the trial too. **Ranked above everything else as the pre-6B change.**
+  - **⚠⚠ Invariants that throw at read time convert sync artifacts into dead records.** Two devices pausing independently produces two open pause episodes; the at-most-one-open invariant then throws in mapping, making **the subscription unreadable on every device, permanently, with no repair flow.** Generalised: under sync, any invariant reachable from two devices *will* be violated — reading must **degrade and repair**, never fail. Same lesson as v1.9's backup bug, one level up.
+  - **⚠ "The dedup makes the duplication invisible" (§5.3) was wrong.** Uniqueness on `(subscriptionID, expectedDate)` only **prevents** at write time and never **reconciles** later, so two devices materializing concurrently — the normal case, since materialization is deliberately per-device — produce **permanently duplicated ledger rows** with independent acknowledgement state. A deterministic post-sync reconciliation pass is now required.
+  - **⭐ A guard had gone silently stale.** The Wave 2 CloudKit-compatibility assertion **stayed green while asserting `OttoSchemaV2` after V3 became real** — checking nothing, reporting success. Now asserts V3 and counts models, so adding one without updating the guard breaks the build. **A guard pinned to a version number stops guarding without ever failing.**
+  - **⛔ Four hard prerequisites added before CloudKit can be enabled.** Asked pessimistically for a rollback story, the audit answered that **there isn't one — there's a backup story, which is not the same thing**: `restore()` hard-deletes and re-inserts, a mass cloud deletion plus a resurrection vector for offline devices; sync can't be disabled without shipping a build; nothing can purge the zone.
+  - **⚠ My own prompt was wrong and the code was right.** It called a lost watermark "safe but wasteful" — in fact a nil watermark materializes **from today**, skipping the unobserved window: the founding hazard, not waste. Corrected in §5.3, and it is why the migration refuses rather than degrades.
+  - **Scope judgment affirmed.** The prompt's steps named the watermark only while its own summary said "relocate the watermark **and reconcile spec v1.9**"; Claude Code implemented all three schema resolutions, reasoning that **a frozen spec describing a model the frozen code doesn't have is exactly the failure this project exists to prevent.** Correct call — and it kept the two extra commits cleanly separable so the narrower reading remained available.
+  - **The "can't fully articulate" instinct was right a third time:** the domain `Subscription` still *carries* `lastMaterializedThrough` though persistence no longer stores it there — "whatever the store last told me," the same **one-value-two-authorities** shape as the retired `anchorDay`. Removed in 6B-Prep before sync work touches the read path.
 
 - **2026-08-07 (v1.9 — SCHEMA FROZEN, revised against the Wave 8.5 report)** — **414 tests, `verify.sh` green twice from clean clones**, `docs/schema-freeze-review.md` written. The sweep did what it was for: it produced explicit verdicts including several deliberate *not*-fixes with stated reasons, and it caught **a bug it had introduced itself, in self-review**.
   - **⚠ The watermark relocation is promoted from *Wave 6's first step* to a *precondition*, and Wave 6 is split into 6A and 6B.** The sweep named this the thing it would most regret freezing, and the reasoning is exact: everything depends on "first schema act" actually being first, and **if CloudKit turns on with the watermark still on `StoredSubscription`, the advanced-watermark hazard becomes real silent loss** — the precise failure this app exists to prevent. That is also the shape this project keeps hitting: **a plan depending on a future wave's discipline holding.** Now a verified committed state instead of an intention.
