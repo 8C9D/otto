@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.1** — revised Aug 6 evening against Claude Code's Wave 1 report. Waves 0–1 complete and committed (`~/dev/otto`, 50 tests passing).
+**Status:** **v1.2** — revised Aug 6 late against Claude Code's Wave 2 report. Waves 0–2 complete and committed (`~/dev/otto`, 92 tests passing).
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -234,6 +234,19 @@ Both write the same fields. Mode B is what most existing subscriptions will use,
 
 *(Added Aug 6 after a competitive scan — every shipping tracker in the category models paused as a first-class state, and retrofitting it once the `BillingEvent` ledger has history is materially harder than including it now.)*
 
+### 5.0 The audit quartet — on **every** persisted record *(added v1.2)*
+
+**⚠ v1.0 and v1.1 contradicted themselves here, and the contradiction is resolved in §3.5's favour.** §3.5 called client UUID + `createdAt`/`updatedAt` + soft-delete tombstone "non-negotiable on every persisted record," while the §5 tables below gave them to `Subscription` alone — `BillingEvent`, `CancellationRecord`, `PriceChange` and `PaymentMethod` had no timestamps, and `TrialTerm` and `CancellationRecord` had no `id` at all.
+
+**Every model carries all four**: `id: UUID` (client-generated), `createdAt: Date`, `updatedAt: Date`, `deletedAt: Date?`. Read the §5 tables below as listing each model's *distinctive* fields, with the quartet implied.
+
+Two reasons this isn't bookkeeping ceremony:
+
+- **CloudKit syncs per record, not per object graph.** A `BillingEvent` edited on an iPhone and an iPad has nothing to resolve last-write-wins against without its own `updatedAt`. The parent's timestamp doesn't help — the parent didn't change.
+- **A record with no `id` cannot be addressed individually by CloudKit at all**, which makes `TrialTerm` and `CancellationRecord` unsyncable as written.
+
+Fixing this **before Wave 6 is a field addition; after it is a schema migration** on data already living on two people's phones.
+
 ### 5.2 `TrialTerm` (optional, attached to a Subscription)
 
 | Field | Type | Notes |
@@ -267,6 +280,24 @@ Every expected charge is a row. This is the backbone of both verification and re
 
 **Rule: a `BillingEvent` is materialized at the moment its reminder is scheduled, and never earlier.** Concretely — the reminder scheduler runs, computes the events inside the rolling ~90-day horizon, and creates any that don't yet exist. Rows past the horizon do not exist; the UI derives those dates on the fly.
 
+**Which window governs — the reminder's, not the charge's** *(pinned in v1.2; v1.1 left the two unreconciled)*. A reminder fires `reminderLeadDays` *before* its charge, so a reminder inside the horizon can belong to a charge that falls just outside it. Since the entire reason a row exists is to carry that reminder's state, **the row must exist whenever the reminder does.**
+
+> Materialize every charge date in `[today, today + horizonDays + maxReminderLeadDays]`.
+
+The charge window is therefore slightly wider than the reminder horizon, by the largest lead time in use. Deriving it from the charge window instead leaves the outermost reminders with no row to attach to.
+
+**Which statuses materialize** *(unspecified in v1.1)*:
+
+| Status | Materializes? | Why |
+|---|---|---|
+| `.active` | ✅ Yes | The ordinary case |
+| `.trial` | ✅ **Exactly one**, at `conversionDate`, for `convertsToAmountCents` | ⭐ **Otherwise the single most important charge in the app has no ledger row.** The trial conversion is the charge Otto exists to catch; without a row, neither verification nor price-mismatch detection covers it |
+| `.paused` | ❌ No | §5.1 — no charges while paused |
+| `.cancellationPending` / `.cancelled` | ❌ Not prospectively | A `BillingEvent` asserts a charge is *expected*, which is the opposite of what the record claims. These are watched by §5.4 verification instead |
+| `.archived` | ❌ No | Terminal |
+
+**The one retrospective creation path.** When a verification reports `.stillCharging`, that charge **did** happen and needs a ledger row — created at that moment with state `.unexpectedCharge`. This is the **only** producer of that state; in v1.1 the enum case existed with nothing able to create it.
+
 The justification is that a row only earns storage once there is **user-facing state to attach to it** — a reminder that fired, a confirmation, an amount mismatch. Before that it is a calculation, not a record. This also caps the ledger's growth at roughly `subscriptions × cyclesPerQuarter` new rows per scheduling pass.
 
 ### 5.4 `CancellationRecord` — the Failure-B fix
@@ -285,6 +316,10 @@ The justification is that a row only earns storage once there is **user-facing s
 The rename matters too: *"expected final charge"* is ambiguous — some vendors bill once more, most don't. The field's actual job is to name **the date a charge would land if the cancellation silently failed**, which is exactly the verification trigger. `nextChargeDateIfNotCancelled` says that.
 
 **A cancelled subscription is not archived until verification passes.** It stays in a "Watching" state and the app checks back on the next date a charge would have landed. If the user reports a charge did arrive, the record flips to `.stillCharging` and the app surfaces everything needed for a dispute: cancellation date, confirmation note, the charge date and amount.
+
+**When a verification check goes unanswered** *(specified in v1.2; v1.1 was silent, and §6.2's catch-up rule covers reminders-before-a-billing-date, not this)*. The user opens the app a week after the check date and the state is still `.pending`.
+
+**Rule: keep watching, and roll the check forward to the next date a charge would have landed — but cap it at three consecutive unanswered cycles.** A cancellation that silently failed will charge again next cycle, so one ignored notification must not end the watch. But past three, the signal is that notifications aren't reaching this item, and a fourth won't either: the subscription moves to a **persistent card in Today's *Needs action* section** and stops generating notifications. Escalating in the app rather than escalating the notifications is the correct response to being ignored.
 
 ### 5.5 `PriceChange` and `PaymentMethod`
 
@@ -428,7 +463,7 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 |---|---|---|
 | **0** ✅ | XcodeGen (`project.yml` committed, `.xcodeproj` generated + gitignored), bundle ID, entitlements, SwiftLint, CI, folder structure per §3.4 | ✅ **Done** — commit `e844ccf`. ⚠ CI written but **unverified until a remote exists**; uses `runs-on: macos-26` |
 | **1** ✅ | Domain layer + date engine + tests, as a standalone SPM package (`Packages/OttoDomain`) so "Foundation only" is compiler-enforced | ✅ **Done** — commit `f36f584`; **50 tests / 11 suites passing**, incl. the 186-case property test |
-| **2** | SwiftData models, mapping layer, repository protocols + implementations. Local only — **CloudKit not yet enabled** | Round-trip persistence tests pass |
+| **2** ✅ | SwiftData models, mapping layer, repository protocols + implementations, as a second SPM package (`Packages/OttoPersistence`) so the layer boundary is compiler-enforced. Local only — **CloudKit explicitly `.none`** | ✅ **Done** — commits `fcdcf2d` / `92879f9` / `634e209` / `4b9db37`; **92 tests passing** (51 domain + 41 persistence), incl. a mutation-tested CloudKit-compatibility assertion |
 | **3** | Core UI: Today, Subscriptions, Add/Edit (both entry modes), Detail | Can add a real subscription and see it |
 | **4** | Notification engine: scheduling, slot budgeting, actions, reschedule triggers | ⛔ 200-subscription fixture stays within 64 slots with correct priority |
 | **5** | Trial flows, cancellation flow, verification flow | ⛔ End-to-end trial test on device with a compressed timeline |
@@ -469,6 +504,13 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 ---
 
 ## Update log
+
+- **2026-08-06 (late — v1.2, revised against the Wave 2 report)** — Wave 2 shipped: **92 tests passing**, persistence split into its own SPM package so the layer boundary is enforced by access control rather than convention, `@Model` classes `internal` to it, CloudKit set explicitly to `.none` rather than left `.automatic`. Four spec corrections, one of which was a gap **neither** side had noticed:
+  - **⚠ §3.5 and the §5 tables contradicted each other on the audit fields.** §3.5 called `id`/`createdAt`/`updatedAt`/`deletedAt` non-negotiable on every record; the §5 tables gave them to `Subscription` alone, leaving `TrialTerm` and `CancellationRecord` with no `id` at all. **Resolved in §3.5's favour via a new §5.0**, because CloudKit syncs per record — a `BillingEvent` edited on two devices has nothing to resolve against without its own `updatedAt`, and a record with no `id` is unaddressable. **Fixing it before Wave 6 is a field addition; after, a migration on live data.**
+  - **⭐ `.trial` had no materialization path — the gap neither of us caught.** v1.1 never said which statuses create `BillingEvent` rows; Claude Code inferred `.active` only, which is defensible but would have left **the trial conversion charge with no ledger row** — the exact charge the app was built to catch, invisible to both verification and price-mismatch detection. Now specified: `.trial` materializes exactly one event at `conversionDate`.
+  - **The materialization window was ambiguous.** A reminder fires *before* its charge, so a reminder inside the horizon can belong to a charge outside it. Pinned: **the reminder window governs**, charge dates materialize through `horizon + maxReminderLeadDays`.
+  - **`.unexpectedCharge` had no producer.** The enum case existed with nothing able to create it. Now specified as the retrospective row a `.stillCharging` verification writes.
+  - **Unanswered verification checks were undefined.** Now: roll forward to the next would-be charge date, **capped at three consecutive unanswered cycles**, then escalate to a persistent card in Today rather than more notifications — escalating *in the app* is the right answer to being ignored, not escalating the notifications.
 
 - **2026-08-06 (evening — v1.1, revised against Claude Code's Wave 1 report)** — Waves 0–1 shipped (`~/dev/otto`, commits `e844ccf` / `f36f584`, 50 tests passing). The implementation report surfaced **four genuine defects in this spec plus five underspecifications**, all now fixed here. Recorded individually rather than as a blanket "revised", because two of them were the kind that produce silently wrong software:
   - **⚠ The §4.4 property test was unsatisfiable.** "Advance N, step back N, recover the anchor" cannot hold under clamping — a Feb 28 landing is indistinguishable between anchors 28, 29, 30 and 31, so the information is gone. A spec that asks for an impossible test invites the test being weakened to match whatever the code does, which is worse than having no test. **Replaced with three properties that do hold**, chosen so a naive iterate-from-computed-dates implementation fails all three.
