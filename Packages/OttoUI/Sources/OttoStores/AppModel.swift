@@ -71,6 +71,7 @@ public final class AppModel {
         self.subscriptionsStore = SubscriptionsStore(
             subscriptionRepository: repositories.subscriptions,
             cancellationRepository: repositories.cancellations,
+            billingEventRepository: repositories.billingEvents,
             dates: dates
         )
         self.insightsStore = InsightsStore(

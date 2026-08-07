@@ -30,14 +30,14 @@ struct PausedCancellationFlowTests {
         #expect(record.nextChargeDateIfNotCancelled == nil)
         #expect(record.expectedChargeAmountCents == nil)
         let mutated = try await fixture.subscriptions.subscription(withID: subscription.id)
-        #expect(mutated?.status == .cancellationPending)
+        #expect(mutated?.storedStatus == .cancellationPending)
 
         // Answering the never-asked question does nothing - and must not archive.
         let summary = try await flows.answerVerification(
             subscriptionID: subscription.id, chargesStopped: true, now: now, today: today
         )
         #expect(summary == nil)
-        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus
             == .cancellationPending)
 
         // The user supplies the resume date: the watch starts at the first

@@ -65,7 +65,7 @@ struct PhoneInADrawerTests {
         // The stored status still says .trial - no flow ran to flip it - and
         // every consumer must already treat it as active at the converted price.
         let stored = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(stored.status == .trial)
+        #expect(stored.storedStatus == .trial)
         #expect(stored.effectiveStatus(asOf: wakeDay) == .active)
         #expect(stored.billingAmountCents(asOf: wakeDay) == trial.convertsToAmountCents)
         // And no trial-deadline reminder survives for a deadline that is history.
@@ -140,7 +140,7 @@ struct PhoneInADrawerTests {
         // The stored status still says .paused - no flow ran to flip it - and
         // every consumer must already treat it as active.
         let stored = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(stored.status == .paused)
+        #expect(stored.storedStatus == .paused)
         #expect(stored.effectiveStatus(asOf: wakeDay) == .active)
 
         // Both charges that fell in the drawer have ledger rows; nothing from

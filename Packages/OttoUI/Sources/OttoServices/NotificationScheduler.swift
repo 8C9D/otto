@@ -155,8 +155,13 @@ public actor NotificationScheduler: ReminderScheduling {
         now: Date
     ) async throws -> [UUID: CancellationRecord] {
         var records: [UUID: CancellationRecord] = [:]
+        // Effective, not stored (spec §5.2a, v1.7): equivalent today - nothing
+        // derives into or out of a cancellation state - and immune to a future
+        // derived state slipping past a stored filter, which is the Wave 4 bug's
+        // shape.
         for subscription in live
-        where subscription.status == .cancellationPending || subscription.status == .cancelled {
+        where subscription.effectiveStatus(asOf: today) == .cancellationPending
+            || subscription.effectiveStatus(asOf: today) == .cancelled {
             guard let record = try await cancellations.record(forSubscription: subscription.id) else {
                 continue
             }

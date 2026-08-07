@@ -148,7 +148,7 @@ struct SubscriptionRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(row.subscription.name)
                     .font(.headline)
-                StatusBadge(status: row.subscription.status)
+                StatusBadge(status: row.effectiveStatus)
                 if let nextDate = row.nextDate {
                     Text(String(localized: "Next: \(nextDate.displayText())"))
                         .font(.caption)

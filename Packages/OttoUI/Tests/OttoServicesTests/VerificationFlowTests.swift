@@ -54,7 +54,7 @@ struct VerificationFlowTests {
         let record = try await fixture.cancellations.record(forSubscription: subscription.id)
         #expect(record?.verificationState == .verifiedStopped)
         #expect(record?.verifiedAt == now)
-        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status == .archived)
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .archived)
 
         // Redelivery: same state, first instant kept.
         _ = try await flows.answerVerification(
@@ -88,7 +88,7 @@ struct VerificationFlowTests {
         let record = try await fixture.cancellations.record(forSubscription: subscription.id)
         #expect(record?.verificationState == .stillCharging)
         // Not archived: the money did NOT stop, so the lifecycle is not over.
-        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status == .cancelled)
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .cancelled)
 
         // Twice equals once: still exactly one retrospective row.
         _ = try await flows.answerVerification(
@@ -288,7 +288,7 @@ struct TrialConfirmationFlowTests {
 
         // The card retires because the stored state now says .active…
         let confirmed = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(confirmed.status == .active)
+        #expect(confirmed.storedStatus == .active)
         #expect(confirmed.cycleStartDay == trial.conversionDate)
         #expect(confirmed.amountCents == 1599)
         let overview = todayOverview(subscriptions: [confirmed], cancellations: [:], from: today)

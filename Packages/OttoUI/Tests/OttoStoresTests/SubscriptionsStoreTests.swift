@@ -11,17 +11,23 @@ struct SubscriptionsStoreTests {
         let store: SubscriptionsStore
         let subscriptions: MockSubscriptionRepository
         let cancellations: MockCancellationRepository
+        let billingEvents: MockBillingEventRepository
     }
 
     private func makeStore() throws -> Fixture {
         let subscriptions = MockSubscriptionRepository()
         let cancellations = MockCancellationRepository()
+        let billingEvents = MockBillingEventRepository()
         let store = SubscriptionsStore(
             subscriptionRepository: subscriptions,
             cancellationRepository: cancellations,
+            billingEventRepository: billingEvents,
             dates: try fixedDates()
         )
-        return Fixture(store: store, subscriptions: subscriptions, cancellations: cancellations)
+        return Fixture(
+            store: store, subscriptions: subscriptions,
+            cancellations: cancellations, billingEvents: billingEvents
+        )
     }
 
     @Test("before the first refresh the state is loading - never an implicit empty")
@@ -151,6 +157,71 @@ struct SubscriptionsStoreTests {
         #expect(store.subscriptions.value == [])
         let tombstone = try await subscriptions.subscriptionsIncludingDeleted().first
         #expect(tombstone?.deletedAt == Date(timeIntervalSince1970: 10_000))
+    }
+
+    @Test("an edit that moves the billing sequence earlier rewinds the watermark at save (spec §5.3, v1.7)")
+    func editRewindsWatermark() async throws {
+        let fixture = try makeStore()
+        let old = try makeSubscription(
+            index: 1,
+            status: .paused,
+            cycleStartDay: try day(2026, 1, 1),
+            pauseEndsOn: try day(2026, 12, 1),
+            lastMaterializedThrough: try day(2026, 12, 15)
+        )
+        await fixture.subscriptions.seed([old])
+        await fixture.billingEvents.seed([
+            try makeBillingEvent(subscriptionID: old.id, expectedDate: try day(2026, 1, 1))
+        ])
+
+        var edited = old
+        edited.pauseEndsOn = try day(2026, 9, 1)
+        try await fixture.store.save(edited)
+
+        let saved = try #require(await fixture.subscriptions.savedValues.last)
+        #expect(saved.lastMaterializedThrough == (try day(2026, 8, 31)))
+    }
+
+    @Test("a save never advances the stored watermark - only a ledger pass does")
+    func saveNeverAdvancesWatermark() async throws {
+        let fixture = try makeStore()
+        let stored = try makeSubscription(
+            index: 1,
+            cycleStartDay: try day(2026, 1, 1),
+            lastMaterializedThrough: try day(2026, 9, 10)
+        )
+        await fixture.subscriptions.seed([stored])
+
+        var incoming = stored
+        incoming.lastMaterializedThrough = try day(2026, 12, 1)
+        try await fixture.store.save(incoming)
+
+        let saved = try #require(await fixture.subscriptions.savedValues.last)
+        #expect(saved.lastMaterializedThrough == (try day(2026, 9, 10)))
+    }
+
+    @Test("a status transition through save keeps the flows' watermark semantics")
+    func transitionSaveLeavesWatermark() async throws {
+        // An indefinitely paused record's watermark is frozen; a hypothetical
+        // edit-path resume must not let the sequence diff rewind it to the anchor.
+        let fixture = try makeStore()
+        let paused = try makeSubscription(
+            index: 1,
+            status: .paused,
+            cycleStartDay: try day(2026, 1, 1),
+            lastMaterializedThrough: try day(2026, 8, 20)
+        )
+        await fixture.subscriptions.seed([paused])
+        await fixture.billingEvents.seed([
+            try makeBillingEvent(subscriptionID: paused.id, expectedDate: try day(2026, 1, 1))
+        ])
+
+        var resumed = paused
+        resumed.storedStatus = .active
+        try await fixture.store.save(resumed)
+
+        let saved = try #require(await fixture.subscriptions.savedValues.last)
+        #expect(saved.lastMaterializedThrough == (try day(2026, 8, 20)))
     }
 
     @Test("save and delete fire the mutation hook - the store is the §6.2 reschedule trigger")

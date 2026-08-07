@@ -33,7 +33,7 @@ struct MutationOrderingTests {
     func cancellationDerivationsSurviveOverwrite(overwritten: SubscriptionStatus) throws {
         let (before, _) = try convertedUnflippedTrial()
         var after = before
-        after.status = overwritten
+        after.storedStatus = overwritten
         let today = try day(2026, 8, 5)
 
         // The check date: Aug 31 from the conversion anchor - and the same
@@ -58,7 +58,7 @@ struct MutationOrderingTests {
         // to call it after a status write has this failure to explain first.
         let (before, trial) = try convertedUnflippedTrial()
         var after = before
-        after.status = .cancellationPending
+        after.storedStatus = .cancellationPending
         let today = try day(2026, 8, 5)
 
         #expect(before.billingAnchor(asOf: today) == trial.conversionDate)

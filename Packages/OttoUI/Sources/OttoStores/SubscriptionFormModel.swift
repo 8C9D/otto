@@ -161,7 +161,7 @@ public final class SubscriptionFormModel {
         self.startDate = subscription.cycleStartDay
         self.nextChargeDate = dates.today()
         self.lastDayAnswer = nil
-        self.isTrial = subscription.status == .trial
+        self.isTrial = subscription.editsAsTrial
         self.trialStartDate = subscription.trial?.startDate ?? dates.today()
         self.trialLengthDays = subscription.trial?.lengthDays ?? 30
         self.trialBufferDays = subscription.trial?.bufferDays ?? Self.defaultTrialBufferDays
@@ -292,9 +292,10 @@ public final class SubscriptionFormModel {
             pausedOn: original?.pausedOn,
             // Spec §5.3 (v1.5): a new entry's watermark starts at the later of
             // the anchor and today, so Mode B never backfills history it had no
-            // rows for. An edit preserves the pass bookkeeping untouched - even
-            // an anchor edit, because rows behind the watermark were observed
-            // under the old schedule and §5.3 invalidation owns reconciling them.
+            // rows for. An edit carries the watermark through; the save path
+            // (SubscriptionsStore) applies §5.3's (v1.7) rewind rule when the
+            // edit moved the billing sequence earlier, and §5.3 invalidation
+            // owns the rows the old schedule left behind.
             lastMaterializedThrough: original.map(\.lastMaterializedThrough)
                 ?? max(anchor, dates.today()),
             trial: preservedTrial,
@@ -309,28 +310,19 @@ public final class SubscriptionFormModel {
         )
     }
 
-    /// The trial the built subscription carries. The toggle governs a live
-    /// trial; a NON-`.trial` subscription's term is history - a confirmed
-    /// conversion keeps its term deliberately (spec §5.2a: confirming records,
-    /// never deletes) - and the toggle the form shows as off must not silently
-    /// delete it on an unrelated edit.
+    /// The trial the built subscription carries - the preservation decision is
+    /// the domain's (`editedTrial`): a confirmed conversion keeps its term, and
+    /// an unrelated edit must not silently delete it.
     private var preservedTrial: TrialTerm? {
-        if let draftTrial { return draftTrial }
-        if let original, original.status != .trial { return original.trial }
-        return nil
+        original?.editedTrial(draft: draftTrial) ?? draftTrial
     }
 
-    /// The status the form writes: the trial toggle decides between trial and
-    /// active, and every other lifecycle state is preserved - Add/Edit describes
-    /// the subscription, it does not run the cancellation or pause flows.
+    /// The status the form writes - the domain's `editedStatus`: the trial
+    /// toggle decides between trial and active, every other lifecycle state is
+    /// preserved. Add/Edit describes the subscription, it does not run the
+    /// cancellation or pause flows.
     private var status: SubscriptionStatus {
-        switch original?.status {
-        case nil, .trial, .active:
-            return isTrial ? .trial : .active
-        case .paused, .cancellationPending, .cancelled, .archived:
-            // Force-unwrap-free by construction: this branch only matches non-nil.
-            return original?.status ?? .active
-        }
+        original?.editedStatus(isTrial: isTrial) ?? (isTrial ? .trial : .active)
     }
 
     private func nonEmpty(_ text: String) -> String? {

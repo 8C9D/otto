@@ -83,4 +83,24 @@ struct SubscriptionListModelTests {
         let all = model.rows(subscriptions: subscriptions, cancellations: [:], today: today)
         #expect(all.count == 3)
     }
+
+    @Test("the filter and the badge use effective status - a converted trial rows as Active (spec §5.2a, v1.7)")
+    func filterUsesEffectiveStatus() throws {
+        let today = try day(2026, 8, 6)
+        let converted = try makeSubscription(
+            index: 10,
+            status: .trial,
+            cycleStartDay: try day(2026, 7, 1),
+            trial: try makeTrialTerm(startDate: try day(2026, 7, 1), lengthDays: 14)
+        )
+        let model = SubscriptionListModel()
+
+        model.statusFilter = .active
+        let active = model.rows(subscriptions: [converted], cancellations: [:], today: today)
+        #expect(active.map(\.id) == [converted.id])
+        #expect(active.first?.effectiveStatus == .active)
+
+        model.statusFilter = .trial
+        #expect(model.rows(subscriptions: [converted], cancellations: [:], today: today).isEmpty)
+    }
 }

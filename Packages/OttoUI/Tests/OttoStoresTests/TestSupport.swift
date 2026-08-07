@@ -97,5 +97,23 @@ func makeCancellationRecord(
     )
 }
 
+func makeBillingEvent(
+    index: Int = 700,
+    subscriptionID: UUID,
+    expectedDate: CalendarDay,
+    expectedAmountCents: Int = 1099,
+    state: BillingEvent.State = .upcoming
+) throws -> BillingEvent {
+    BillingEvent(
+        id: try fixtureUUID(index),
+        subscriptionID: subscriptionID,
+        expectedDate: expectedDate,
+        expectedAmountCents: expectedAmountCents,
+        state: state,
+        createdAt: Date(timeIntervalSince1970: 1_000),
+        updatedAt: Date(timeIntervalSince1970: 2_000)
+    )
+}
+
 /// The error every primed mock failure throws.
 struct TestFailure: Error, Equatable {}

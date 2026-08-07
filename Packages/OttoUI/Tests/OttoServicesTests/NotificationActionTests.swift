@@ -83,7 +83,7 @@ struct NotificationActionTests {
             subscriptionID: subscription.id, url: URL(string: "https://example.com/cancel")
         ))
         let updated = try #require(try await subscriptions.subscription(withID: subscription.id))
-        #expect(updated.status == .cancellationPending)
+        #expect(updated.storedStatus == .cancellationPending)
         let record = try #require(try await cancellations.record(forSubscription: subscription.id))
         #expect(record.verificationState == .pending)
         // The check date was computed once, now, from the effective anchor: the

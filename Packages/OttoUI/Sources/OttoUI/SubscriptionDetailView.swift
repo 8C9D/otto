@@ -118,9 +118,14 @@ struct SubscriptionDetailView: View {
 
     private func overviewSection(_ detail: SubscriptionDetail) -> some View {
         let subscription = detail.subscription
+        let today = model.subscriptionsStore.today
         return Section {
+            // Effective, not stored (spec §5.2a, v1.7): a converted trial and a
+            // resumed pause both badge as Active, because that is the state the
+            // user's money is actually in; their own sections announce the
+            // unconfirmed detail.
             LabeledContent(String(localized: "Status")) {
-                StatusBadge(status: subscription.status)
+                StatusBadge(status: subscription.effectiveStatus(asOf: today))
             }
             LabeledContent(
                 String(localized: "Price"),
@@ -141,7 +146,7 @@ struct SubscriptionDetailView: View {
             ) {
                 LabeledContent(nextDateLabel(entry), value: entry.date.displayText())
             }
-            if subscription.status == .paused, let resumes = subscription.pauseEndsOn {
+            if subscription.effectiveStatus(asOf: today) == .paused, let resumes = subscription.pauseEndsOn {
                 LabeledContent(String(localized: "Resumes"), value: resumes.displayText())
             }
             LabeledContent(
@@ -213,7 +218,7 @@ struct SubscriptionDetailView: View {
             Button(String(localized: "I'm cancelling it…")) {
                 isCancelling = true
             }
-        } else if subscription.status == .trial {
+        } else if subscription.effectiveStatus(asOf: today) == .trial {
             Button(String(localized: "Keeping it - stop the countdown reminders")) {
                 perform { try await model.keepCurrentCharge(subscriptionID: subscription.id) }
             }

@@ -27,6 +27,9 @@ public final class SubscriptionsStore {
 
     private let subscriptionRepository: any SubscriptionRepository
     private let cancellationRepository: any CancellationRepository
+    /// For the §5.3 (v1.7) rewind floor: the earliest ledger row ever created
+    /// marks where tracking began, and no edit may rewind past it.
+    private let billingEventRepository: any BillingEventRepository
     private let dates: DateProvider
 
     /// Runs after every successful mutation - the create/edit/delete reschedule
@@ -37,10 +40,12 @@ public final class SubscriptionsStore {
     public init(
         subscriptionRepository: any SubscriptionRepository,
         cancellationRepository: any CancellationRepository,
+        billingEventRepository: any BillingEventRepository,
         dates: DateProvider = .live
     ) {
         self.subscriptionRepository = subscriptionRepository
         self.cancellationRepository = cancellationRepository
+        self.billingEventRepository = billingEventRepository
         self.dates = dates
     }
 
@@ -58,9 +63,13 @@ public final class SubscriptionsStore {
     public func refresh() async {
         do {
             let loaded = try await subscriptionRepository.subscriptions()
+            let today = dates.today()
             var records: [UUID: CancellationRecord] = [:]
+            // Effective, not stored (spec §5.2a, v1.7) - see the same filter in
+            // NotificationScheduler.
             for subscription in loaded
-            where subscription.status == .cancellationPending || subscription.status == .cancelled {
+            where subscription.effectiveStatus(asOf: today) == .cancellationPending
+                || subscription.effectiveStatus(asOf: today) == .cancelled {
                 if let record = try await cancellationRepository.record(forSubscription: subscription.id) {
                     records[subscription.id] = record
                 }
@@ -76,8 +85,28 @@ public final class SubscriptionsStore {
     /// Writes through the repository, then refreshes the published state. Throws
     /// so the caller can present the failure; the published state is untouched by
     /// a failed write.
+    ///
+    /// This is the Add/Edit choke point, so §5.3's (v1.7) rewind rule is applied
+    /// here: an edit that moves the billing sequence earlier rewinds the
+    /// watermark to the earliest affected date, floored at the earliest ledger
+    /// row ever created (tombstones included - tracking began there, and an
+    /// edit must not manufacture pre-entry history). The same call keeps a save
+    /// from ever ADVANCING the watermark - only a ledger pass does that.
     public func save(_ subscription: Subscription) async throws {
-        try await subscriptionRepository.save(subscription)
+        var adjusted = subscription
+        if let current = try await subscriptionRepository.subscription(withID: subscription.id) {
+            let earliestTracked = try await billingEventRepository
+                .eventsIncludingDeleted(forSubscription: subscription.id)
+                .map(\.expectedDate)
+                .min()
+            adjusted.lastMaterializedThrough = watermarkAfterEdit(
+                from: current,
+                to: subscription,
+                trackedSince: earliestTracked,
+                asOf: dates.today()
+            )
+        }
+        try await subscriptionRepository.save(adjusted)
         await refresh()
         await onMutation?()
     }

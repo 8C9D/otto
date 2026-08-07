@@ -71,7 +71,7 @@ struct RoundTripTests {
         try await store.save(subscription)
 
         subscription.trial = nil
-        subscription.status = .active
+        subscription.storedStatus = .active
         try await store.save(subscription)
         #expect(try await store.subscription(withID: subscription.id)?.trial == nil)
 
@@ -81,7 +81,7 @@ struct RoundTripTests {
         #expect(storedTrials.first?.deletedAt == subscription.updatedAt)
 
         subscription.trial = trial
-        subscription.status = .trial
+        subscription.storedStatus = .trial
         try await store.save(subscription)
         #expect(try await store.subscription(withID: subscription.id)?.trial == trial)
     }

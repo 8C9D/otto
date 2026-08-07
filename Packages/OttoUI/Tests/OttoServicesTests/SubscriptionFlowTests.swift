@@ -108,7 +108,7 @@ struct CancellationFlowTests {
 
         // And the shared substance is right: pending status, the clamped Feb 28
         // check date, and a pending verification reminder for it.
-        #expect(stateA.subscription?.status == .cancellationPending)
+        #expect(stateA.subscription?.storedStatus == .cancellationPending)
         #expect(stateA.record?.nextChargeDateIfNotCancelled == (try day(2027, 2, 28)))
         #expect(stateA.pendingIdentifiers.contains { NotificationPlanIdentifier.kind(of: $0) == .verification })
     }
@@ -182,7 +182,7 @@ struct CancellationFlowTests {
         // The interrupted flow leaves the benign half-state: record beside a
         // still-active subscription - never .cancellationPending with nothing
         // watching it (§5.2b's invariant, Failure B with extra steps).
-        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status == .active)
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .active)
         #expect(try await fixture.cancellations.record(forSubscription: subscription.id) != nil)
 
         // And the re-run heals it.
@@ -190,7 +190,7 @@ struct CancellationFlowTests {
         _ = try await flows.startCancellation(
             subscriptionID: subscription.id, now: try fixtureNow(), today: try day(2026, 8, 6)
         )
-        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus
             == .cancellationPending)
     }
 }
@@ -213,7 +213,7 @@ struct PauseFlowTests {
         )
 
         let paused = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(paused.status == .paused)
+        #expect(paused.storedStatus == .paused)
         #expect(paused.pausedOn == today)
         #expect(paused.pauseEndsOn == (try day(2026, 9, 1)))
     }
@@ -231,7 +231,7 @@ struct PauseFlowTests {
         try await fixture.flows.resume(subscriptionID: subscription.id, now: try fixtureNow())
 
         let resumed = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(resumed.status == .active)
+        #expect(resumed.storedStatus == .active)
         #expect(resumed.pausedOn == nil)
         #expect(resumed.pauseEndsOn == nil)
 
@@ -254,7 +254,7 @@ struct PauseFlowTests {
             now: try fixtureNow(), today: try day(2026, 8, 6)
         )
 
-        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status == .trial)
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .trial)
     }
 
     @Test("pausing a converted-unflipped trial writes the conversion through first (derive before mutate)")
@@ -277,7 +277,7 @@ struct PauseFlowTests {
         )
 
         let paused = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(paused.status == .paused)
+        #expect(paused.storedStatus == .paused)
         #expect(paused.cycleStartDay == trial.conversionDate)
         #expect(paused.amountCents == trial.convertsToAmountCents)
         #expect(paused.trial != nil)

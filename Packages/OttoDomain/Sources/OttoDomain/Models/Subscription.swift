@@ -16,7 +16,14 @@ public struct Subscription: Identifiable, Hashable, Sendable {
     public var name: String
     public var vendorURL: URL?
     public var category: Category
-    public var status: SubscriptionStatus
+
+    /// The PERSISTED lifecycle state - unreadable above layer 2 (spec §5.2a,
+    /// v1.7). Every consumer decision goes through `effectiveStatus(asOf:)` or
+    /// an intent-named transition below, because a stored read that happens to
+    /// be correct today is the Wave 4 bug waiting for an unrelated derived
+    /// state to activate it silently. The name plus a SwiftLint custom rule
+    /// enforce the boundary; the persistence mapping is the exempt reader.
+    public var storedStatus: SubscriptionStatus
 
     /// The current price in integer cents - money is never floating point (spec §3.5).
     public var amountCents: Int
@@ -118,7 +125,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         self.name = name
         self.vendorURL = vendorURL
         self.category = category
-        self.status = status
+        self.storedStatus = status
         self.amountCents = amountCents
         self.currencyCode = currencyCode
         self.cycle = cycle
@@ -169,7 +176,7 @@ extension Subscription {
     /// waits to be told it has ended will eventually not be told.
     public func effectiveStatus(asOf today: CalendarDay) -> SubscriptionStatus {
         if isConvertedTrial(asOf: today) || isResumedPause(asOf: today) { return .active }
-        return status
+        return storedStatus
     }
 
     /// True when the stored status still says `.paused` but `pauseEndsOn` has
@@ -178,14 +185,14 @@ extension Subscription {
     /// never resumes this way; it freezes the materialization watermark instead
     /// (spec §5.3) and waits for a manual resume, which backfills from it.
     public func isResumedPause(asOf today: CalendarDay) -> Bool {
-        status == .paused && pauseEndsOn.map { today >= $0 } ?? false
+        storedStatus == .paused && pauseEndsOn.map { today >= $0 } ?? false
     }
 
     /// True when the stored status still says `.trial` but the conversion date has
     /// passed - the converted-but-never-acknowledged state that must stay visible
     /// (spec §7.1) and announce itself (Wave 4).
     public func isConvertedTrial(asOf today: CalendarDay) -> Bool {
-        status == .trial && trial.map { today >= $0.conversionDate } ?? false
+        storedStatus == .trial && trial.map { today >= $0.conversionDate } ?? false
     }
 
     /// The anchor the billing sequence runs from as of `today`: on conversion the
@@ -303,7 +310,7 @@ extension Subscription: Codable {
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(vendorURL, forKey: .vendorURL)
         try container.encode(category, forKey: .category)
-        try container.encode(status, forKey: .status)
+        try container.encode(storedStatus, forKey: .status)
         try container.encode(amountCents, forKey: .amountCents)
         try container.encode(currencyCode, forKey: .currencyCode)
         try container.encode(cycle, forKey: .cycle)

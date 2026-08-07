@@ -330,7 +330,7 @@ struct ConversionConfirmationTests {
         )
 
         let flipped = try #require(subscription.confirmingConversion(asOf: try day(2026, 8, 5), at: now))
-        #expect(flipped.status == .active)
+        #expect(flipped.storedStatus == .active)
         #expect(flipped.cycleStartDay == trial.conversionDate)
         #expect(flipped.amountCents == 1599)
         #expect(flipped.trial == trial)

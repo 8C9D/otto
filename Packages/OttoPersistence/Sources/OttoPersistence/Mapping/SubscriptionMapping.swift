@@ -64,7 +64,7 @@ extension OttoSchemaV1.StoredSubscription {
         name = domain.name
         vendorURL = domain.vendorURL?.absoluteString
         category = domain.category.rawValue
-        status = domain.status.rawValue
+        status = domain.storedStatus.rawValue
         amountCents = domain.amountCents
         currencyCode = domain.currencyCode
         cycleUnit = domain.cycle.unit.rawValue

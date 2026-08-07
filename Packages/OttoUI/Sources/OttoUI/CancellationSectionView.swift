@@ -47,7 +47,7 @@ struct CancellationSectionView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            if detail.cancellation == nil && detail.subscription.status != .archived {
+            if detail.cancellation == nil && !isArchived {
                 Button(String(localized: "Mark as cancelling…")) {
                     isCancelling = true
                 }
@@ -55,7 +55,7 @@ struct CancellationSectionView: View {
         } header: {
             Text(String(localized: "Cancelling"))
         } footer: {
-            if detail.cancellation == nil && detail.subscription.status != .archived {
+            if detail.cancellation == nil && !isArchived {
                 Text(String(localized: """
                 Otto never cancels anything for you. It opens the page, records \
                 what you did, and later checks that the money actually stopped.
@@ -63,6 +63,12 @@ struct CancellationSectionView: View {
             }
         }
         disputeSection
+    }
+
+    /// Effective, not stored (spec §5.2a, v1.7) - equivalent today, since
+    /// nothing derives into or out of `.archived`.
+    private var isArchived: Bool {
+        detail.subscription.effectiveStatus(asOf: model.subscriptionsStore.today) == .archived
     }
 
     /// The captured evidence, editable in place - the confirmation number usually

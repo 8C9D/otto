@@ -70,7 +70,7 @@ struct OrderingGuardTests {
 
             // The mutation happened...
             let mutated = try await fixture.subscriptions.subscription(withID: snapshot.id)
-            #expect(mutated?.status == .cancellationPending, "\(label)")
+            #expect(mutated?.storedStatus == .cancellationPending, "\(label)")
 
             // ...and every derived-persisted value equals a fresh derivation
             // from the PRE-mutation snapshot.

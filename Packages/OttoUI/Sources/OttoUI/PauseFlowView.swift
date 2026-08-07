@@ -110,17 +110,22 @@ struct PauseSectionView: View {
     var body: some View {
         let subscription = detail.subscription
         let today = model.subscriptionsStore.today
-        if subscription.status == .paused {
+        // Derivation APIs only (spec §5.2a, v1.7): a derived-resumed pause is
+        // effectively active but still needs its persist-the-derivation row, so
+        // it is asked for by name rather than via the stored status.
+        if subscription.isResumedPause(asOf: today) {
             Section(String(localized: "Pause")) {
-                if subscription.isResumedPause(asOf: today) {
-                    let ended = subscription.pauseEndsOn.map { $0.displayText() } ?? ""
-                    Text(String(localized: "This pause ended \(ended) - billing has resumed."))
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                    Button(String(localized: "Got it - mark as active")) {
-                        perform { try await model.resumeSubscription(subscriptionID: subscription.id) }
-                    }
-                } else {
+                let ended = subscription.pauseEndsOn.map { $0.displayText() } ?? ""
+                Text(String(localized: "This pause ended \(ended) - billing has resumed."))
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                Button(String(localized: "Got it - mark as active")) {
+                    perform { try await model.resumeSubscription(subscriptionID: subscription.id) }
+                }
+            }
+        } else if subscription.effectiveStatus(asOf: today) == .paused {
+            Section(String(localized: "Pause")) {
+                Group {
                     if subscription.pauseEndsOn == nil {
                         Text(String(localized: """
                         Paused indefinitely. Otto is not watching for charges - resume \

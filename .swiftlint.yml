@@ -22,3 +22,21 @@ force_cast:
 line_length:
   warning: 140
   error: 200
+
+# Spec §5.2a (v1.7): the stored status is unreadable above layer 2. Every
+# consumer read goes through effectiveStatus(asOf:) or an intent-named
+# transition/edit API on Subscription; only the domain model itself and the
+# persistence mapping may touch storedStatus. Tests are exempt (asserting what
+# a flow persisted is exactly a stored read).
+custom_rules:
+  stored_status_above_layer_2:
+    name: "Stored status read above layer 2"
+    regex: '\bstoredStatus\b'
+    included:
+      - ".*/Packages/OttoUI/Sources/.*"
+      - ".*/Packages/OttoPersistence/Sources/OttoRepositories/.*"
+      - ".*/Otto/.*\\.swift"
+    message: >-
+      Stored status is unreadable above layer 2 (spec §5.2a, v1.7). Derive with
+      effectiveStatus(asOf:) or use a Subscription transition/edit API.
+    severity: error

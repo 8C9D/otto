@@ -166,7 +166,7 @@ struct SubscriptionFormModelTests {
         form.trialLengthDays = 14
 
         let subscription = try #require(form.buildSubscription())
-        #expect(subscription.status == .trial)
+        #expect(subscription.storedStatus == .trial)
         let trial = try #require(subscription.trial)
         #expect(trial.conversionDate == (try day(2026, 8, 15)))
         #expect(trial.convertsToAmountCents == 1099)
@@ -267,7 +267,7 @@ struct SubscriptionFormModelTests {
         let form = SubscriptionFormModel(editing: paused, dates: try fixedDates())
 
         let edited = try #require(form.buildSubscription())
-        #expect(edited.status == .paused)
+        #expect(edited.storedStatus == .paused)
         #expect(edited.pauseEndsOn == (try day(2026, 9, 1)))
     }
 
@@ -282,7 +282,7 @@ struct SubscriptionFormModelTests {
 
         form.isTrial = false
         let edited = try #require(form.buildSubscription())
-        #expect(edited.status == .active)
+        #expect(edited.storedStatus == .active)
         #expect(edited.trial == nil)
     }
 
@@ -301,7 +301,7 @@ struct SubscriptionFormModelTests {
         form.amount = 12.99
         let edited = try #require(form.buildSubscription())
         #expect(edited.trial == trial)
-        #expect(edited.status == .active)
+        #expect(edited.storedStatus == .active)
     }
 
     @Test("a lead of at least a whole cycle warns, and never blocks saving (spec §6.2, v1.4)")

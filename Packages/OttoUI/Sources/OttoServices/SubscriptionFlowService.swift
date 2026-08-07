@@ -173,12 +173,8 @@ public actor SubscriptionFlowService {
             guard let flipped = try await subscriptions.subscription(withID: subscriptionID) else { return }
             subscription = flipped
         }
-        guard subscription.status != .paused else { return }
-        subscription.status = .paused
-        subscription.pausedOn = today
-        subscription.pauseEndsOn = resumesOn
-        subscription.updatedAt = now
-        try await subscriptions.save(subscription)
+        guard let paused = subscription.pausing(on: today, until: resumesOn, at: now) else { return }
+        try await subscriptions.save(paused)
     }
 
     /// Resumes billing: status `.active`, both pause fields cleared. Also the
@@ -187,14 +183,10 @@ public actor SubscriptionFlowService {
     /// a derived-resumed pause too: persisting what the derivation already
     /// decided is an optimisation, never the mechanism (spec §5.2a).
     public func resume(subscriptionID: UUID, now: Date) async throws {
-        guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
-              subscription.status == .paused
+        guard let subscription = try await subscriptions.subscription(withID: subscriptionID),
+              let resumed = subscription.resuming(at: now)
         else { return }
-        subscription.status = .active
-        subscription.pauseEndsOn = nil
-        subscription.pausedOn = nil
-        subscription.updatedAt = now
-        try await subscriptions.save(subscription)
+        try await subscriptions.save(resumed)
     }
 
     // MARK: - The cancellation flow
@@ -257,11 +249,8 @@ public actor SubscriptionFlowService {
             try await cancellations.save(record)
         }
 
-        if subscription.status != .cancellationPending && subscription.status != .cancelled
-            && subscription.status != .archived {
-            subscription.status = .cancellationPending
-            subscription.updatedAt = now
-            try await subscriptions.save(subscription)
+        if let pending = subscription.markingCancellationPending(at: now) {
+            try await subscriptions.save(pending)
         }
         return CancellationStart(record: record, cancellationURL: url)
     }
@@ -332,10 +321,8 @@ public actor SubscriptionFlowService {
             if verified != record {
                 try await cancellations.save(verified)
             }
-            if subscription.status != .archived {
-                subscription.status = .archived
-                subscription.updatedAt = now
-                try await subscriptions.save(subscription)
+            if let archived = subscription.archiving(at: now) {
+                try await subscriptions.save(archived)
             }
             return nil
         }

@@ -23,6 +23,11 @@ public final class SubscriptionListModel {
     /// view renders values rather than deriving them.
     public struct Row: Identifiable, Hashable, Sendable {
         public let subscription: Subscription
+        /// The status the row displays and the filter matches - effective, not
+        /// stored (spec §5.2a, v1.7): a resumed pause rows as Active, a
+        /// converted trial rows as Active, because that is the state the user
+        /// is actually in.
+        public let effectiveStatus: SubscriptionStatus
         /// The next date that matters for this subscription - next charge, trial
         /// conversion, pause resume, or verification check - via `todayEntry`.
         public let nextDate: CalendarDay?
@@ -38,11 +43,12 @@ public final class SubscriptionListModel {
         today: CalendarDay
     ) -> [Row] {
         let filtered = subscriptions.filter { subscription in
-            statusFilter.map { subscription.status == $0 } ?? true
+            statusFilter.map { subscription.effectiveStatus(asOf: today) == $0 } ?? true
         }
         let rows = filtered.map { subscription in
             Row(
                 subscription: subscription,
+                effectiveStatus: subscription.effectiveStatus(asOf: today),
                 nextDate: todayEntry(
                     for: subscription, cancellation: cancellations[subscription.id], from: today
                 )?.date,

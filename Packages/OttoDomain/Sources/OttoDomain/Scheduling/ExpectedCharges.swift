@@ -142,3 +142,55 @@ public func isExpectedCharge(
         return false
     }
 }
+
+/// The watermark an EDIT may keep (spec §5.3, v1.7): any edit that moves a
+/// subscription's billing sequence earlier must rewind the watermark to the
+/// earliest affected date - an anchor corrected backwards, a cycle shortened,
+/// a trial conversion moved up, a pause end pulled in. Without the rewind those
+/// charges are stranded: they fall behind a watermark that vouches for rows
+/// that were never created, and the founding scenario returns through the edit
+/// screen.
+///
+/// Three deliberate boundaries:
+///
+/// - **Edits, not transitions.** When the stored status changed, the flows'
+///   own §5.3 semantics govern (an indefinite pause freezes the watermark;
+///   resume backfills from the freeze), and a cross-status comparison would
+///   misread a pause's deliberate silence as stranded charges. The comparison
+///   only runs between records in the same stored state.
+/// - **Never past the first tracked day.** Entry initialises the watermark at
+///   the later of the anchor and the entry day precisely so Mode B never
+///   backfills history it had no rows for (spec §5.3, v1.5). An edit must not
+///   manufacture that history either, so the rewind is floored at
+///   `earliestTrackedDay` - in practice the earliest ledger row ever created,
+///   tombstoned rows included. With no rows nothing was ever observed, and
+///   `today` floors it instead: dates from today forward are inside every
+///   pass window and need no rewind to be seen.
+/// - **A save never advances the watermark.** Only a ledger pass does
+///   (spec §5.3, v1.5) - so a stale snapshot carrying yesterday's watermark
+///   re-observes a window instead of silently vouching for one, and a re-saved
+///   edit cannot undo its own rewind. The result is the minimum of both
+///   records' watermarks and the rewind point.
+public func watermarkAfterEdit(
+    from old: Subscription,
+    to new: Subscription,
+    trackedSince earliestTrackedDay: CalendarDay?,
+    asOf today: CalendarDay
+) -> CalendarDay? {
+    let base: CalendarDay? = switch (old.lastMaterializedThrough, new.lastMaterializedThrough) {
+    case (nil, nil): nil
+    case (let watermark?, nil), (nil, let watermark?): watermark
+    case (let stored?, let incoming?): min(stored, incoming)
+    }
+    guard let watermark = base, old.storedStatus == new.storedStatus else { return base }
+    let floor = earliestTrackedDay ?? today
+    guard floor <= watermark else { return watermark }
+    let previouslyExpected = Set(
+        expectedCharges(for: old, from: floor, through: watermark, asOf: today).map(\.day)
+    )
+    let nowExpected = expectedCharges(for: new, from: floor, through: watermark, asOf: today).map(\.day)
+    guard let firstStranded = nowExpected.first(where: { !previouslyExpected.contains($0) }) else {
+        return watermark
+    }
+    return min(watermark, firstStranded.adding(days: -1))
+}
