@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.6** — revised Aug 7 against Claude Code's Wave 5.5 report. Waves 0–5.5 complete; **verified from a clean clone of HEAD** (`5a2799e`, 275 tests). **Wave order changed: 7 and 8 now precede 6.**
+**Status:** **v1.7** — revised Aug 7 against Claude Code's Wave 7 report. Waves 0–5.5 and 7 complete; HEAD `99c3050` **verified from a clean clone** (340 host + 7 simulator = **347 tests**). Remaining: Wave 8, then Wave 6.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -206,6 +206,7 @@ The build does not proceed past Wave 1 until all of these pass:
 | `reminderLeadDays` | Int | **per-subscription**, defaults from settings |
 | `sameDayReminder` | Bool | default `false`. **Added v1.1** — §6.3 offered an optional same-day renewal reminder with no field to control it. |
 | `pauseEndsOn` | CalendarDay? | **Added to the table in v1.1** — it existed only in prose below. |
+| `pausedOn` | CalendarDay? | ⭐ **Added v1.7.** §7.2's frozen-price rule for paused spend has been **uncomputable since v1.1** — it specified pricing at the moment the pause began and no field recorded when that was. Six versions of a formula with no way to evaluate it. Legacy paused rows fall back to the current price |
 | `paymentMethodID` | UUID? | |
 | `cancellationURL` | URL? | |
 | `cancellationNotes` | String? | "phone only, 1-800-…, mention retention offer" |
@@ -297,6 +298,14 @@ A pause with a known end date is structurally identical to a trial with a known 
 
 **The generalization, now stated as a design rule:** *any state whose exit is a known future date must exit by derivation.* Trials, pauses, and anything added later. A state that waits to be told it has ended will eventually not be told.
 
+#### ⚠ Stored status is not readable outside the persistence layer *(added v1.7)*
+
+Wave 7 flagged that `caughtUpCancellationRecords` filters by **stored** status — noting it is *correct today*, but that it is "the stored-vs-effective read pattern that produced the Wave 4 bug."
+
+**That flag is the right instinct and the rule is now structural.** A dangerous pattern that happens to be correct today is a defect waiting for an unrelated future change to activate it, and it will activate silently — which is this project's characteristic failure mode.
+
+> **Every status read outside the persistence and mapping layers goes through `effectiveStatus(asOf:)`.** Direct reads of the stored `status` property are prohibited above layer 2 and should be prevented by a lint rule or by access control rather than by reviewer attention.
+
 #### ⚠ Derive before you mutate *(added v1.5, after this exact bug shipped in Wave 4)*
 
 Wave 4's `startCancelling` flipped the status **before** computing the verification check date. Because `billingAnchor(asOf:)` keys off the stored status, a converted-but-unflipped trial cancelled after conversion computed its watch date from the **trial-start** anchor rather than the **conversion** anchor.
@@ -367,6 +376,16 @@ The watermark also bounds the work: a Mode B subscription entered today does not
 
 **The watermark is device-local and is NOT synced** *(decided in v1.6; Wave 5.5 correctly flagged that its merge behaviour was undefined)*. It records *what this device has done*, not anything about the subscription — so it is stored outside the CloudKit-backed schema, per device.
 
+**How, concretely** *(specified in v1.7 — Wave 7 correctly noted the watermark still physically lives on `StoredSubscription`, and SwiftData cannot exclude a single property from CloudKit sync)*:
+
+> **A second, local-only `ModelConfiguration` holds device-scoped bookkeeping.** The watermark is its first inhabitant and almost certainly not its last — anything that describes *this device's progress* rather than *the user's data* belongs there.
+
+Two consequences that must not be forgotten: **Wave 6's first schema act is moving it**, before any data exists in CloudKit; and **Wave 8's export must exclude it**, since exporting one device's progress marker into a file destined for another device is meaningless at best.
+
+**Backwards edits rewind the watermark** *(added v1.7)*. A pause set to end Dec 1 that the user later corrects to Sep 1 leaves the Sep–Nov charges stranded behind an already-advanced watermark. Generalized, because this is the same shape as §5.3's invalidation rule rather than a pause-specific quirk:
+
+> **Any edit that moves a subscription's billing sequence earlier must rewind the watermark to the earliest affected date.**
+
 The reasoning is that last-write-wins is the wrong merge for it in a dangerous direction. A **regressed** watermark is harmless: re-materialization is idempotent and dedups on `(subscriptionID, expectedDate)`, so the cost is wasted work. An **advanced** watermark is not: if device A's watermark syncs ahead of the rows it corresponds to, device B skips charge dates that were never materialized anywhere. Since CloudKit cannot express "merge by taking the minimum," the safe move is not to sync it at all. Each device materializes independently; the dedup makes the duplication invisible.
 
 Corollary: watermark writes are bookkeeping, not user edits, and **must not bump `updatedAt`** — doing so would make every scheduler pass look like a user modification to conflict resolution.
@@ -412,7 +431,8 @@ The justification is that a row only earns storage once there is **user-facing s
 |---|---|
 | `subscriptionID` | UUID |
 | `markedCancelledAt` | Date | UTC instant — records *when the user acted*, and is **never** used for date arithmetic (see below) |
-| `nextChargeDateIfNotCancelled` | CalendarDay | **Non-optional. Renamed and made required in v1.1.** |
+| `nextChargeDateIfNotCancelled` | CalendarDay**?** | **Renamed and made required in v1.1; made conditionally optional in v1.7.** ⚠ The v1.1 reasoning still stands — an *unknown* date must never be papered over with a runtime fallback. But §5.4's indefinite-pause path creates a state where the date is **legitimately, knowably absent**, which is a different thing. **Invariant: `nil` if and only if `verificationState == .awaitingResumeDate`.** Enforced, not assumed — an optional without that constraint would reopen exactly the hole v1.1 closed |
+| `verificationState` | ... `.awaitingResumeDate` | **Added v1.7** — generates no notifications, refuses verification answers (there is no unverified assertion to confirm), and surfaces in Today's *Needs action* asking for the resume date. Supplying it starts the ordinary watch |
 | `expectedChargeAmountCents` | Int**?** | ⭐ **Added v1.5; corrected to optional in v1.6.** Wave 5.5 was right that there is no honest non-optional default for a record whose amount was never captured — **`nil` means "legacy record predating v1.5,"** and a fabricated zero would be worse than an absence in a document destined for a bank. The roll-forward backfills it where it can. The date is stored at cancellation because it is unrecoverable afterwards — **the amount has exactly the same property and was not stored**, leaving the dispute summary to infer it heuristically (by checking whether the anchor equals the conversion date). Correct for every flow-produced state, defeatable by a hand-edited price. **The dispute summary is the deliverable that ends at a bank; nothing in it should be a heuristic.** Computed once, at cancellation, like the date |
 | `verificationState` | `.pending` `.verifiedStopped` `.stillCharging` `.needsManualReview` |
 | `unansweredCheckCount` | Int, default 0 | **Added v1.3** — §5.4's three-cycle cap needs somewhere to count. Wave 5 lands before CloudKit, so this is still a field addition rather than a migration |
@@ -580,6 +600,8 @@ All three must work from the background without launching the UI, and must be sa
 | **Converted trial, unacknowledged** | *Needs action*, indefinitely, until confirmed — §5.2a. Added in v1.3 |
 | `.cancelled` with no `CancellationRecord` | Surfaces as due today rather than silently unwatched — **and is an invariant violation** (§5.2b), so it renders as *needs review*, not as an ordinary due item. Wave 3 was right that the spec didn't acknowledge this state; the answer is that it shouldn't exist, and when it does the user must see it rather than the app quietly deciding for them |
 
+**Pause lives in Detail, not its own screen** *(adopted v1.7)*. §7.1's screen list never gave pause a home despite §5.1 making it first-class — and Wave 7 found the consequence: **nothing in the app could enter `.paused` at all**, so the entire specified pause path was unreachable code. Detail now pauses (with an optional resume date) and resumes; pausing a converted-unflipped trial writes the conversion through first, per the derive-before-you-mutate rule.
+
 ### 7.2 Insights
 
 - **Monthly burn** (all cycles normalised) and **annualised total**
@@ -596,6 +618,8 @@ All three must work from the background without launching the UI, and must be sa
 | Converted trial (§5.2a) | **Full monthly-equivalent** at `convertsToAmountCents` — it is effectively active, so it counts like anything else |
 
 The "Converting soon" line should state the consequence directly — *"Your monthly burn goes from \$84 to \$95 on 13 Aug"* — because that sentence is the entire product in one line, and it is available before the money moves rather than after.
+
+**⚠ Known gap: burn silently assumes a single currency.** Safe while §2 holds CAD-only, and **wrong the day the first USD subscription is entered** — it will be summed as though it were CAD. Multi-currency is deferred, but this must be a hard failure or a visible warning rather than a silent one when the currency field first varies. *(Flagged by Wave 7; recorded rather than fixed, because the fix is FX-at-charge-date and that is a real feature.)*
 
 **Normalisation rule (must be stated in code):** monthly-equivalent = amount × (30.4375 / cycleLengthInDays). Round **only at display**; never round a stored value. Annual = monthly × 12.
 
@@ -634,7 +658,7 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **4** ✅ | Notification engine as a layer-4 `OttoServices` target behind a `NotificationClient` protocol, so the whole engine tests host-side | ✅ **Done** — commits `768525c`–`29811ca`; **203 tests**. Both ⛔ gates pass, incl. the derivation-path test (conversion announcement fires with stored status still `.trial`). ⚠ `BGAppRefreshTask` **not yet observed to run** — by this spec's own standard it does not exist until it is |
 | **5** ✅ | Trial, cancellation and verification flows, behind one `SubscriptionFlowService` actor so both entry points share a single state-change path | ✅ **Code done** — commits `30e2e99`–`cb3486f`; **252 tests**. ⛔ **Gate NOT met** — the compressed-timeline trial test on a real device is still outstanding |
 | **5.5** ✅ | Hardening: `scripts/verify.sh` (clean-clone build/test/lint), CI covering every package + simulator job, the two pre-CloudKit field additions, ordering guards, the phone-in-a-drawer harness, `docs/manual-verification.md` | ✅ **Done** — HEAD `5a2799e` **verified from a clean clone**: 270 host + 5 simulator = **275 tests**. ⚠ One `OttoPersistence` segfault on the first run, then 9 clean — deliberately left unmasked |
-| **7** ⬅ *moved ahead of 6 in v1.6* | Insights, payment methods, zombie detection | Numbers reconcile against a hand-computed fixture |
+| **7** ✅ | Insights, payment methods, zombie detection, plus the pause UI and the paused-cancellation defer-and-ask path | ✅ **Done** — HEAD `99c3050`, **347 tests**, all Insights figures tested against hand-computed fixtures written *before* implementation. Wave 5.5's segfault did not recur |
 | **8** ⬅ *moved ahead of 6 in v1.6* | Export/import (JSON + CSV), settings, accessibility, Dynamic Type, VoiceOver | Export → wipe → import restores exactly |
 | **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall. ⛔ **Blocked on §10 Decision 2** |
 | **9** | Real-data dogfood; then TestFlight to the second user | The owner runs it as his only tracker for two weeks |
@@ -675,7 +699,7 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 | # | Decision | Status |
 |---|---|---|
 | 1 | App name + bundle ID | ✅ **Decided Aug 6 — Otto / `com.arthurzhang.otto`.** Permanent. |
-| 2 | Android or paid public distribution within 12 months? | ⏸ **Open — does not block the build.** If yes, §3.1 flips to a real backend. Revisit at Wave 6, before CloudKit is switched on. |
+| 2 | Android or paid public distribution within 12 months? | ✅ **Decided Aug 7: no — proceed with CloudKit.** See below. Revocable until Wave 6 begins |
 | 3 | Notification time-of-day default | Default set: **09:00 local**, user-editable |
 | 4 | Default reminder lead days | Default set: **3 days renewals · 5 days trials**, per-subscription override |
 | 5 | Default trial buffer | Default set: **2 days**, per-trial override |
@@ -684,11 +708,27 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 
 | 6 | Add a remote and verify CI | ⏸ Open — `runs-on: macos-26` is unverified until the first push; adjust the runner label if GitHub's differs |
 
+**On Decision 2, and what changed.** The v1.0 framing treated this as a coin-flip on the owner's future intentions. Two things since have made it lopsided:
+
+1. **Nothing is validated yet.** The hands-on entry pass is still unsigned, and no real subscription has been tracked end-to-end. Building auth, hosting, and a sync protocol for two known users, before the product has been used once, is speculative work on a speculative premise.
+2. **⭐ Wave 8 now precedes Wave 6, which materially changes the calculus.** The central argument for building a backend early was that CloudKit's one-way door makes a future migration expensive. **A tested export/import path, existing and verified before any data enters CloudKit, is most of that cost removed** — the migration becomes "users export and upload" rather than "there is no path."
+
+**The flip condition is unchanged and still live:** a concrete Android or paid-distribution intent inside ~12 months makes CloudKit throwaway work. **Absent that intent, CloudKit is right.** Revocable until Wave 6 begins; after that it is a data migration.
+
 **Decision 2 is the only one with a real deadline.** It is free to defer until Wave 6, and expensive after — once the second user has months of data in her private CloudKit database, moving her off it requires her cooperation rather than a migration script.
 
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.7 — revised against the Wave 7 report)** — Wave 7 shipped: **347 tests**, every Insights figure tested against fixtures **hand-computed before implementation**, and the Wave 5.5 segfault did not recur in any run. **§10 Decision 2 resolved: proceed with CloudKit** — see §10 for why Wave 8 preceding Wave 6 is what made that lopsided rather than close.
+  - **⭐ The sharpest finding was one that is *correct today*.** `caughtUpCancellationRecords` filters by **stored** status — flagged not as a bug but as "the stored-vs-effective read pattern that produced the Wave 4 bug." **A dangerous pattern that happens to be correct is a defect waiting for an unrelated change to activate it, silently** — this project's characteristic failure mode. Now a structural rule: **stored `status` is unreadable above layer 2; every status read goes through `effectiveStatus(asOf:)`**, enforced by lint or access control rather than reviewer attention. This is the report finding I'd most want reproduced on Kept.
+  - **⚠ §7.2's frozen-price rule has been uncomputable since v1.1.** It priced paused spend at the moment the pause began, and **no field ever recorded when that was** — six versions of a formula with nothing to evaluate it against. `pausedOn` added.
+  - **⚠ The specified pause path was unreachable code.** §5.1 made `.paused` first-class from v1.1 and §7.1's screen list never gave it a home, so **nothing in the app could enter the state at all.** Pause now lives in Detail. A spec can describe a state completely and still never say who creates it.
+  - **`nextChargeDateIfNotCancelled` made conditionally optional.** v1.1's reasoning stands — an *unknown* date must never get a runtime fallback — but the indefinite-pause path produces a date that is **legitimately, knowably absent**, which is different. Constrained by invariant: `nil` iff `.awaitingResumeDate`, a new verification state that generates no notifications and refuses answers, since there is no unverified assertion to confirm.
+  - **The watermark's storage is now specified, not just its policy.** v1.6 said device-local; Wave 7 correctly noted it still physically lives on `StoredSubscription` and that SwiftData cannot exclude one property from CloudKit sync. It moves to a **second local-only `ModelConfiguration`** — **Wave 6's first schema act**, and **excluded from Wave 8's export.**
+  - **Backwards edits rewind the watermark**, generalized from the pause case: any edit moving a billing sequence earlier rewinds to the earliest affected date.
+  - **Known gap recorded:** burn assumes a single currency. Safe while CAD-only, wrong the day a USD subscription is entered. Must fail loudly rather than silently when the currency field first varies.
 
 - **2026-08-07 (v1.6 — revised against the Wave 5.5 report)** — **HEAD is now verified from a clean clone** (`5a2799e`, 270 host + 5 simulator = 275 tests), `verify.sh` exists as the pre-report gate, CI covers every package, and the two pre-CloudKit field additions have landed. The Wave 4 non-compiling-HEAD problem now has a mechanism preventing it rather than a resolution to be careful.
   - **⭐⭐ The founding scenario escaped a *fourth* time — through the pause subsystem.** The watermark advances while a subscription is paused, so a pause ending Sep 1 with the app unopened until Oct 15 leaves two real charges **permanently unbackfillable**. Fixed by applying §5.2a's pattern where it had been missed: **a pause with `pauseEndsOn` resumes by derivation**, and an indefinite pause **freezes the watermark** instead. Generalized into a design rule: ***any state whose exit is a known future date must exit by derivation.*** A state that waits to be told it has ended will eventually not be told. Four escapes through four mechanisms is the strongest evidence yet that this scenario needs structural enforcement rather than per-wave vigilance — which is what Wave 5.5's `PhoneInADrawerTests` harness, with its file-level contract requiring new time-dependent subsystems to add a test, now provides.
