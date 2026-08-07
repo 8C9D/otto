@@ -214,3 +214,33 @@ func makePaymentMethod(index: Int = 300, label: String = "Bank Mastercard ..4821
         updatedAt: Date(timeIntervalSince1970: 2_000)
     )
 }
+
+// MARK: - On-disk migration helpers (shared by the migration suites)
+
+/// The whole legacy-touching phase holds the shared creation lock (see
+/// TestSupport): building the V1/V2 schemas while another test builds V3
+/// races SwiftData's name-keyed registry. Synchronous so the lock is legal.
+func migratedStore(
+    at url: URL, deviceStateURL: URL, seed: (URL) throws -> Void
+) throws -> (store: OttoStore, containers: OttoContainers) {
+    containerCreationLock.lock()
+    defer { containerCreationLock.unlock() }
+    try seed(url)
+    // Reopen through the factory - what the app does on first launch
+    // after the update. The factory hands the migration plan the
+    // device-state store's location for the watermark carry-over.
+    let containers = try OttoContainerFactory.onDiskContainers(
+        mainURL: url, deviceStateURL: deviceStateURL
+    )
+    return (OttoStore(containers: containers), containers)
+}
+
+/// A fresh pair of on-disk store URLs, cleaned up by the caller.
+func storeURLs() -> (main: URL, deviceState: URL) {
+    let base = FileManager.default.temporaryDirectory
+        .appendingPathComponent("otto-migration-\(UUID().uuidString)")
+    return (
+        base.appendingPathExtension("main.store"),
+        base.appendingPathExtension("device.store")
+    )
+}

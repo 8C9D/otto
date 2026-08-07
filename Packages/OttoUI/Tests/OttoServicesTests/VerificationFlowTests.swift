@@ -55,7 +55,6 @@ struct VerificationFlowTests {
         // closed now, so the open-episode read is empty and history holds it.
         #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id) == nil)
         let record = try await fixture.cancellations.episodes(forSubscription: subscription.id).first
-        #expect(record?.verificationState == .verifiedStopped)
         #expect(record?.verifiedAt == now)
         #expect(record?.endedAt == now)
         #expect(record?.outcome == .verifiedStopped)

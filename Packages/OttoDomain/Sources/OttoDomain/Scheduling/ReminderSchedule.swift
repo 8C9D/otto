@@ -248,10 +248,13 @@ private func verificationReminders(
     from today: CalendarDay,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
-    // A resolved record needs no reminder: verified-stopped archives, still-charging
-    // moves to the dispute flow, and needs-manual-review has already escalated to a
-    // persistent Today card - three ignored checks mean notifications are not
-    // reaching this item, and a fourth won't either (spec §5.4).
+    // A resolved record needs no reminder: a CLOSED episode stopped watching
+    // when it ended (spec §5.4 v1.9 - verification passing closes the episode,
+    // it no longer sets a state), still-charging moves to the dispute flow, and
+    // needs-manual-review has already escalated to a persistent Today card -
+    // three ignored checks mean notifications are not reaching this item, and a
+    // fourth won't either (spec §5.4).
+    if let cancellation, !cancellation.isOpen { return [] }
     if let cancellation, cancellation.verificationState != .pending { return [] }
     if let cancellation, cancellation.unansweredCheckCount >= 3 { return [] }
 

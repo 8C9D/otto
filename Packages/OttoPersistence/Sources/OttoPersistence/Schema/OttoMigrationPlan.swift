@@ -231,6 +231,33 @@ enum OttoMigrationPlan: SchemaMigrationPlan {
                 throw MigrationError.watermarkCarryOverIncomplete(expected: carried.count, found: found)
             }
         },
-        didMigrate: nil
+        didMigrate: { context in
+            // The §5.4 v1.9 folding: `.verifiedStopped` left `verificationState`
+            // (reaching that result closes the episode; it does not set a
+            // state). Rows written before the fold are rewritten by the same
+            // rule the wire format applies at read: the vestigial live state
+            // becomes `.pending`, and a row the fold's semantics say was
+            // finished but that is somehow still open closes at its
+            // verification instant (`CancellationEpisode.legacyClosure` - one
+            // rule, three callers, no drift).
+            var rewrote = false
+            for record in try context.fetch(FetchDescriptor<OttoSchemaV3.StoredCancellationEpisode>())
+            where record.verificationState == "verifiedStopped" {
+                if record.endedAt == nil && record.outcome == nil {
+                    let closure = CancellationEpisode.legacyClosure(
+                        verificationStateRaw: record.verificationState,
+                        verifiedAt: record.verifiedAt,
+                        updatedAt: record.updatedAt
+                    )
+                    record.endedAt = closure.endedAt
+                    record.outcome = closure.outcome?.rawValue
+                }
+                record.verificationState = CancellationEpisode.VerificationState.pending.rawValue
+                rewrote = true
+            }
+            if rewrote {
+                try context.save()
+            }
+        }
     )
 }

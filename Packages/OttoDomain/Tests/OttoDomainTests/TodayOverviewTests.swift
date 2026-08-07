@@ -146,7 +146,8 @@ struct TodayOverviewTests {
             ),
             stopped.id: try makeCancellationEpisode(
                 index: 602, subscriptionID: stopped.id,
-                nextChargeDateIfNotCancelled: try day(2026, 7, 25), verificationState: .verifiedStopped
+                nextChargeDateIfNotCancelled: try day(2026, 7, 25),
+                endedAt: Date(timeIntervalSince1970: 5_000), outcome: .verifiedStopped
             )
         ]
 

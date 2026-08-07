@@ -163,18 +163,22 @@ struct ExportLegacyImportTests {
         #expect(verified.endedAt == verified.verifiedAt)
     }
 
-    @Test("a v2 file's episodes round-trip verbatim - the upgrade never runs on current data")
-    func upgradeGatedOnVersion() throws {
-        // An open verified-stopped episode cannot come from Otto's flows, but a
-        // v2 file's data must round-trip as written, not be "repaired" by the
-        // v1 rule. Encode a v2 export whose episode WOULD change if the legacy
-        // closure ran, and check it comes back untouched.
+    @Test("a v2 file carrying the pre-fold verifiedStopped STATE upgrades at read (spec §5.4, v1.9)")
+    func preFoldStateUpgradesAtRead() throws {
+        // Files written before v1.9 carry "verifiedStopped" in
+        // `verificationState` - the case the folding removed from the domain.
+        // The domain can no longer even construct it, so the fixture edits the
+        // raw JSON the way a pre-fold Otto wrote it: an OPEN episode whose
+        // state claims verified-stopped (pre-fold semantics: finished). The
+        // upgrade must close it at its verification instant - the same
+        // `legacyClosure` rule v1 files use - and park the vestigial live
+        // state at `.pending`.
         let episode = CancellationEpisode(
             id: try fixtureUUID(603),
             subscriptionID: try fixtureUUID(1),
             markedCancelledAt: Date(timeIntervalSinceReferenceDate: 776_304_100),
             nextChargeDateIfNotCancelled: try day(2026, 9, 1),
-            verificationState: .verifiedStopped,
+            verificationState: .pending,
             verifiedAt: Date(timeIntervalSinceReferenceDate: 776_350_000),
             createdAt: Date(timeIntervalSinceReferenceDate: 776_304_100),
             updatedAt: Date(timeIntervalSinceReferenceDate: 776_360_000)
@@ -194,11 +198,61 @@ struct ExportLegacyImportTests {
         )
         let snapshot = OttoDataSnapshot(subscriptions: [subscription], cancellationEpisodes: [episode])
         let data = try exportData(from: snapshot, exportedAt: Date(timeIntervalSinceReferenceDate: 0))
+        let preFoldJSON = try #require(String(data: data, encoding: .utf8))
+            .replacingOccurrences(of: "\"pending\"", with: "\"verifiedStopped\"")
+        let preFoldData = try #require(preFoldJSON.data(using: .utf8))
 
-        let imported = try importedSnapshot(from: data)
+        let imported = try importedSnapshot(from: preFoldData)
 
-        let roundTripped = try #require(imported.cancellationEpisodes.first)
-        #expect(roundTripped.isOpen)
-        #expect(roundTripped.outcome == nil)
+        let upgraded = try #require(imported.cancellationEpisodes.first)
+        #expect(!upgraded.isOpen)
+        #expect(upgraded.outcome == .verifiedStopped)
+        #expect(upgraded.endedAt == upgraded.verifiedAt)
+        #expect(upgraded.verificationState == .pending)
+    }
+
+    @Test("a v2 file's CLOSED verified episode keeps its closure and sheds only the pre-fold state")
+    func preFoldClosedStateRemapsOnly() throws {
+        // The common pre-fold shape: verification passed, so the single writer
+        // both set the state AND closed the episode. Only the state needs
+        // upgrading; the closure must come through untouched.
+        let ended = Date(timeIntervalSinceReferenceDate: 776_350_000)
+        let episode = CancellationEpisode(
+            id: try fixtureUUID(603),
+            subscriptionID: try fixtureUUID(1),
+            markedCancelledAt: Date(timeIntervalSinceReferenceDate: 776_304_100),
+            nextChargeDateIfNotCancelled: try day(2026, 9, 1),
+            verificationState: .pending,
+            verifiedAt: ended,
+            endedAt: ended,
+            outcome: .verifiedStopped,
+            createdAt: Date(timeIntervalSinceReferenceDate: 776_304_100),
+            updatedAt: Date(timeIntervalSinceReferenceDate: 776_360_000)
+        )
+        let subscription = Subscription(
+            id: try fixtureUUID(1),
+            name: "S",
+            category: .other,
+            status: .active,
+            amountCents: 1000,
+            currencyCode: "CAD",
+            cycle: .monthly,
+            cycleStartDay: try day(2026, 1, 1),
+            reminderLeadDays: 3,
+            createdAt: Date(timeIntervalSinceReferenceDate: 0),
+            updatedAt: Date(timeIntervalSinceReferenceDate: 0)
+        )
+        let snapshot = OttoDataSnapshot(subscriptions: [subscription], cancellationEpisodes: [episode])
+        let data = try exportData(from: snapshot, exportedAt: Date(timeIntervalSinceReferenceDate: 0))
+        let preFoldJSON = try #require(String(data: data, encoding: .utf8))
+            .replacingOccurrences(of: "\"pending\"", with: "\"verifiedStopped\"")
+        let preFoldData = try #require(preFoldJSON.data(using: .utf8))
+
+        let imported = try importedSnapshot(from: preFoldData)
+
+        let upgraded = try #require(imported.cancellationEpisodes.first)
+        #expect(upgraded.endedAt == ended)
+        #expect(upgraded.outcome == .verifiedStopped)
+        #expect(upgraded.verificationState == .pending)
     }
 }

@@ -97,7 +97,11 @@ struct VerificationTransitionTests {
         )
 
         let stopped = record.confirmingChargesStopped(at: now)
-        #expect(stopped.verificationState == .verifiedStopped)
+        // v1.9's §5.4 folding: verification passing CLOSES the episode with the
+        // verified outcome instead of setting a state.
+        #expect(!stopped.isOpen)
+        #expect(stopped.outcome == .verifiedStopped)
+        #expect(stopped.endedAt == now)
         #expect(stopped.verifiedAt == now)
         #expect(stopped.confirmingChargesStopped(at: later) == stopped)
 
@@ -114,7 +118,7 @@ struct VerificationTransitionTests {
             nextChargeDateIfNotCancelled: try day(2026, 8, 20),
             verificationState: .needsManualReview
         )
-        #expect(escalated.confirmingChargesStopped(at: now).verificationState == .verifiedStopped)
+        #expect(escalated.confirmingChargesStopped(at: now).outcome == .verifiedStopped)
         #expect(escalated.reportingStillCharging(at: now).verificationState == .stillCharging)
     }
 
@@ -176,12 +180,20 @@ struct VerificationTransitionTests {
     @Test("an answered record never rolls - the watch ended with the answer")
     func answeredRecordsDoNotRoll() throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        for state in [CancellationEpisode.VerificationState.verifiedStopped, .stillCharging] {
-            let record = try makeCancellationEpisode(
-                subscriptionID: subscription.id,
-                nextChargeDateIfNotCancelled: try day(2026, 8, 15),
-                verificationState: state
-            )
+        // The no-path answer (a live dispute), and the yes-path answer (which
+        // since v1.9 closes the episode rather than setting a state).
+        let disputed = try makeCancellationEpisode(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 15),
+            verificationState: .stillCharging
+        )
+        let verified = try makeCancellationEpisode(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 15),
+            endedAt: now,
+            outcome: .verifiedStopped
+        )
+        for record in [disputed, verified] {
             #expect(record.catchingUpOnUnansweredChecks(
                 for: subscription, asOf: try day(2027, 1, 1), at: now
             ) == record)
@@ -304,7 +316,7 @@ struct DisputeSummaryTests {
     }
 
     @Test("no dispute exists before a charge was reported", arguments: [
-        CancellationEpisode.VerificationState.pending, .verifiedStopped, .needsManualReview
+        CancellationEpisode.VerificationState.pending, .needsManualReview
     ])
     func noSummaryWithoutFailure(state: CancellationEpisode.VerificationState) throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
@@ -312,6 +324,22 @@ struct DisputeSummaryTests {
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 8, 15),
             verificationState: state
+        )
+        #expect(disputeSummary(for: record, subscription: subscription) == nil)
+    }
+
+    @Test("a resolved dispute has no summary - a closed episode's charge report is history (spec §5.4, v1.9)")
+    func noSummaryOnceClosed() throws {
+        // The watch reported still-charging, then the user resolved it: the
+        // episode closed with the verified outcome, and the live state it
+        // closed FROM must not resurrect the dispute card.
+        let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
+        let record = try makeCancellationEpisode(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 15),
+            verificationState: .stillCharging,
+            endedAt: Date(timeIntervalSince1970: 9_000),
+            outcome: .verifiedStopped
         )
         #expect(disputeSummary(for: record, subscription: subscription) == nil)
     }

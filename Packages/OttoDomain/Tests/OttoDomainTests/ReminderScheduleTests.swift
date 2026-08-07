@@ -246,7 +246,7 @@ struct ReminderScheduleTests {
         #expect(planned.map(\.kind) == [.verification])
     }
 
-    @Test("a verified cancellation generates nothing")
+    @Test("a verified (closed) cancellation generates nothing")
     func verifiedCancellation() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
         let record = CancellationEpisode(
@@ -254,9 +254,12 @@ struct ReminderScheduleTests {
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
             nextChargeDateIfNotCancelled: try day(2026, 8, 20),
-            verificationState: .verifiedStopped,
+            verificationState: .pending,
+            verifiedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 100),
+            outcome: .verifiedStopped,
             createdAt: Date(timeIntervalSince1970: 0),
-            updatedAt: Date(timeIntervalSince1970: 0)
+            updatedAt: Date(timeIntervalSince1970: 100)
         )
         let today = try day(2026, 8, 6)
         #expect(reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90).isEmpty)

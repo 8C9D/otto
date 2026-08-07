@@ -60,7 +60,7 @@ struct WireFormatTests {
             "upcoming", "confirmedCharged", "confirmedNotCharged", "unexpectedCharge", "skipped"
         ])
         #expect(CancellationEpisode.VerificationState.allCases.map(\.rawValue) == [
-            "pending", "verifiedStopped", "stillCharging", "needsManualReview", "awaitingResumeDate"
+            "pending", "stillCharging", "needsManualReview", "awaitingResumeDate"
         ])
         #expect(PriceChange.Source.allCases.map(\.rawValue) == [
             "userEdit", "chargeMismatch", "trialConversion"

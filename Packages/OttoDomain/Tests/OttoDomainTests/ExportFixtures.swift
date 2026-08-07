@@ -106,7 +106,7 @@ private func exportCancellations() throws -> [CancellationEpisode] {
         ),
         try exportCancellation(604, subscription: 9, state: .needsManualReview, checkDate: try day(2026, 6, 1)),
         try exportCancellation(
-            605, subscription: 10, state: .verifiedStopped, checkDate: try day(2026, 5, 1),
+            605, subscription: 10, state: .pending, checkDate: try day(2026, 5, 1),
             endedAt: fixtureUpdated, outcome: .verifiedStopped
         ),
         // Subscription 6's EARLIER cancellation, un-cancelled: an abandoned
@@ -201,7 +201,7 @@ private func exportCancellation(
         expectedChargeAmountCents: checkDate == nil ? nil : 1099,
         verificationState: state,
         unansweredCheckCount: state == .needsManualReview ? 3 : 0,
-        verifiedAt: state == .verifiedStopped ? fixtureUpdated : nil,
+        verifiedAt: outcome == .verifiedStopped ? fixtureUpdated : nil,
         evidenceNote: "conf #ABC-123",
         endedAt: endedAt,
         outcome: outcome,

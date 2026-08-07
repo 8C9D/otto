@@ -60,7 +60,9 @@ func makeCancellationEpisode(
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
     expectedChargeAmountCents: Int? = 1099,
-    verificationState: CancellationEpisode.VerificationState = .pending
+    verificationState: CancellationEpisode.VerificationState = .pending,
+    endedAt: Date? = nil,
+    outcome: CancellationEpisode.Outcome? = nil
 ) throws -> CancellationEpisode {
     CancellationEpisode(
         id: try fixtureUUID(index),
@@ -69,6 +71,8 @@ func makeCancellationEpisode(
         nextChargeDateIfNotCancelled: nextChargeDateIfNotCancelled,
         expectedChargeAmountCents: expectedChargeAmountCents,
         verificationState: verificationState,
+        endedAt: endedAt,
+        outcome: outcome,
         createdAt: Date(timeIntervalSince1970: 0),
         updatedAt: Date(timeIntervalSince1970: 0)
     )

@@ -19,11 +19,14 @@ import Foundation
 /// evidence, and what arrived anyway.
 public struct CancellationEpisode: Identifiable, Hashable, Sendable {
 
+    /// Where the watch IS NOW - live states only, meaningful while the episode
+    /// is open (spec §5.4, v1.9). How an episode ENDED is `outcome`'s job:
+    /// `.verifiedStopped` left this enum in v1.9 because reaching that result
+    /// does not set a state, it closes the episode. A closed episode keeps the
+    /// last live state as an artifact of when it closed; nothing reads it.
     public enum VerificationState: String, Codable, Hashable, Sendable, CaseIterable {
         /// Waiting for the first would-be charge date to pass.
         case pending
-        /// The user confirmed the money stopped; the subscription can be archived.
-        case verifiedStopped
         /// A charge arrived after cancellation - surface the dispute summary.
         case stillCharging
         /// Three consecutive checks went unanswered (spec §5.4): notifications are
@@ -183,7 +186,10 @@ extension CancellationEpisode {
         verifiedAt: Date?,
         updatedAt: Date?
     ) -> (endedAt: Date?, outcome: Outcome?) {
-        guard verificationStateRaw == VerificationState.verifiedStopped.rawValue,
+        // The literal is v1's wire value: the STATE case was removed in v1.9
+        // (the §5.4 folding - reaching the result closes the episode instead),
+        // but old files and stores carry the string forever.
+        guard verificationStateRaw == "verifiedStopped",
               let endedAt = verifiedAt ?? updatedAt
         else { return (nil, nil) }
         return (endedAt, .verifiedStopped)

@@ -228,8 +228,6 @@ struct CancellationSectionView: View {
         let badge: BadgeSpec = switch state {
         case .pending:
             BadgeSpec(text: String(localized: "Waiting"), symbolName: "clock", color: .orange)
-        case .verifiedStopped:
-            BadgeSpec(text: String(localized: "Charges stopped"), symbolName: "checkmark.circle", color: .green)
         case .stillCharging:
             BadgeSpec(text: String(localized: "Still charging"), symbolName: "exclamationmark.triangle", color: .red)
         case .needsManualReview:

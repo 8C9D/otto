@@ -66,20 +66,20 @@ public func wouldBeChargeAmountCents(on day: CalendarDay, for subscription: Subs
 // MARK: - Verification transitions
 
 extension CancellationEpisode {
-    /// The yes-path: the user confirmed the money stopped, which is also the
-    /// episode's end (spec §5.3a: exiting writes an end date) - it closes with
-    /// `.verifiedStopped` and the caller archives the subscription alongside
-    /// (spec §5.4: not archived until verification passes). Idempotent - a
-    /// closed episode keeps its first `verifiedAt` and `endedAt`. A deferred
-    /// check cannot be answered: no date was ever watched, so there is nothing
-    /// the confirmation would be about.
+    /// The yes-path: the user confirmed the money stopped, which IS the
+    /// episode's end (spec §5.3a: exiting writes an end date; §5.4 v1.9:
+    /// reaching this result does not set a state, it closes the episode with
+    /// `outcome = .verifiedStopped`) - and the caller archives the subscription
+    /// alongside (spec §5.4: not archived until verification passes).
+    /// Idempotent - a closed episode keeps its first `verifiedAt` and
+    /// `endedAt`. A deferred check cannot be answered: no date was ever
+    /// watched, so there is nothing the confirmation would be about. The live
+    /// state is left where the watch was; once closed, nothing reads it.
     public func confirmingChargesStopped(at now: Date) -> CancellationEpisode {
         guard isOpen,
-              verificationState != .verifiedStopped,
               verificationState != .awaitingResumeDate
         else { return self }
         var updated = self
-        updated.verificationState = .verifiedStopped
         updated.verifiedAt = now
         updated.endedAt = now
         updated.outcome = .verifiedStopped
@@ -230,10 +230,12 @@ public func disputeSummary(
     for record: CancellationEpisode,
     subscription: Subscription
 ) -> DisputeSummary? {
-    // Only a .stillCharging record disputes, and that state always carries its
-    // charge date (the nil date belongs to .awaitingResumeDate alone); the
+    // Only an OPEN .stillCharging record disputes: a closed episode's dispute
+    // was resolved when it ended (spec §5.4 v1.9), and the state always carries
+    // its charge date (the nil date belongs to .awaitingResumeDate alone); the
     // guard keeps the function total rather than trusting the invariant.
-    guard record.verificationState == .stillCharging,
+    guard record.isOpen,
+          record.verificationState == .stillCharging,
           let chargeDate = record.nextChargeDateIfNotCancelled
     else { return nil }
     return DisputeSummary(

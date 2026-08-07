@@ -183,6 +183,12 @@ private func verificationEntry(
         // the state should not exist, and the user must see that it does.
         return TodayEntry(subscription: subscription, reason: .needsReview, date: today)
     }
+    // A verified episode is resolved - archiving is a Wave 5 flow, and there is
+    // nothing to show here. Since v1.9's §5.4 folding this is the OUTCOME of a
+    // closed episode, not a live state.
+    if record.outcome == .verifiedStopped {
+        return nil
+    }
     switch record.verificationState {
     case .awaitingResumeDate:
         // The deferred check (spec §5.4, v1.5): no date exists yet and none is
@@ -210,8 +216,5 @@ private func verificationEntry(
             let reason: TodayEntry.Reason = checkDate <= today ? .verificationDue : .verificationCheck
             return TodayEntry(subscription: subscription, reason: reason, date: checkDate)
         }
-    case .verifiedStopped:
-        // Resolved; archiving is a Wave 5 flow, and there is nothing to show here.
-        return nil
     }
 }
