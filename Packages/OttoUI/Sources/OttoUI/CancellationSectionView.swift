@@ -14,6 +14,7 @@ struct CancellationSectionView: View {
     @Environment(AppModel.self) private var model
     @State private var isEditingEvidence = false
     @State private var evidenceDraft = ""
+    @State private var resumeDateDraft: CalendarDay?
 
     @ViewBuilder
     var body: some View {
@@ -23,14 +24,17 @@ struct CancellationSectionView: View {
                     String(localized: "Marked cancelled"),
                     value: record.markedCancelledAt.formatted(date: .abbreviated, time: .omitted)
                 )
-                LabeledContent(
-                    String(localized: "Watching for a charge on"),
-                    value: record.nextChargeDateIfNotCancelled.displayText()
-                )
+                if let checkDate = record.nextChargeDateIfNotCancelled {
+                    LabeledContent(
+                        String(localized: "Watching for a charge on"),
+                        value: checkDate.displayText()
+                    )
+                }
                 LabeledContent(String(localized: "Verification")) {
                     verificationBadge(record.verificationState)
                 }
                 evidenceRow(record: record)
+                resumeDatePrompt(record: record)
                 verificationPrompt(record: record)
             }
             if let url = detail.subscription.cancellationURL {
@@ -102,17 +106,49 @@ struct CancellationSectionView: View {
         }
     }
 
+    /// The deferred check asking for its date (spec §5.4, v1.5): the
+    /// subscription was cancelled while paused indefinitely, no would-be charge
+    /// date honestly exists, and Otto will not fabricate one. The user supplies
+    /// the resume date the vendor gave; the watch starts from it.
+    @ViewBuilder
+    private func resumeDatePrompt(record: CancellationRecord) -> some View {
+        if record.verificationState == .awaitingResumeDate {
+            let name = detail.subscription.name
+            Text(String(localized: """
+            \(name) was paused with no resume date when you cancelled, so there \
+            is no date to watch yet. When was billing due to resume?
+            """))
+                .font(.callout)
+            DatePicker(
+                String(localized: "Billing was due to resume"),
+                selection: Binding(
+                    get: { resumeDateDraft ?? model.subscriptionsStore.today },
+                    set: { resumeDateDraft = $0 }
+                ).asDate()
+            )
+            .datePickerStyle(.compact)
+            Button(String(localized: "Start watching from this date")) {
+                let chosen = resumeDateDraft ?? model.subscriptionsStore.today
+                perform {
+                    try await model.supplyPausedResumeDate(
+                        subscriptionID: detail.subscription.id, resumeDate: chosen
+                    )
+                }
+            }
+        }
+    }
+
     /// The verification question (spec §5.4, §7.1 screen 6), shown once the check
     /// date has arrived - and kept on screen for an escalated record, which is
     /// exactly a check that went unanswered three times.
     @ViewBuilder
     private func verificationPrompt(record: CancellationRecord) -> some View {
         let today = model.subscriptionsStore.today
-        let checkDue = record.verificationState == .pending
-            && record.nextChargeDateIfNotCancelled <= today
-        if checkDue || record.verificationState == .needsManualReview {
+        if let checkDate = record.nextChargeDateIfNotCancelled,
+           (record.verificationState == .pending && checkDate <= today)
+            || record.verificationState == .needsManualReview {
             let name = detail.subscription.name
-            let due = record.nextChargeDateIfNotCancelled.displayText()
+            let due = checkDate.displayText()
             Text(String(localized: "A \(name) charge was due \(due). Check your statement - did it stop?"))
                 .font(.callout)
             Button(String(localized: "Yes - the charges stopped")) {
@@ -170,6 +206,8 @@ struct CancellationSectionView: View {
             BadgeSpec(text: String(localized: "Still charging"), symbolName: "exclamationmark.triangle", color: .red)
         case .needsManualReview:
             BadgeSpec(text: String(localized: "Needs review"), symbolName: "exclamationmark.triangle", color: .red)
+        case .awaitingResumeDate:
+            BadgeSpec(text: String(localized: "Needs a resume date"), symbolName: "calendar.badge.exclamationmark", color: .orange)
         }
         return badge.label
     }

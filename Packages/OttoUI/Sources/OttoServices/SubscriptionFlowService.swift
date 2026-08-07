@@ -134,6 +134,54 @@ public actor SubscriptionFlowService {
         try await subscriptions.save(flipped)
     }
 
+    // MARK: - Pausing and resuming
+
+    /// Pauses billing (spec §5.1): status `.paused`, the freeze point recorded
+    /// (`pausedOn` - the day §5.1's paused-spend price freezes at), and the
+    /// resume date stored when the vendor gave one. Only an effectively active
+    /// subscription pauses - an unconverted trial has nothing to pause, and the
+    /// §5.2a derive-before-you-mutate rule means a converted-unflipped trial
+    /// gets its conversion written through FIRST, so the paused record carries
+    /// the paid anchor and amount rather than the trial-era ones the status
+    /// overwrite would strand.
+    public func pause(
+        subscriptionID: UUID,
+        resumesOn: CalendarDay?,
+        now: Date,
+        today: CalendarDay
+    ) async throws {
+        guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
+              subscription.effectiveStatus(asOf: today) == .active
+        else { return }
+        if subscription.isConvertedTrial(asOf: today) {
+            try await confirmTrialConversion(subscriptionID: subscriptionID, now: now, today: today)
+            guard let flipped = try await subscriptions.subscription(withID: subscriptionID) else { return }
+            subscription = flipped
+        }
+        guard subscription.status != .paused else { return }
+        subscription.status = .paused
+        subscription.pausedOn = today
+        subscription.pauseEndsOn = resumesOn
+        subscription.updatedAt = now
+        try await subscriptions.save(subscription)
+    }
+
+    /// Resumes billing: status `.active`, both pause fields cleared. Also the
+    /// manual path out of an indefinite pause - the frozen watermark then
+    /// backfills the gap on the next scheduler pass (spec §5.3, v1.6). Accepts
+    /// a derived-resumed pause too: persisting what the derivation already
+    /// decided is an optimisation, never the mechanism (spec §5.2a).
+    public func resume(subscriptionID: UUID, now: Date) async throws {
+        guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
+              subscription.status == .paused
+        else { return }
+        subscription.status = .active
+        subscription.pauseEndsOn = nil
+        subscription.pausedOn = nil
+        subscription.updatedAt = now
+        try await subscriptions.save(subscription)
+    }
+
     // MARK: - The cancellation flow
 
     /// Marks the subscription cancelling and creates the watching record
@@ -172,14 +220,21 @@ public actor SubscriptionFlowService {
             // subscription (§5.2a v1.5: derive before you mutate), because both
             // are unrecoverable later - the amount's only other home is the
             // price field a later edit overwrites (spec §5.4, v1.5).
+            //
+            // Cancelling an INDEFINITELY paused subscription yields no date at
+            // all (spec §5.4, v1.5): the check is deferred, never fabricated -
+            // the record waits in .awaitingResumeDate until the user supplies
+            // the resume date through supplyPausedResumeDate.
             let checkDate = verificationCheckDate(for: subscription, asOf: today)
             record = CancellationRecord(
                 id: UUID(),
                 subscriptionID: subscriptionID,
                 markedCancelledAt: now,
                 nextChargeDateIfNotCancelled: checkDate,
-                expectedChargeAmountCents: wouldBeChargeAmountCents(on: checkDate, for: subscription),
-                verificationState: .pending,
+                expectedChargeAmountCents: checkDate.map {
+                    wouldBeChargeAmountCents(on: $0, for: subscription)
+                },
+                verificationState: checkDate == nil ? .awaitingResumeDate : .pending,
                 evidenceNote: evidenceNote,
                 createdAt: now,
                 updatedAt: now
@@ -194,6 +249,25 @@ public actor SubscriptionFlowService {
             try await subscriptions.save(subscription)
         }
         return CancellationStart(record: record, cancellationURL: url)
+    }
+
+    /// The user supplied the resume date a deferred verification was waiting on
+    /// (spec §5.4, v1.5): the check date becomes the first would-be charge on or
+    /// after it, and the record joins the ordinary pending watch. Idempotent -
+    /// a record no longer awaiting its date is left alone, so a double-tap
+    /// cannot overwrite a check already rolling forward.
+    public func supplyPausedResumeDate(
+        subscriptionID: UUID,
+        resumeDate: CalendarDay,
+        now: Date
+    ) async throws {
+        guard let subscription = try await subscriptions.subscription(withID: subscriptionID),
+              let record = try await cancellations.record(forSubscription: subscriptionID)
+        else { return }
+        let supplied = record.supplyingResumeDate(resumeDate, for: subscription, at: now)
+        if supplied != record {
+            try await cancellations.save(supplied)
+        }
     }
 
     /// Replaces the record's evidence note - the user coming back from the vendor
@@ -231,7 +305,11 @@ public actor SubscriptionFlowService {
         today: CalendarDay
     ) async throws -> DisputeSummary? {
         guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
-              let record = try await cancellations.record(forSubscription: subscriptionID)
+              let record = try await cancellations.record(forSubscription: subscriptionID),
+              // A deferred check has never watched a date, so there is nothing
+              // to answer - and the yes-path must not archive an unverified
+              // cancellation (spec §5.4: not archived until verification passes).
+              record.verificationState != .awaitingResumeDate
         else { return nil }
 
         if chargesStopped {
@@ -251,7 +329,9 @@ public actor SubscriptionFlowService {
         if disputed != record {
             try await cancellations.save(disputed)
         }
-        let chargeDay = disputed.nextChargeDateIfNotCancelled
+        // A deferred check refuses the transition and keeps a nil date; there is
+        // no charge to record and nothing to dispute yet.
+        guard let chargeDay = disputed.nextChargeDateIfNotCancelled else { return nil }
         let existing = try await billingEvents.events(forSubscription: subscriptionID)
         if !existing.contains(where: { $0.state == .unexpectedCharge && $0.expectedDate == chargeDay }) {
             try await billingEvents.save(BillingEvent(

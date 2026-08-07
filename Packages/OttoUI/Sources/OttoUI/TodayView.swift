@@ -190,7 +190,7 @@ struct TodayEntryRow: View {
              .trialConverted(let amountCents):
             currencyText(cents: amountCents, currencyCode: entry.subscription.currencyCode)
         case .trialActionNeeded, .verificationDue, .verificationFailed, .needsReview,
-             .pauseResumes, .verificationCheck:
+             .pauseResumes, .verificationCheck, .verificationNeedsResumeDate:
             nil
         }
     }
@@ -210,6 +210,8 @@ struct TodayEntryRow: View {
             String(localized: "Still charging after cancellation")
         case .needsReview:
             String(localized: "Marked cancelled, but nothing is watching it - review this")
+        case .verificationNeedsResumeDate:
+            String(localized: "Cancelled while paused - when was billing due to resume?")
         case .upcomingCharge:
             String(localized: "Charges \(date)")
         case .trialConverts:
@@ -228,6 +230,7 @@ struct TodayEntryRow: View {
         case .verificationDue: "questionmark.circle"
         case .verificationFailed: "exclamationmark.triangle"
         case .needsReview: "exclamationmark.triangle"
+        case .verificationNeedsResumeDate: "calendar.badge.exclamationmark"
         case .upcomingCharge: "calendar"
         case .trialConverts: "hourglass"
         case .pauseResumes: "play.circle"

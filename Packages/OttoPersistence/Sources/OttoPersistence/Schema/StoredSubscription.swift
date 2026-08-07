@@ -23,6 +23,11 @@ extension OttoSchemaV1 {
         var sameDayReminder: Bool = false
         /// yyyymmdd
         var pauseEndsOn: Int?
+        /// yyyymmdd - when the pause began (Wave 7): the freeze point for §5.1's
+        /// paused-spend price. Optional like every stored field; nil on rows
+        /// paused before the field existed, and Insights falls back to the
+        /// current price for those.
+        var pausedOn: Int?
         /// yyyymmdd - the §5.3 materialization watermark (added v1.5). Optional
         /// like every stored field, which doubles as the migration: pre-v1.5 rows
         /// read nil, materialize from today once, and carry a watermark after

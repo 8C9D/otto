@@ -289,6 +289,7 @@ public final class SubscriptionFormModel {
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
             pauseEndsOn: original?.pauseEndsOn,
+            pausedOn: original?.pausedOn,
             // Spec §5.3 (v1.5): a new entry's watermark starts at the later of
             // the anchor and today, so Mode B never backfills history it had no
             // rows for. An edit preserves the pass bookkeeping untouched - even

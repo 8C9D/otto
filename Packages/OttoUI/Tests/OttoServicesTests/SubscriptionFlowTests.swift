@@ -194,3 +194,92 @@ struct CancellationFlowTests {
             == .cancellationPending)
     }
 }
+
+// The pause flow (spec §5.1; Wave 7): pausing records the freeze point §5.1's
+// paused-spend price needs, resuming clears it, and both are safe to run twice.
+@Suite("The pause flow (spec §5.1)")
+struct PauseFlowTests {
+
+    @Test("pausing records the status, the freeze point, and the resume date")
+    func pauseRecordsState() async throws {
+        let fixture = SchedulerFixture()
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        await fixture.subscriptions.seed([subscription])
+        let today = try day(2026, 8, 6)
+
+        try await fixture.flows.pause(
+            subscriptionID: subscription.id, resumesOn: try day(2026, 9, 1),
+            now: try fixtureNow(), today: today
+        )
+
+        let paused = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        #expect(paused.status == .paused)
+        #expect(paused.pausedOn == today)
+        #expect(paused.pauseEndsOn == (try day(2026, 9, 1)))
+    }
+
+    @Test("resuming clears both pause fields - including from an indefinite pause")
+    func resumeClearsPauseFields() async throws {
+        let fixture = SchedulerFixture()
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        await fixture.subscriptions.seed([subscription])
+        try await fixture.flows.pause(
+            subscriptionID: subscription.id, resumesOn: nil,
+            now: try fixtureNow(), today: try day(2026, 8, 6)
+        )
+
+        try await fixture.flows.resume(subscriptionID: subscription.id, now: try fixtureNow())
+
+        let resumed = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        #expect(resumed.status == .active)
+        #expect(resumed.pausedOn == nil)
+        #expect(resumed.pauseEndsOn == nil)
+
+        // Twice equals once.
+        try await fixture.flows.resume(subscriptionID: subscription.id, now: try fixtureNow())
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id) == resumed)
+    }
+
+    @Test("an unconverted trial does not pause - there is nothing billing to suspend")
+    func unconvertedTrialDoesNotPause() async throws {
+        let fixture = SchedulerFixture()
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1), lengthDays: 30)
+        let subscription = try makeSubscription(
+            index: 1, status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial
+        )
+        await fixture.subscriptions.seed([subscription])
+
+        try await fixture.flows.pause(
+            subscriptionID: subscription.id, resumesOn: nil,
+            now: try fixtureNow(), today: try day(2026, 8, 6)
+        )
+
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.status == .trial)
+    }
+
+    @Test("pausing a converted-unflipped trial writes the conversion through first (derive before mutate)")
+    func pausingConvertedTrialFlipsFirst() async throws {
+        let fixture = SchedulerFixture()
+        // Converted Aug 15 to 1599, never confirmed; paused Sep 20. Without the
+        // flip-first rule the paused record would keep the trial-era anchor and
+        // amount, and every later derivation would read the wrong sequence.
+        let trial = try makeTrialTerm(
+            startDate: try day(2026, 8, 1), lengthDays: 14, convertsToAmountCents: 1599
+        )
+        let subscription = try makeSubscription(
+            index: 1, status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial
+        )
+        await fixture.subscriptions.seed([subscription])
+
+        try await fixture.flows.pause(
+            subscriptionID: subscription.id, resumesOn: nil,
+            now: try fixtureNow(), today: try day(2026, 9, 20)
+        )
+
+        let paused = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        #expect(paused.status == .paused)
+        #expect(paused.cycleStartDay == trial.conversionDate)
+        #expect(paused.amountCents == trial.convertsToAmountCents)
+        #expect(paused.trial != nil)
+    }
+}

@@ -10,7 +10,9 @@ extension OttoSchemaV1 {
         var id: UUID?
         var subscriptionID: UUID?
         var markedCancelledAt: Date?
-        /// yyyymmdd - required in the domain (spec §5.4, v1.1).
+        /// yyyymmdd. Required in the domain for every state except
+        /// `.awaitingResumeDate` (spec §5.4): a deferred check stores no date
+        /// because none honestly exists; the mapping enforces the pairing.
         var nextChargeDateIfNotCancelled: Int?
         /// The watched charge's amount, stored at cancellation (spec §5.4, added
         /// v1.5). Nil on pre-v1.5 rows; the domain treats nil as "not captured"

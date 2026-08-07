@@ -56,13 +56,23 @@ struct CancellationFlowView: View {
                         Task { await markCancelling() }
                     }
                 } footer: {
-                    let checkDate = verificationCheckDate(
+                    if let checkDate = verificationCheckDate(
                         for: subscription, asOf: model.subscriptionsStore.today
-                    )
-                    Text(String(localized: """
-                    Otto will check with you on \(checkDate.displayText()) - the \
-                    first day a charge would land if the cancellation didn't take.
-                    """))
+                    ) {
+                        Text(String(localized: """
+                        Otto will check with you on \(checkDate.displayText()) - the \
+                        first day a charge would land if the cancellation didn't take.
+                        """))
+                    } else {
+                        // The indefinitely paused cancellation (spec §5.4): no
+                        // honest check date exists, and Otto says so instead of
+                        // inventing one.
+                        Text(String(localized: """
+                        This subscription is paused with no resume date, so there is \
+                        no date to watch yet. Otto will ask for the resume date after \
+                        you mark it cancelled.
+                        """))
+                    }
                 }
             }
             .navigationTitle(String(localized: "Cancelling \(subscription.name)"))

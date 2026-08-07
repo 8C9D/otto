@@ -44,6 +44,14 @@ public struct Subscription: Identifiable, Hashable, Sendable {
     /// Meaningful only while `status` is `.paused` (spec §5.1).
     public var pauseEndsOn: CalendarDay?
 
+    /// The day the pause began; meaningful only while `status` is `.paused`.
+    /// Added in Wave 7 because §5.1 pins paused spend to "the monthly-equivalent
+    /// at the price frozen when the pause began" - a rule that is uncomputable
+    /// without knowing when that was. Nil on records paused before the field
+    /// existed; Insights then falls back to the current price, which is the
+    /// honest answer when the freeze point is unknown.
+    public var pausedOn: CalendarDay?
+
     /// The materialization watermark (spec §5.3, v1.5): the last day through which
     /// a ledger pass has observed this subscription's expected charges. The window
     /// reaches BACKWARDS from today to this day, so a charge date that fell while
@@ -90,6 +98,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         reminderLeadDays: Int,
         sameDayReminder: Bool = false,
         pauseEndsOn: CalendarDay? = nil,
+        pausedOn: CalendarDay? = nil,
         lastMaterializedThrough: CalendarDay? = nil,
         trial: TrialTerm? = nil,
         paymentMethodID: UUID? = nil,
@@ -117,6 +126,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         self.reminderLeadDays = reminderLeadDays
         self.sameDayReminder = sameDayReminder
         self.pauseEndsOn = pauseEndsOn
+        self.pausedOn = pausedOn
         self.lastMaterializedThrough = lastMaterializedThrough
         self.trial = trial
         self.paymentMethodID = paymentMethodID
@@ -220,6 +230,7 @@ extension Subscription {
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
             pauseEndsOn: pauseEndsOn,
+            pausedOn: pausedOn,
             lastMaterializedThrough: lastMaterializedThrough,
             trial: trial,
             paymentMethodID: paymentMethodID,
@@ -239,7 +250,7 @@ extension Subscription {
 extension Subscription: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, vendorURL, category, status, amountCents, currencyCode
-        case cycle, cycleStartDay, reminderLeadDays, sameDayReminder, pauseEndsOn
+        case cycle, cycleStartDay, reminderLeadDays, sameDayReminder, pauseEndsOn, pausedOn
         case lastMaterializedThrough
         case trial, paymentMethodID, cancellationURL, cancellationNotes
         case lastUsedDate, notes, createdAt, updatedAt, deletedAt
@@ -270,6 +281,7 @@ extension Subscription: Codable {
             reminderLeadDays: try container.decode(Int.self, forKey: .reminderLeadDays),
             sameDayReminder: try container.decode(Bool.self, forKey: .sameDayReminder),
             pauseEndsOn: try container.decodeIfPresent(CalendarDay.self, forKey: .pauseEndsOn),
+            pausedOn: try container.decodeIfPresent(CalendarDay.self, forKey: .pausedOn),
             lastMaterializedThrough: try container.decodeIfPresent(
                 CalendarDay.self, forKey: .lastMaterializedThrough
             ),
@@ -299,6 +311,7 @@ extension Subscription: Codable {
         try container.encode(reminderLeadDays, forKey: .reminderLeadDays)
         try container.encode(sameDayReminder, forKey: .sameDayReminder)
         try container.encodeIfPresent(pauseEndsOn, forKey: .pauseEndsOn)
+        try container.encodeIfPresent(pausedOn, forKey: .pausedOn)
         try container.encodeIfPresent(lastMaterializedThrough, forKey: .lastMaterializedThrough)
         try container.encodeIfPresent(trial, forKey: .trial)
         try container.encodeIfPresent(paymentMethodID, forKey: .paymentMethodID)

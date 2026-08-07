@@ -126,6 +126,34 @@ public final class AppModel {
         return start
     }
 
+    /// Pauses billing (spec §5.1), recording the freeze point and the resume
+    /// date when the vendor gave one.
+    public func pauseSubscription(subscriptionID: UUID, resumesOn: CalendarDay?) async throws {
+        try await flows.pause(
+            subscriptionID: subscriptionID, resumesOn: resumesOn,
+            now: dates.now(), today: dates.today()
+        )
+        await flowFinished()
+    }
+
+    /// Resumes billing - also the manual path out of an indefinite pause, which
+    /// backfills the frozen watermark's gap on the next scheduler pass.
+    public func resumeSubscription(subscriptionID: UUID) async throws {
+        try await flows.resume(subscriptionID: subscriptionID, now: dates.now())
+        await flowFinished()
+    }
+
+    /// Supplies the resume date a deferred verification was waiting on
+    /// (spec §5.4): an indefinitely paused subscription was cancelled, Otto
+    /// refused to fabricate a check date, and this is the user providing the
+    /// real one.
+    public func supplyPausedResumeDate(subscriptionID: UUID, resumeDate: CalendarDay) async throws {
+        try await flows.supplyPausedResumeDate(
+            subscriptionID: subscriptionID, resumeDate: resumeDate, now: dates.now()
+        )
+        await flowFinished()
+    }
+
     /// Saves the evidence captured after the fact - the confirmation number the
     /// vendor page produced once the cancellation actually happened.
     public func updateCancellationEvidence(subscriptionID: UUID, note: String?) async throws {

@@ -75,7 +75,7 @@ struct OrderingGuardTests {
             // ...and every derived-persisted value equals a fresh derivation
             // from the PRE-mutation snapshot.
             let record = try #require(start?.record, "\(label)")
-            let expectedDate = verificationCheckDate(for: snapshot, asOf: today)
+            let expectedDate = try #require(verificationCheckDate(for: snapshot, asOf: today), "\(label)")
             #expect(record.nextChargeDateIfNotCancelled == expectedDate, "\(label)")
             #expect(
                 record.expectedChargeAmountCents

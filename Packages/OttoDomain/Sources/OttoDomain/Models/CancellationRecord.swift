@@ -8,7 +8,7 @@ import Foundation
 /// stays in a watching state, and the app checks back on the next date a charge would
 /// have landed. If a charge did arrive, this record holds everything a dispute needs:
 /// when it was cancelled, the confirmation evidence, and what arrived anyway.
-public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
+public struct CancellationRecord: Identifiable, Hashable, Sendable {
 
     public enum VerificationState: String, Codable, Hashable, Sendable, CaseIterable {
         /// Waiting for the first would-be charge date to pass.
@@ -21,6 +21,13 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         /// not reaching this item and a fourth won't either, so it stops generating
         /// them and escalates to a persistent card in Today instead.
         case needsManualReview
+        /// An indefinitely paused subscription was cancelled (spec §5.4, v1.5;
+        /// built in Wave 7): there is no determinate would-be charge date and
+        /// Otto does not guess one - a verification answered against a
+        /// fabricated date is worse than no verification. The check is deferred,
+        /// the subscription surfaces in Today's needs-review, and the watch
+        /// starts the moment the user supplies the resume date.
+        case awaitingResumeDate
     }
 
     /// Client-generated (spec §5.0): a record with no id of its own cannot be
@@ -33,12 +40,17 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
     public var markedCancelledAt: Date
 
     /// The date a charge would land if the cancellation silently failed - the
-    /// verification trigger (spec §5.4). Required, and computed once at cancellation
-    /// time from the immutable anchor and the cycle: `markedCancelledAt` is a UTC
-    /// instant, so no calendar-day fallback is derivable from it later without a
-    /// timezone, and a "next date after today" fallback would drift later every day
-    /// the app goes unopened.
-    public var nextChargeDateIfNotCancelled: CalendarDay
+    /// verification trigger (spec §5.4). Computed once at cancellation time from
+    /// the immutable anchor and the cycle: `markedCancelledAt` is a UTC instant,
+    /// so no calendar-day fallback is derivable from it later without a timezone,
+    /// and a "next date after today" fallback would drift later every day the app
+    /// goes unopened.
+    ///
+    /// Nil exactly while `verificationState` is `.awaitingResumeDate` - the
+    /// indefinitely-paused cancellation, where no honest date exists and none is
+    /// fabricated (spec §5.4, v1.5). Every other state carries a date; the
+    /// pairing is a construction invariant.
+    public var nextChargeDateIfNotCancelled: CalendarDay?
 
     /// What the watched charge would cost if it arrived (spec §5.4, added v1.5).
     /// Stored at cancellation for the same reason the date is: the amount is
@@ -72,7 +84,7 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         id: UUID,
         subscriptionID: UUID,
         markedCancelledAt: Date,
-        nextChargeDateIfNotCancelled: CalendarDay,
+        nextChargeDateIfNotCancelled: CalendarDay?,
         expectedChargeAmountCents: Int? = nil,
         verificationState: VerificationState,
         unansweredCheckCount: Int = 0,
@@ -82,6 +94,10 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         updatedAt: Date,
         deletedAt: Date? = nil
     ) {
+        precondition(
+            (nextChargeDateIfNotCancelled == nil) == (verificationState == .awaitingResumeDate),
+            "A CancellationRecord has no check date exactly while awaiting a resume date (spec §5.4)"
+        )
         self.id = id
         self.subscriptionID = subscriptionID
         self.markedCancelledAt = markedCancelledAt
@@ -94,5 +110,59 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+    }
+}
+
+// MARK: - Codable
+
+extension CancellationRecord: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, subscriptionID, markedCancelledAt, nextChargeDateIfNotCancelled
+        case expectedChargeAmountCents, verificationState, unansweredCheckCount
+        case verifiedAt, evidenceNote, createdAt, updatedAt, deletedAt
+    }
+
+    // Hand-written so decoding routes through the date-state invariant instead of
+    // assigning stored properties directly, which is what a synthesized decoder does.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let state = try container.decode(VerificationState.self, forKey: .verificationState)
+        let checkDate = try container.decodeIfPresent(CalendarDay.self, forKey: .nextChargeDateIfNotCancelled)
+        guard (checkDate == nil) == (state == .awaitingResumeDate) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "A CancellationRecord has no check date exactly while awaiting a resume date (spec §5.4)"
+            ))
+        }
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            subscriptionID: try container.decode(UUID.self, forKey: .subscriptionID),
+            markedCancelledAt: try container.decode(Date.self, forKey: .markedCancelledAt),
+            nextChargeDateIfNotCancelled: checkDate,
+            expectedChargeAmountCents: try container.decodeIfPresent(Int.self, forKey: .expectedChargeAmountCents),
+            verificationState: state,
+            unansweredCheckCount: try container.decode(Int.self, forKey: .unansweredCheckCount),
+            verifiedAt: try container.decodeIfPresent(Date.self, forKey: .verifiedAt),
+            evidenceNote: try container.decodeIfPresent(String.self, forKey: .evidenceNote),
+            createdAt: try container.decode(Date.self, forKey: .createdAt),
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt),
+            deletedAt: try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(subscriptionID, forKey: .subscriptionID)
+        try container.encode(markedCancelledAt, forKey: .markedCancelledAt)
+        try container.encodeIfPresent(nextChargeDateIfNotCancelled, forKey: .nextChargeDateIfNotCancelled)
+        try container.encodeIfPresent(expectedChargeAmountCents, forKey: .expectedChargeAmountCents)
+        try container.encode(verificationState, forKey: .verificationState)
+        try container.encode(unansweredCheckCount, forKey: .unansweredCheckCount)
+        try container.encodeIfPresent(verifiedAt, forKey: .verifiedAt)
+        try container.encodeIfPresent(evidenceNote, forKey: .evidenceNote)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
     }
 }

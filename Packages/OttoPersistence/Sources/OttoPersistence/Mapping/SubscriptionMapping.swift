@@ -37,6 +37,7 @@ extension OttoSchemaV1.StoredSubscription {
             reminderLeadDays: try require(reminderLeadDays, entity: entity, field: "reminderLeadDays"),
             sameDayReminder: sameDayReminder,
             pauseEndsOn: try CalendarDay.storedOptional(pauseEndsOn, entity: entity, field: "pauseEndsOn"),
+            pausedOn: try CalendarDay.storedOptional(pausedOn, entity: entity, field: "pausedOn"),
             lastMaterializedThrough: try CalendarDay.storedOptional(
                 lastMaterializedThrough, entity: entity, field: "lastMaterializedThrough"
             ),
@@ -72,6 +73,7 @@ extension OttoSchemaV1.StoredSubscription {
         reminderLeadDays = domain.reminderLeadDays
         sameDayReminder = domain.sameDayReminder
         pauseEndsOn = domain.pauseEndsOn?.yyyymmdd
+        pausedOn = domain.pausedOn?.yyyymmdd
         lastMaterializedThrough = domain.lastMaterializedThrough?.yyyymmdd
         paymentMethodID = domain.paymentMethodID
         cancellationURL = domain.cancellationURL?.absoluteString

@@ -60,6 +60,7 @@ func makeSubscription(
         reminderLeadDays: 3,
         sameDayReminder: true,
         pauseEndsOn: pauseEndsOn ?? (status == .paused ? cycleStartDay.adding(days: 60) : nil),
+        pausedOn: status == .paused ? cycleStartDay.adding(days: 30) : nil,
         lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: try fixtureUUID(900),

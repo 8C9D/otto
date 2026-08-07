@@ -19,6 +19,10 @@ public struct TodayEntry: Hashable, Sendable, Identifiable {
         /// watch it. The state should not exist; when it does, the user must see it
         /// rather than the app quietly deciding for them (spec §7.1).
         case needsReview
+        /// An indefinitely paused subscription was cancelled and its verification
+        /// is deferred (spec §5.4, v1.5): Otto needs the resume date the vendor
+        /// gave, because it will not fabricate one. Needs action until supplied.
+        case verificationNeedsResumeDate
         /// An ordinary expected charge.
         case upcomingCharge(amountCents: Int)
         /// The trial converts to paid on `date` - not yet inside the action window.
@@ -48,7 +52,8 @@ public struct TodayEntry: Hashable, Sendable, Identifiable {
     /// Whether this entry belongs in Today's *Needs action* section.
     public var needsAction: Bool {
         switch reason {
-        case .trialActionNeeded, .trialConverted, .verificationDue, .verificationFailed, .needsReview: true
+        case .trialActionNeeded, .trialConverted, .verificationDue, .verificationFailed,
+             .needsReview, .verificationNeedsResumeDate: true
         case .upcomingCharge, .trialConverts, .pauseResumes, .verificationCheck: false
         }
     }
@@ -179,27 +184,32 @@ private func verificationEntry(
         return TodayEntry(subscription: subscription, reason: .needsReview, date: today)
     }
     switch record.verificationState {
-    case .stillCharging:
-        return TodayEntry(
-            subscription: subscription, reason: .verificationFailed, date: record.nextChargeDateIfNotCancelled
-        )
-    case .needsManualReview:
-        // Three checks ignored (spec §5.4): notifications stopped, and this card
-        // is the escalation - persistent until the user answers.
-        return TodayEntry(
-            subscription: subscription, reason: .verificationDue, date: record.nextChargeDateIfNotCancelled
-        )
-    case .pending where record.nextChargeDateIfNotCancelled <= today:
-        // The check date arrived unanswered. It stays a card until answered -
-        // §5.4's roll-forward and three-cycle cap govern notifications (Wave 5),
-        // not this section.
-        return TodayEntry(
-            subscription: subscription, reason: .verificationDue, date: record.nextChargeDateIfNotCancelled
-        )
-    case .pending:
-        return TodayEntry(
-            subscription: subscription, reason: .verificationCheck, date: record.nextChargeDateIfNotCancelled
-        )
+    case .awaitingResumeDate:
+        // The deferred check (spec §5.4, v1.5): no date exists yet and none is
+        // fabricated - the card asks for the one the vendor gave, dated today
+        // because it is waiting on the user, not the calendar.
+        return TodayEntry(subscription: subscription, reason: .verificationNeedsResumeDate, date: today)
+    case .stillCharging, .needsManualReview, .pending:
+        // Every one of these states carries its check date by construction; a
+        // record that lost it anyway is the same failure as a missing record -
+        // unwatched - and surfaces the same way.
+        guard let checkDate = record.nextChargeDateIfNotCancelled else {
+            return TodayEntry(subscription: subscription, reason: .needsReview, date: today)
+        }
+        switch record.verificationState {
+        case .stillCharging:
+            return TodayEntry(subscription: subscription, reason: .verificationFailed, date: checkDate)
+        case .needsManualReview:
+            // Three checks ignored (spec §5.4): notifications stopped, and this
+            // card is the escalation - persistent until the user answers.
+            return TodayEntry(subscription: subscription, reason: .verificationDue, date: checkDate)
+        default:
+            // The check date arrived unanswered stays a card until answered -
+            // §5.4's roll-forward and three-cycle cap govern notifications
+            // (Wave 5), not this section. A future date is an upcoming check.
+            let reason: TodayEntry.Reason = checkDate <= today ? .verificationDue : .verificationCheck
+            return TodayEntry(subscription: subscription, reason: reason, date: checkDate)
+        }
     case .verifiedStopped:
         // Resolved; archiving is a Wave 5 flow, and there is nothing to show here.
         return nil
