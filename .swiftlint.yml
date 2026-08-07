@@ -1,0 +1,22 @@
+included:
+  - Otto
+  - Packages
+
+excluded:
+  - Packages/OttoDomain/.build
+
+opt_in_rules:
+  - force_unwrapping
+
+# Force-unwrap and force-try are errors, not warnings: every mapping or
+# conversion failure in this codebase is handled explicitly (spec §3.4).
+force_unwrapping:
+  severity: error
+force_try:
+  severity: error
+force_cast:
+  severity: error
+
+line_length:
+  warning: 140
+  error: 200
