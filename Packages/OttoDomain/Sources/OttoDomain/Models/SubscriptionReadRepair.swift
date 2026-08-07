@@ -11,7 +11,10 @@ import Foundation
 public enum SubscriptionReadRepair: Hashable, Sendable {
     /// Two (or more) live open pause episodes - both devices paused
     /// independently. The earliest start wins; this later episode was closed
-    /// at the winner's start as `.superseded`. Lossy: the episode was open.
+    /// at the winner's start as `.superseded` - clamped to its own start
+    /// (§4a-2a: a closed episode may never end before it starts), so it
+    /// records zero duration: recorded, never actually in effect. Lossy: the
+    /// episode was open.
     case extraOpenPauseEpisodeClosed(episodeID: UUID)
     /// A live open episode beside a stored `.active` or `.trial` - a resume on
     /// one device racing a pause on the other. The parent record's status is
@@ -103,8 +106,9 @@ extension Subscription {
 
     /// The two episode repairs, in a fixed order so both devices converge:
     /// first at-most-one-open (earliest start wins, later ones closed at the
-    /// winner's start), then no-open-beside-active/trial (the parent's status
-    /// is authoritative; survivors close at their own start). `updatedAt` is
+    /// winner's start, clamped so no closure precedes the loser's own start -
+    /// §4a-2a), then no-open-beside-active/trial (the parent's status is
+    /// authoritative; survivors close at their own start). `updatedAt` is
     /// left untouched - a repair is not a user statement, and stamping one
     /// would need a clock the domain does not read.
     private static func repairingPauseEpisodes(
@@ -120,11 +124,16 @@ extension Subscription {
         if let winner = open.first, open.count > 1 {
             for loser in open.dropFirst() {
                 guard let index = episodes.firstIndex(where: { $0.id == loser.id }),
-                      let closeDay = winner.startedOn
+                      let candidate = winner.startedOn
                           ?? loser.startedOn ?? loser.scheduledResumeOn ?? winner.scheduledResumeOn
                           ?? utcDay(of: loser.createdAt)
                 else { continue }
-                episodes[index].endedOn = closeDay
+                // §4a-2a's clamp: the winner started first, so "closed at the
+                // winner's start" would end this episode before its own start.
+                // An episode closed at a point before its start is closed AT
+                // its start - zero duration, honestly recording "recorded,
+                // never actually in effect".
+                episodes[index].endedOn = loser.startedOn.map { max(candidate, $0) } ?? candidate
                 episodes[index].outcome = .superseded
                 repairs.append(.extraOpenPauseEpisodeClosed(episodeID: loser.id))
             }

@@ -39,11 +39,14 @@ struct ReadRepairTests {
         )
     }
 
-    @Test("two open pause episodes: the earliest start wins, the later closes at the winner's start")
+    @Test("two open pause episodes: the earliest start wins, the later closes at its own start - zero duration")
     func twoOpenPausesConverge() throws {
         // Both spouses pause the gym membership - device A on Aug 1, device B
         // on Aug 3. Before v2.0 this made the subscription unreadable on every
-        // device, permanently.
+        // device, permanently. The loser closes AT ITS OWN START (§4a-2a's
+        // clamp, v2.1): "closed at the winner's start" would end it before it
+        // began, and a zero-duration closure honestly records "recorded,
+        // never actually in effect".
         let first = try openEpisode(index: 701, startedOn: try day(2026, 8, 1))
         let second = try openEpisode(index: 702, startedOn: try day(2026, 8, 3))
 
@@ -52,7 +55,7 @@ struct ReadRepairTests {
         let winner = try #require(repaired.currentPauseEpisode)
         #expect(winner.id == first.id)
         let closed = try #require(repaired.pauseEpisodes.first { $0.id == second.id })
-        #expect(closed.endedOn == (try day(2026, 8, 1)))
+        #expect(closed.endedOn == (try day(2026, 8, 3)))
         #expect(closed.outcome == .superseded)
         #expect(repairs == [.extraOpenPauseEpisodeClosed(episodeID: second.id)])
 
@@ -61,6 +64,42 @@ struct ReadRepairTests {
         let (mirrored, _) = try repairedPaused(episodes: [second, first])
         #expect(Set(mirrored.pauseEpisodes) == Set(repaired.pauseEpisodes))
         #expect(mirrored.currentPauseEpisode?.id == winner.id)
+    }
+
+    @Test("no repair can close an episode before its own start - durations are never negative")
+    func closureNeverPrecedesStart() throws {
+        // Every combination the repair rules can meet: recorded starts in
+        // both orders, a nil pre-Wave-7 start on either side, and the
+        // status-conflict repair - the first feature to compute pause spans
+        // must not meet a negative one (§4a-2a).
+        let starts: [CalendarDay?] = [nil, try day(2026, 8, 1), try day(2026, 8, 3), try day(2026, 8, 5)]
+        for winnerStart in starts {
+            for loserStart in starts {
+                let episodes = [
+                    try openEpisode(index: 701, startedOn: winnerStart),
+                    try openEpisode(index: 702, startedOn: loserStart)
+                ]
+                let (pausedResult, _) = try repairedPaused(episodes: episodes)
+                let (activeResult, _) = Subscription.readingRepaired(
+                    id: try fixtureUUID(1),
+                    name: "Gym",
+                    category: .other,
+                    status: .active,
+                    amountCents: 4200,
+                    currencyCode: "CAD",
+                    cycle: .monthly,
+                    cycleStartDay: try day(2026, 1, 15),
+                    reminderLeadDays: 3,
+                    pauseEpisodes: episodes,
+                    createdAt: Date(timeIntervalSince1970: 0),
+                    updatedAt: Date(timeIntervalSince1970: 0)
+                )
+                for episode in pausedResult.pauseEpisodes + activeResult.pauseEpisodes {
+                    guard let endedOn = episode.endedOn, let startedOn = episode.startedOn else { continue }
+                    #expect(endedOn >= startedOn)
+                }
+            }
+        }
     }
 
     @Test("an open episode beside a stored .active closes at its own start - the status field is authoritative")

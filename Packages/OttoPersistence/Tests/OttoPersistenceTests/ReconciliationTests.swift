@@ -150,7 +150,7 @@ extension SerializedPersistenceTests {
                 try verification.fetch(FetchDescriptor<StoredPauseEpisode>())
                     .first { $0.id == remoteID }
             )
-            #expect(stored.endedOn == 20_260_801)
+            #expect(stored.endedOn == 20_260_803)
             #expect(stored.outcome == PauseEpisode.Outcome.superseded.rawValue)
         }
 

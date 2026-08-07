@@ -53,14 +53,14 @@ extension SerializedPersistenceTests {
             )
         }
 
-        @Test("two open pause episodes stay readable: earliest start wins, the later closes as .superseded")
+        @Test("two open pause episodes stay readable: earliest start wins, the later closes as .superseded at its own start")
         func twoOpenPausesRepairOnRead() async throws {
             let world = try await storeWithTwoOpenPauses()
 
             let loaded = try #require(try await world.store.subscriptions().first)
             #expect(loaded.currentPauseEpisode?.id == world.localEpisodeID)
             let closed = try #require(loaded.pauseEpisodes.first { $0.id == world.remoteEpisodeID })
-            #expect(closed.endedOn == (try day(2026, 8, 1)))
+            #expect(closed.endedOn == (try day(2026, 8, 3)))
             #expect(closed.outcome == .superseded)
 
             #expect(try await world.store.unreadableSubscriptionCount() == 0)
@@ -82,7 +82,7 @@ extension SerializedPersistenceTests {
             let stored = try #require(
                 try context.fetch(FetchDescriptor<StoredPauseEpisode>()).first { $0.id == remoteID }
             )
-            #expect(stored.endedOn == 20_260_801)
+            #expect(stored.endedOn == 20_260_803)
             #expect(stored.outcome == PauseEpisode.Outcome.superseded.rawValue)
             #expect(try await world.store.subscriptionReadRepairs() == [])
         }
