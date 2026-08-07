@@ -23,6 +23,11 @@ public final class SubscriptionsStore {
     private let cancellationRepository: any CancellationRepository
     private let dates: DateProvider
 
+    /// Runs after every successful mutation - the create/edit/delete reschedule
+    /// trigger (spec §6.2). The app model points this at the notification status
+    /// store; previews and tests may leave it unset.
+    public var onMutation: (@MainActor () async -> Void)?
+
     public init(
         subscriptionRepository: any SubscriptionRepository,
         cancellationRepository: any CancellationRepository,
@@ -67,11 +72,13 @@ public final class SubscriptionsStore {
     public func save(_ subscription: Subscription) async throws {
         try await subscriptionRepository.save(subscription)
         await refresh()
+        await onMutation?()
     }
 
     /// Soft-deletes at the current instant, then refreshes.
     public func delete(subscriptionID: UUID) async throws {
         try await subscriptionRepository.deleteSubscription(withID: subscriptionID, at: dates.now())
         await refresh()
+        await onMutation?()
     }
 }

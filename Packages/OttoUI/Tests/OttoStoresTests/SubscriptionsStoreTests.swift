@@ -140,4 +140,27 @@ struct SubscriptionsStoreTests {
         let tombstone = try await subscriptions.subscriptionsIncludingDeleted().first
         #expect(tombstone?.deletedAt == Date(timeIntervalSince1970: 10_000))
     }
+
+    @Test("save and delete fire the mutation hook - the store is the §6.2 reschedule trigger")
+    func mutationsTriggerReschedule() async throws {
+        let fixture = try makeStore()
+        let (store, subscriptions) = (fixture.store, fixture.subscriptions)
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        await subscriptions.seed([subscription])
+        await store.refresh()
+
+        var mutations = 0
+        store.onMutation = { mutations += 1 }
+
+        try await store.save(try makeSubscription(index: 2, cycleStartDay: try day(2026, 2, 1)))
+        try await store.delete(subscriptionID: subscription.id)
+        #expect(mutations == 2)
+
+        // A failed write must NOT trigger a reschedule - nothing changed.
+        await subscriptions.fail(with: TestFailure())
+        await #expect(throws: TestFailure.self) {
+            try await store.save(try makeSubscription(index: 3, cycleStartDay: try day(2026, 3, 1)))
+        }
+        #expect(mutations == 2)
+    }
 }

@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import OttoDomain
 import OttoRepositories
+import OttoServices
 
 /// The app's shared model graph, created once at the composition root with the
 /// concrete repositories and handed to the view tree. Everything downstream sees
@@ -36,12 +37,25 @@ public final class AppModel {
 
     public let subscriptionsStore: SubscriptionsStore
     public let paymentMethodsStore: PaymentMethodsStore
+    /// Permission and coverage state (Wave 4). Nil in previews and store tests
+    /// that construct the model without a notification engine.
+    public let notifications: NotificationStatusStore?
     public let dates: DateProvider
+
+    /// A subscription the notification layer asked the UI to show - a tap on a
+    /// notification, or an "I'm cancelling" follow-up. The root view presents it
+    /// and clears it.
+    public var requestedSubscriptionID: UUID?
 
     private let repositories: Repositories
 
-    public init(repositories: Repositories, dates: DateProvider = .live) {
+    public init(
+        repositories: Repositories,
+        notifications: NotificationStatusStore? = nil,
+        dates: DateProvider = .live
+    ) {
         self.repositories = repositories
+        self.notifications = notifications
         self.dates = dates
         self.subscriptionsStore = SubscriptionsStore(
             subscriptionRepository: repositories.subscriptions,
@@ -49,6 +63,12 @@ public final class AppModel {
             dates: dates
         )
         self.paymentMethodsStore = PaymentMethodsStore(repository: repositories.paymentMethods)
+        if let notifications {
+            // Every create, edit, or delete is a reschedule trigger (spec §6.2).
+            self.subscriptionsStore.onMutation = { [weak notifications] in
+                await notifications?.reschedule()
+            }
+        }
     }
 
     /// A fresh detail store for one subscription's screen.

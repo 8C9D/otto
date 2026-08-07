@@ -1,5 +1,6 @@
 import SwiftUI
 import OttoDomain
+import OttoServices
 import OttoStores
 
 /// The home screen (spec §7.1 item 1): Needs action, Next 30 days, Later.
@@ -14,7 +15,10 @@ struct TodayView: View {
                     SubscriptionDetailView(subscriptionID: entry.subscription.id)
                 }
         }
-        .task { await model.subscriptionsStore.refresh() }
+        .task {
+            await model.subscriptionsStore.refresh()
+            await model.notifications?.refreshPermission()
+        }
     }
 
     @ViewBuilder
@@ -40,6 +44,12 @@ struct TodayView: View {
 
     private func overviewList(_ overview: TodayOverview) -> some View {
         List {
+            // An app whose entire value is notifications must not fail silently
+            // when it can't send them: denied is loud, at the top, permanently
+            // (Wave 4 constraint 3).
+            if let notifications = model.notifications {
+                notificationStatusSection(notifications)
+            }
             Section(String(localized: "Needs action")) {
                 if overview.needsAction.isEmpty {
                     // Spec §7.1: when empty, say so plainly - never a blank section.
@@ -65,8 +75,64 @@ struct TodayView: View {
                     }
                 }
             }
+            // The horizon, stated honestly (spec §6.1 point 4): never let the
+            // user believe coverage extends further than it does.
+            if let outcome = model.notifications?.outcome,
+               model.notifications?.permission == .authorized
+                || model.notifications?.permission == .provisional {
+                Section {
+                    EmptyView()
+                } footer: {
+                    let coveredThrough = outcome.coveredThrough.displayText()
+                    Text(String(localized: "Reminders scheduled through \(coveredThrough)."))
+                }
+            }
         }
         .refreshable { await model.subscriptionsStore.refresh() }
+    }
+
+    @ViewBuilder
+    private func notificationStatusSection(_ notifications: NotificationStatusStore) -> some View {
+        switch notifications.permission {
+        case .denied:
+            Section {
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String(localized: "Notifications are off"))
+                            .font(.headline)
+                        Text(String(
+                            localized: "Otto exists to warn you before money moves, and it can't. Turn notifications on in Settings."
+                        ))
+                            .font(.subheadline)
+                    }
+                } icon: {
+                    Image(systemName: "bell.slash.fill")
+                        .foregroundStyle(.red)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        case .notDetermined:
+            Section {
+                Button {
+                    Task { await notifications.requestPermission() }
+                } label: {
+                    Label(
+                        String(localized: "Turn on reminders - they're the whole point"),
+                        systemImage: "bell.badge"
+                    )
+                }
+            }
+        case .provisional:
+            Section {
+                Label(
+                    String(localized: "Reminders deliver quietly - they won't break through Focus. Allow full notifications in Settings."),
+                    systemImage: "bell"
+                )
+                .font(.subheadline)
+            }
+        case .authorized:
+            EmptyView()
+        }
     }
 }
 

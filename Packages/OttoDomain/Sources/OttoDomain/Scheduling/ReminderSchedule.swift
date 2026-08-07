@@ -31,6 +31,7 @@ public func reminderSchedule(
     case .active:
         renewalReminders(for: subscription, from: today, in: window)
             + usageCheckInReminders(for: subscription, from: today, in: window)
+            + conversionDayAnnouncement(for: subscription, from: today)
     case .paused:
         // Paused is first-class (spec §5.1): no billing, no renewal reminders - only
         // the warning that billing is about to resume, so it cannot restart unwatched.
@@ -48,28 +49,76 @@ public func reminderSchedule(
     }
 }
 
-/// The three-run trial ladder (spec §6.3): a lead-time warning, then the morning and
-/// evening of the cancel-by day. Trials get repetition because a swiped-away
-/// notification is gone forever, and a converted trial is unrecoverable money.
+/// A trial's ladder can never exceed this many notifications (spec §6.3), because
+/// pre-scheduled P1 rungs consume budget slots and an unbounded buffer must not
+/// let one trial starve the rest of the plan.
+public let trialLadderCap = 5
+
+/// The full trial ladder (spec §6.3), pre-scheduled and budgeted: the lead-time
+/// warning, the morning and evening of the cancel-by day, a daily escalation
+/// through the buffer, and - as the final rung - the §5.2a conversion announcement
+/// on the conversion date itself. Trials get repetition because a swiped-away
+/// notification is gone forever and a converted trial is unrecoverable money;
+/// everything is planned up front because reactive rescheduling needs the app to
+/// run, and the user ignoring the notification is precisely the case the
+/// escalation exists for.
+///
+/// Capped at `trialLadderCap` total. The four named rungs always survive; daily
+/// rungs drop furthest-from-conversion first, because the last calls before the
+/// money moves are the ones worth keeping. At the default 2-day buffer the ladder
+/// is exactly five: lead, morning, evening, one daily, announcement.
 private func trialReminders(
     for subscription: Subscription,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
     guard let trial = subscription.trial else { return [] }
     let cancelBy = trial.cancelByDate
-    let ladder: [(day: CalendarDay, kind: PlannedReminder.Kind)] = [
+    let conversion = trial.conversionDate
+
+    var dailies: [(day: CalendarDay, kind: PlannedReminder.Kind)] = []
+    var dailyDay = cancelBy.adding(days: 1)
+    while dailyDay < conversion {
+        dailies.append((dailyDay, .trialDaily))
+        dailyDay = dailyDay.adding(days: 1)
+    }
+    let fixedRungs: [(day: CalendarDay, kind: PlannedReminder.Kind)] = [
         (cancelBy.adding(days: -subscription.reminderLeadDays), .trialLead),
         (cancelBy, .trialDayOfMorning),
-        (cancelBy, .trialDayOfEvening)
+        (cancelBy, .trialDayOfEvening),
+        (conversion, .conversionAnnouncement)
     ]
+    let dailyBudget = max(0, trialLadderCap - fixedRungs.count)
+    let ladder = fixedRungs + dailies.suffix(dailyBudget)
+
     return ladder.filter { window.contains($0.day) }.map {
         PlannedReminder(subscriptionID: subscription.id, day: $0.day, kind: $0.kind)
     }
 }
 
-/// One reminder per billing date in the horizon, `reminderLeadDays` ahead of it.
-/// A billing date whose lead day has already passed gets no planned reminder this
-/// cycle; catching up late-added subscriptions is a Wave 4 scheduling decision.
+/// The conversion announcement for the day a trial converts (spec §5.2a). By then
+/// the effective status is already `.active`, so the trial branch never sees the
+/// conversion day - but a scheduler run that morning cancels all pending requests,
+/// and without this the pre-scheduled announcement would be cancelled hours before
+/// its fire time and never replaced. Money starts moving today; the statement of
+/// that fact must survive every reschedule that happens today.
+private func conversionDayAnnouncement(
+    for subscription: Subscription,
+    from today: CalendarDay
+) -> [PlannedReminder] {
+    guard let trial = subscription.trial,
+          subscription.isConvertedTrial(asOf: today),
+          trial.conversionDate == today
+    else { return [] }
+    return [PlannedReminder(subscriptionID: subscription.id, day: today, kind: .conversionAnnouncement)]
+}
+
+/// One reminder per billing date in the horizon, `reminderLeadDays` ahead of it,
+/// plus the optional same-day reminder (spec §6.3) and the §6.2 catch-up rule: a
+/// billing date still ahead whose lead day has already passed gets a reminder
+/// TODAY instead of silence. Without the catch-up, Mode B onboarding fails in its
+/// most common case - the user adds a subscription because they noticed a charge
+/// coming in two days, the 3-day lead is already past, and nothing fires for the
+/// exact charge that prompted them.
 private func renewalReminders(
     for subscription: Subscription,
     from today: CalendarDay,
@@ -79,6 +128,7 @@ private func renewalReminders(
     // converted, the stored anchor otherwise.
     let anchor = subscription.billingAnchor(asOf: today)
     var reminders: [PlannedReminder] = []
+    var caughtUp = false
     var occurrence = firstOccurrenceIndex(
         after: today, anchor: anchor, cycle: subscription.cycle
     )
@@ -93,6 +143,17 @@ private func renewalReminders(
         guard reminderDay <= window.upperBound else { break }
         if window.contains(reminderDay) {
             reminders.append(PlannedReminder(subscriptionID: subscription.id, day: reminderDay, kind: .renewal))
+        } else if reminderDay < today, !caughtUp {
+            // The lead day has passed but the charge is still ahead: fire today.
+            // One catch-up at most - with a lead longer than the cycle several
+            // lead days can be in the past at once, and identical (day, kind)
+            // pairs would collide in the deterministic identifier anyway; the
+            // earliest un-warned charge is the urgent one.
+            caughtUp = true
+            reminders.append(PlannedReminder(subscriptionID: subscription.id, day: today, kind: .renewal))
+        }
+        if subscription.sameDayReminder, window.contains(billing) {
+            reminders.append(PlannedReminder(subscriptionID: subscription.id, day: billing, kind: .renewalDayOf))
         }
         occurrence += 1
     }
@@ -140,7 +201,12 @@ private func pauseEndingReminders(
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
     guard let pauseEndsOn = subscription.pauseEndsOn else { return [] }
-    let reminderDay = pauseEndsOn.adding(days: -subscription.reminderLeadDays)
+    var reminderDay = pauseEndsOn.adding(days: -subscription.reminderLeadDays)
+    // The §6.2 catch-up rule applies here too: a pause ending inside the lead
+    // window still deserves its warning, today, not silence.
+    if reminderDay < window.lowerBound && pauseEndsOn >= window.lowerBound {
+        reminderDay = window.lowerBound
+    }
     guard window.contains(reminderDay) else { return [] }
     return [PlannedReminder(subscriptionID: subscription.id, day: reminderDay, kind: .pauseEnding)]
 }

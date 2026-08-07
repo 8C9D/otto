@@ -7,12 +7,13 @@ import OttoDomain
 @Suite("Slot budgeting (spec §6.1)")
 struct SlotBudgetTests {
 
-    /// The synthetic 200-subscription fixture from spec §6.1: 15 trials (3 reminders
-    /// each, all P1) and 185 active monthly subscriptions. Deterministic throughout so
-    /// failures reproduce identically.
+    /// The synthetic 200-subscription fixture from spec §6.1: 10 trials (a full
+    /// five-rung ladder each, all P1 - §6.3's ceiling arithmetic, updated in Wave 4
+    /// from the three-rung ladder Wave 1 planned) and 190 active monthly
+    /// subscriptions. Deterministic throughout so failures reproduce identically.
     private func makeFixturePlan(today: CalendarDay) throws -> [PlannedReminder] {
         var planned: [PlannedReminder] = []
-        for index in 0..<15 {
+        for index in 0..<10 {
             let start = today.adding(days: -(index % 3))
             let trial = try makeTrialTerm(index: 400 + index, startDate: start, lengthDays: 14, convertsToAmountCents: 1099)
             let sub = try makeSubscription(
@@ -20,7 +21,7 @@ struct SlotBudgetTests {
             )
             planned += reminderSchedule(for: sub, from: today, horizonDays: 90)
         }
-        for index in 15..<200 {
+        for index in 10..<200 {
             let anchorDate = today.adding(days: -(320 + index))
             let sub = try makeSubscription(
                 index: index,
@@ -41,7 +42,7 @@ struct SlotBudgetTests {
         #expect(planned.count > 64)
 
         let trialReminders = planned.filter { $0.priority == .trial }
-        #expect(trialReminders.count == 45)
+        #expect(trialReminders.count == 10 * trialLadderCap)
 
         let result = budgeted(planned, limit: 64)
         #expect(result.scheduled.count == 64)

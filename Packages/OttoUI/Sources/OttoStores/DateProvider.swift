@@ -12,9 +12,19 @@ public struct DateProvider: Sendable {
     /// The current calendar day in the device's timezone, for billing arithmetic.
     public var today: @Sendable () -> CalendarDay
 
-    public init(now: @escaping @Sendable () -> Date, today: @escaping @Sendable () -> CalendarDay) {
+    /// The device's current timezone - what turns a reminder's calendar day into
+    /// a fire instant (spec §4.1). A function, not a value, because it changes
+    /// under the app and every read must see the current one.
+    public var timeZone: @Sendable () -> TimeZone
+
+    public init(
+        now: @escaping @Sendable () -> Date,
+        today: @escaping @Sendable () -> CalendarDay,
+        timeZone: @escaping @Sendable () -> TimeZone = { .current }
+    ) {
         self.now = now
         self.today = today
+        self.timeZone = timeZone
     }
 
     /// Reads the system clock and the device's current calendar.
@@ -28,11 +38,16 @@ public struct DateProvider: Sendable {
                 preconditionFailure("The current date is unrepresentable: \(components)")
             }
             return day
-        }
+        },
+        timeZone: { .current }
     )
 
     /// A provider pinned to one instant and one day, for tests and previews.
-    public static func fixed(today: CalendarDay, now: Date = Date(timeIntervalSince1970: 0)) -> DateProvider {
-        DateProvider(now: { now }, today: { today })
+    public static func fixed(
+        today: CalendarDay,
+        now: Date = Date(timeIntervalSince1970: 0),
+        timeZone: TimeZone = TimeZone(identifier: "America/Toronto") ?? .current
+    ) -> DateProvider {
+        DateProvider(now: { now }, today: { today }, timeZone: { timeZone })
     }
 }
