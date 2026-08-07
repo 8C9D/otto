@@ -128,6 +128,47 @@ public struct Subscription: Identifiable, Hashable, Sendable {
             deletedAt != nil || openPauses == 0 || (status != .active && status != .trial),
             "An open PauseEpisode cannot coexist with a stored .active or .trial (spec §5.3a)"
         )
+        self.init(
+            unchecked: (), id: id, name: name, vendorURL: vendorURL, category: category,
+            status: status, amountCents: amountCents, currencyCode: currencyCode, cycle: cycle,
+            cycleStartDay: cycleStartDay, reminderLeadDays: reminderLeadDays,
+            sameDayReminder: sameDayReminder, pauseEpisodes: pauseEpisodes, trial: trial,
+            paymentMethodID: paymentMethodID, cancellationURL: cancellationURL,
+            cancellationNotes: cancellationNotes, lastUsedDate: lastUsedDate, notes: notes,
+            createdAt: createdAt, updatedAt: updatedAt, deletedAt: deletedAt
+        )
+    }
+
+    /// The assignment path shared by the write-time `init` above (which
+    /// preconditions first) and the §4a read-repair factory (which repairs
+    /// first, and must be able to HOLD the two self-healing incomplete shapes:
+    /// `.paused` awaiting its episode record, `.trial` awaiting its term).
+    /// Internal, so nothing outside the module can bypass the write-time
+    /// invariants.
+    init(
+        unchecked: Void,
+        id: UUID,
+        name: String,
+        vendorURL: URL?,
+        category: Category,
+        status: SubscriptionStatus,
+        amountCents: Int,
+        currencyCode: String,
+        cycle: BillingCycle,
+        cycleStartDay: CalendarDay,
+        reminderLeadDays: Int,
+        sameDayReminder: Bool,
+        pauseEpisodes: [PauseEpisode],
+        trial: TrialTerm?,
+        paymentMethodID: UUID?,
+        cancellationURL: URL?,
+        cancellationNotes: String?,
+        lastUsedDate: CalendarDay?,
+        notes: String?,
+        createdAt: Date,
+        updatedAt: Date,
+        deletedAt: Date?
+    ) {
         self.id = id
         self.name = name
         self.vendorURL = vendorURL
@@ -265,29 +306,17 @@ extension Subscription: Codable {
         case lastUsedDate, notes, createdAt, updatedAt, deletedAt
     }
 
-    // Hand-written so decoding routes through the §5.2b and §5.3a invariants
-    // instead of assigning stored properties directly, which is what a
-    // synthesized decoder does.
+    // Hand-written so decoding routes through the §4a repairing read instead
+    // of assigning stored properties directly, which is what a synthesized
+    // decoder does: decoded data is a read of another device's write, and a
+    // read repairs deterministically rather than refusing (spec §4a, v2.0).
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let status = try container.decode(SubscriptionStatus.self, forKey: .status)
         let trial = try container.decodeIfPresent(TrialTerm.self, forKey: .trial)
-        guard status != .trial || trial != nil else {
-            throw DecodingError.dataCorrupted(DecodingError.Context(
-                codingPath: decoder.codingPath,
-                debugDescription: "A .trial subscription must have a TrialTerm (spec §5.2b)"
-            ))
-        }
         let pauseEpisodes = try container.decodeIfPresent([PauseEpisode].self, forKey: .pauseEpisodes) ?? []
         let deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
-        try Subscription.checkPauseInvariants(
-            status: status, pauseEpisodes: pauseEpisodes, deletedAt: deletedAt
-        ) {
-            DecodingError.dataCorrupted(DecodingError.Context(
-                codingPath: decoder.codingPath, debugDescription: $0
-            ))
-        }
-        self.init(
+        self = Subscription.readingRepaired(
             id: try container.decode(UUID.self, forKey: .id),
             name: try container.decode(String.self, forKey: .name),
             vendorURL: try container.decodeIfPresent(URL.self, forKey: .vendorURL),
@@ -309,7 +338,7 @@ extension Subscription: Codable {
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt),
             deletedAt: deletedAt
-        )
+        ).subscription
     }
 
     public func encode(to encoder: any Encoder) throws {

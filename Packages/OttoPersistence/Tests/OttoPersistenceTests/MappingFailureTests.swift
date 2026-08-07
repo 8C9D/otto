@@ -117,25 +117,30 @@ extension SerializedPersistenceTests {
             #expect(events.map(\.id) == [try fixtureUUID(100)])
         }
 
-        @Test("a stored .trial subscription with no trial term is refused by mapping (spec §5.2b)")
-        func trialWithoutTermRefused() async throws {
+        @Test("a stored .trial subscription with no trial term reads degraded, never unreadable (spec §4a)")
+        func trialWithoutTermReadsDegraded() async throws {
             let (store, containers) = try makeStore()
             let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
             try await store.save(try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial))
 
-            // Simulate the invariant-violating state arriving from storage: the status
-            // says .trial but the trial child is gone. It must never reach the domain -
-            // whose own construction precondition would be the app crashing on it.
+            // Simulate the parent arriving before its trial child (ordinary
+            // under per-record sync): the status says .trial but the term is
+            // gone. Before v2.0 this refused the whole record - a sync
+            // artifact became a dead subscription on every device.
             let context = ModelContext(containers.main)
             let record = try #require(try context.fetch(FetchDescriptor<StoredSubscription>()).first)
             record.trial = nil
             try context.save()
 
-            #expect(throws: MappingError.self) {
-                try record.toDomain()
-            }
             let fresh = OttoStore(containers: containers)
-            #expect(try await fresh.subscriptions() == [])
+            let loaded = try #require(try await fresh.subscriptions().first)
+            // Readable, as a trial that never reaches conversion until the
+            // term arrives - nothing is invented, and nothing is refused.
+            #expect(loaded.storedStatus == .trial)
+            #expect(loaded.trial == nil)
+            #expect(try await fresh.unreadableSubscriptionCount() == 0)
+            let reports = try await fresh.subscriptionReadRepairs()
+            #expect(reports.map(\.repairs) == [[.trialWithoutTerm]])
         }
 
         @Test("a subscription whose trial record is unmappable is itself skipped, not half-loaded")

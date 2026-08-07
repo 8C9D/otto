@@ -25,6 +25,13 @@ public final class SubscriptionsStore {
     /// worst available failure for this product.
     public private(set) var unreadableCount = 0
 
+    /// The §4a read repairs the last refresh applied (spec §4a, Wave 6B-Prep):
+    /// shapes a two-device merge can produce, resolved deterministically at
+    /// read. Surfaced beside `unreadableCount` in the same aggregate card - a
+    /// repair that closed an open pause episode decided something for the
+    /// user, and they must see that it happened rather than wonder.
+    public private(set) var readRepairs: [SubscriptionReadRepairReport] = []
+
     private let subscriptionRepository: any SubscriptionRepository
     private let cancellationRepository: any CancellationRepository
     /// For the §5.3 (v1.7) rewind floor: the earliest ledger row ever created
@@ -77,6 +84,7 @@ public final class SubscriptionsStore {
             subscriptions = .loaded(loaded)
             cancellations = records
             unreadableCount = try await subscriptionRepository.unreadableSubscriptionCount()
+            readRepairs = try await subscriptionRepository.subscriptionReadRepairs()
         } catch {
             subscriptions = .failed(error)
         }

@@ -55,6 +55,17 @@ actor MockSubscriptionRepository: SubscriptionRepository {
         return primedUnreadableCount
     }
 
+    /// Primed by tests, like the unreadable count: the mock's dictionary of
+    /// domain values cannot hold a shape a read would repair.
+    private var primedReadRepairs: [SubscriptionReadRepairReport] = []
+
+    func primeReadRepairs(_ reports: [SubscriptionReadRepairReport]) { primedReadRepairs = reports }
+
+    func subscriptionReadRepairs() async throws -> [SubscriptionReadRepairReport] {
+        try throwPrimedFailure()
+        return primedReadRepairs
+    }
+
     func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         try throwPrimedFailure()
         guard var subscription = stored[id] else { throw RepositoryError.subscriptionNotFound(id) }

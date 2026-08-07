@@ -11,12 +11,17 @@ import Foundation
 public struct PauseEpisode: Identifiable, Hashable, Sendable {
 
     /// How a closed episode ended. New cases are cheap (spec §5.6's raw-string
-    /// rule); today there is exactly one exit, the resume. An episode open when
-    /// its subscription archives stays open deliberately - billing never
-    /// resumed, so writing a resume would be fiction (spec §5.3a).
+    /// rule). An episode open when its subscription archives stays open
+    /// deliberately - billing never resumed, so writing a resume would be
+    /// fiction (spec §5.3a).
     public enum Outcome: String, Codable, Hashable, Sendable, CaseIterable {
         /// Billing resumed - manually, or a derived resume persisted later.
         case resumed
+        /// Closed by a §4a read repair: another open episode (or the parent's
+        /// own status) claimed the pause, so this one never ran on its own.
+        /// Recorded as what happened rather than deleted - the same vocabulary
+        /// as a superseded cancellation episode (spec §5.3a).
+        case superseded
     }
 
     /// Client-generated (spec §5.0): a record with no id of its own cannot be
@@ -161,32 +166,4 @@ extension Subscription {
     /// derived from the open episode. Drives the resume reminder and the §5.2a
     /// derived resume; nil while not paused, or paused indefinitely.
     public var pauseEndsOn: CalendarDay? { currentPauseEpisode?.scheduledResumeOn }
-
-    /// The construction preconditions on pause episodes, as a throwing check for
-    /// the layers that must refuse bad data loudly instead of trapping on it -
-    /// the persistence mapping and the export wire format, exactly like the
-    /// §5.2b trial invariant. `makeError` wraps the violation in the caller's
-    /// own error type.
-    ///
-    /// The status-coupled halves apply to LIVE records only (`deletedAt` nil):
-    /// deleting a paused subscription tombstones its episodes with it, and
-    /// that tombstoned whole is valid history a backup must still carry.
-    public static func checkPauseInvariants(
-        status: SubscriptionStatus,
-        pauseEpisodes: [PauseEpisode],
-        deletedAt: Date?,
-        makeError: (String) -> any Error
-    ) throws {
-        let openPauses = pauseEpisodes.count { $0.endedOn == nil && $0.deletedAt == nil }
-        if openPauses > 1 {
-            throw makeError("at most one pause episode can be current (spec §5.3a)")
-        }
-        guard deletedAt == nil else { return }
-        if status == .paused && openPauses == 0 {
-            throw makeError("a .paused subscription must have an open PauseEpisode (spec §5.3a)")
-        }
-        if openPauses == 1 && (status == .active || status == .trial) {
-            throw makeError("an open PauseEpisode cannot coexist with a stored .active or .trial (spec §5.3a)")
-        }
-    }
 }

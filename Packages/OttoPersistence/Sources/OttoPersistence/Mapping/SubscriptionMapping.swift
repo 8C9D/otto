@@ -10,19 +10,23 @@ extension OttoSchemaV3.StoredSubscription {
     private static let entityName = "StoredSubscription"
 
     func toDomain() throws -> Subscription {
+        var repairs: [SubscriptionReadRepair] = []
+        return try toDomain(collecting: &repairs)
+    }
+
+    /// The §4a repairing read (v2.0): shapes two correct devices can produce
+    /// between them - two open pause episodes, an episode racing a status, a
+    /// parent arriving before its trial or episode child - are repaired or
+    /// held deterministically instead of refused, and reported to `repairs`
+    /// for the aggregate needs-review surface. Field-level damage (a missing
+    /// required column, an unknown enum) still throws: there is no honest
+    /// repair for a value that does not exist.
+    func toDomain(collecting repairs: inout [SubscriptionReadRepair]) throws -> Subscription {
         let entity = Self.entityName
 
         var domainTrial: TrialTerm?
         if let trial, trial.deletedAt == nil {
             domainTrial = try trial.toDomain()
-        }
-
-        // Spec §5.2b: a .trial subscription without a live trial term is an invariant
-        // violation, refused here - loudly, before the domain's own construction
-        // precondition could trip on it. Wave 3 had this state silently no-op'ing in
-        // three separate places; now it cannot enter the domain at all.
-        if status == SubscriptionStatus.trial.rawValue && domainTrial == nil {
-            throw MappingError.missingField(entity: entity, field: "trial (required while status is .trial)")
         }
 
         // Tombstoned episodes ride along: they are communicable history
@@ -32,14 +36,8 @@ extension OttoSchemaV3.StoredSubscription {
         let episodes = try (pauseEpisodes ?? [])
             .map { try $0.toDomain() }
             .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
-        // The §5.3a invariants, thrown instead of the domain's preconditions.
-        try Subscription.checkPauseInvariants(
-            status: domainStatus, pauseEpisodes: episodes, deletedAt: deletedAt
-        ) {
-            MappingError.invalidValue(entity: entity, field: "pauseEpisodes", value: $0)
-        }
 
-        return Subscription(
+        let repaired = Subscription.readingRepaired(
             id: try require(id, entity: entity, field: "id"),
             name: try require(name, entity: entity, field: "name"),
             vendorURL: try URL.storedOptional(vendorURL, entity: entity, field: "vendorURL"),
@@ -62,6 +60,8 @@ extension OttoSchemaV3.StoredSubscription {
             updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
             deletedAt: deletedAt
         )
+        repairs.append(contentsOf: repaired.repairs)
+        return repaired.subscription
     }
 
     /// Writes the domain value onto the record verbatim, applying its children

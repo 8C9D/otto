@@ -113,14 +113,16 @@ struct EffectiveStatusTests {
     }
 }
 
-// Spec §5.2b: a .trial subscription without a TrialTerm is unconstructible in process
-// (precondition - not testable here) and undecodable from data (tested here). The
-// mapping layer's refusal is tested in OttoPersistence.
-@Suite("Model invariants (spec §5.2b)")
+// Spec §5.2b: a .trial subscription without a TrialTerm is unconstructible in
+// process (precondition - not testable here). Decoding is a READ of another
+// device's write, and since v2.0 (§4a) reads repair or hold instead of
+// refusing: the shape decodes as a trial awaiting its term. The mapping
+// layer's identical treatment is tested in OttoPersistence.
+@Suite("Model invariants (spec §5.2b, §4a)")
 struct ModelInvariantTests {
 
-    @Test("decoding a .trial subscription without a trial term fails loudly")
-    func decodeRejectsTrialWithoutTerm() throws {
+    @Test("decoding a .trial subscription without a trial term degrades instead of failing (spec §4a)")
+    func decodeHoldsTrialWithoutTerm() throws {
         let valid = try makeSubscription(
             status: .trial, cycle: .monthly, cycleStartDay: try day(2026, 8, 6),
             trial: try makeTrialTerm(startDate: try day(2026, 8, 6), lengthDays: 7)
@@ -131,9 +133,12 @@ struct ModelInvariantTests {
         json.removeValue(forKey: "trial")
         let data = try JSONSerialization.data(withJSONObject: json)
 
-        #expect(throws: DecodingError.self) {
-            _ = try JSONDecoder().decode(Subscription.self, from: data)
-        }
+        let decoded = try JSONDecoder().decode(Subscription.self, from: data)
+        // A trial that never reaches conversion until its term arrives:
+        // nothing invented, nothing refused, nothing billed meanwhile.
+        #expect(decoded.storedStatus == .trial)
+        #expect(decoded.trial == nil)
+        #expect(decoded.effectiveStatus(asOf: try day(2026, 12, 1)) == .trial)
     }
 
     @Test("a valid trial subscription round-trips through Codable unchanged")

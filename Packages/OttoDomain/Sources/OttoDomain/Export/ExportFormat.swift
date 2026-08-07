@@ -206,12 +206,6 @@ public struct ExportedSubscription: Hashable, Sendable {
         let entity = "subscription \(id)"
         let status: SubscriptionStatus = try wireEnum(self.status, entity: entity, field: "status")
         let trial = try trial.map { try $0.domainValue() }
-        // The §5.2b invariant, thrown instead of the domain's precondition.
-        guard status != .trial || trial != nil else {
-            throw ExportFormatError.invalidValue(
-                entity: entity, field: "trial", value: "absent while status is trial"
-            )
-        }
         guard let unit = BillingCycle.Unit(rawValue: cycleUnit),
               let cycle = BillingCycle(unit: unit, interval: cycleInterval)
         else {
@@ -219,14 +213,12 @@ public struct ExportedSubscription: Hashable, Sendable {
                 entity: entity, field: "cycle", value: "\(cycleUnit)/\(cycleInterval)"
             )
         }
-        // The §5.3a invariants, thrown instead of the domain's preconditions.
+        // The §5.3a and §5.2b shapes repair instead of refusing (spec §4a,
+        // v2.0): a device that read-repaired but never re-saved exports the
+        // RAW shapes, and its own backup must import - so the import applies
+        // the same deterministic repairs the read would have.
         let episodes = try pauseEpisodes.map { try $0.domainValue() }
-        try Subscription.checkPauseInvariants(
-            status: status, pauseEpisodes: episodes, deletedAt: deletedAt
-        ) {
-            ExportFormatError.invalidValue(entity: entity, field: "pauseEpisodes", value: $0)
-        }
-        return Subscription(
+        return Subscription.readingRepaired(
             id: id,
             name: name,
             vendorURL: try wireURL(vendorURL, entity: entity, field: "vendorURL"),
@@ -248,7 +240,7 @@ public struct ExportedSubscription: Hashable, Sendable {
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
-        )
+        ).subscription
     }
 
     /// The v1 upgrade (documented in the file header): the single pause pair

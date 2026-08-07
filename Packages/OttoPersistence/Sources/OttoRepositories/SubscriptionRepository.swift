@@ -33,6 +33,16 @@ public protocol SubscriptionRepository: Sendable {
     /// are missing from `subscriptions()`.
     func unreadableSubscriptionCount() async throws -> Int
 
+    /// The deterministic §4a repairs the current read applies (spec §4a
+    /// principle 2, Wave 6B-Prep), one report per live subscription whose read
+    /// repaired anything - the recompute-on-read shape of
+    /// `unreadableSubscriptionCount`, for shapes that are readable but
+    /// repaired rather than unreadable. Empty in a healthy store; feeds the
+    /// same aggregate needs-review card. Repairs persist when the value is
+    /// next saved (or a reconciliation pass runs); until then every read
+    /// re-derives the identical repaired value.
+    func subscriptionReadRepairs() async throws -> [SubscriptionReadRepairReport]
+
     /// Soft-deletes the subscription at the given instant and cascades the tombstone
     /// to its trial term, billing events, cancellation record, and price changes.
     /// Hard deletes happen nowhere (spec §3.5).

@@ -42,6 +42,24 @@ extension OttoStore: SubscriptionRepository {
         return records.count { (try? $0.toDomain()) == nil }
     }
 
+    public func subscriptionReadRepairs() async throws -> [SubscriptionReadRepairReport] {
+        let records = try modelContext.fetch(
+            FetchDescriptor<StoredSubscription>(predicate: #Predicate { $0.deletedAt == nil })
+        )
+        // The same mapping `subscriptions()` performs, reporting what it
+        // repaired instead of discarding the notes (spec §4a, Wave 6B-Prep).
+        return records.compactMap { record in
+            var repairs: [SubscriptionReadRepair] = []
+            guard let value = try? record.toDomain(collecting: &repairs), !repairs.isEmpty else {
+                return nil
+            }
+            return SubscriptionReadRepairReport(
+                subscriptionID: value.id, name: value.name, repairs: repairs
+            )
+        }
+        .sorted { ($0.name, $0.subscriptionID.uuidString) < ($1.name, $1.subscriptionID.uuidString) }
+    }
+
     public func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         guard let record = try storedSubscription(id: id, includingDeleted: true) else {
             throw RepositoryError.subscriptionNotFound(id)

@@ -165,6 +165,8 @@ actor FakeSubscriptionRepository: SubscriptionRepository {
 
     func unreadableSubscriptionCount() async throws -> Int { 0 }
 
+    func subscriptionReadRepairs() async throws -> [SubscriptionReadRepairReport] { [] }
+
     func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         guard var subscription = stored[id] else { throw RepositoryError.subscriptionNotFound(id) }
         if subscription.deletedAt == nil {

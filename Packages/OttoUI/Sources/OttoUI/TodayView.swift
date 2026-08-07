@@ -51,6 +51,7 @@ struct TodayView: View {
                 notificationStatusSection(notifications)
             }
             unreadableRecordsSection(count: model.subscriptionsStore.unreadableCount)
+            readRepairsSection(model.subscriptionsStore.readRepairs)
             Section(String(localized: "Needs action")) {
                 if overview.needsAction.isEmpty {
                     // Spec §7.1: when empty, say so plainly - never a blank section.
@@ -103,6 +104,34 @@ struct TodayView: View {
                         Text(String(localized: "^[\(count) subscription](inflect: true) couldn't be read"))
                             .font(.headline)
                         Text(String(localized: "The records exist but Otto can't display them. Nothing was deleted."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    /// Spec §4a (Wave 6B-Prep): reads that repaired a two-device shape surface
+    /// as ONE aggregate card, like unreadable records - a repair decided
+    /// something (which pause episode survived, that a term is still missing),
+    /// and the user must see that it happened rather than wonder.
+    @ViewBuilder
+    private func readRepairsSection(_ reports: [SubscriptionReadRepairReport]) -> some View {
+        if !reports.isEmpty {
+            Section(String(localized: "Needs review")) {
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String(localized: "^[\(reports.count) subscription](inflect: true) repaired on read"))
+                            .font(.headline)
+                        Text(reports.map(\.name).joined(separator: ", "))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text(String(localized: "Conflicting copies were resolved the same way on every device. Nothing was deleted."))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
