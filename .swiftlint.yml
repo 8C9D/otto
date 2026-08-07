@@ -5,6 +5,7 @@ included:
 excluded:
   - Packages/OttoDomain/.build
   - Packages/OttoPersistence/.build
+  - Packages/OttoUI/.build
 
 opt_in_rules:
   - force_unwrapping

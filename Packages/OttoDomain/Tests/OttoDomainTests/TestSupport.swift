@@ -55,6 +55,23 @@ func makeTrialTerm(
     )
 }
 
+func makeCancellationRecord(
+    index: Int = 600,
+    subscriptionID: UUID,
+    nextChargeDateIfNotCancelled: CalendarDay,
+    verificationState: CancellationRecord.VerificationState = .pending
+) throws -> CancellationRecord {
+    CancellationRecord(
+        id: try fixtureUUID(index),
+        subscriptionID: subscriptionID,
+        markedCancelledAt: Date(timeIntervalSince1970: 0),
+        nextChargeDateIfNotCancelled: nextChargeDateIfNotCancelled,
+        verificationState: verificationState,
+        createdAt: Date(timeIntervalSince1970: 0),
+        updatedAt: Date(timeIntervalSince1970: 0)
+    )
+}
+
 /// A subscription fixture exposing only the fields the scheduling tests vary.
 func makeSubscription(
     index: Int = 0,
