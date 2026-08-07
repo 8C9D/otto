@@ -16,11 +16,27 @@ Everything in the domain is a pure value type or a pure function: money is integ
 
 ## Running the tests
 
-The domain tests need no Xcode project and no simulator:
+Each package tests on a mac host with no Xcode project and no simulator:
 
 ```sh
 swift test --package-path Packages/OttoDomain
+swift test --package-path Packages/OttoPersistence
+swift test --package-path Packages/OttoUI
 ```
+
+The one exception is the OttoUI Dynamic Type suite, which is UIKit-hosted and compiles to nothing on a mac host; it runs on a simulator via the CI job or `xcodebuild test`.
+
+## Verifying a wave
+
+Before reporting any wave complete, run:
+
+```sh
+scripts/verify.sh
+```
+
+It clones the committed HEAD into a temp directory - deliberately ignoring the working tree - then generates the project, runs every package's tests, builds the app target, and lints under `--strict`, failing loudly on any error and printing the real per-package test counts.
+It exists because Wave 4's committed HEAD did not compile while the local tree passed: a green local run is not evidence about the artifact.
+Report the numbers verify.sh prints, not the numbers a working-tree run prints.
 
 ## Building the app
 
