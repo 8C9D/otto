@@ -165,6 +165,44 @@ extension Subscription {
         guard isConvertedTrial(asOf: today), let trial else { return amountCents }
         return trial.convertsToAmountCents
     }
+
+    /// The persisted status flip §5.2a permits once the user confirms they know
+    /// the trial converted - "the app may write the status through" - built as a
+    /// new value because `cycleStartDay` is immutable in place: status `.active`,
+    /// the paid sequence's anchor (the conversion date), the converted amount.
+    /// The trial term is RETAINED: confirming records that the user saw the
+    /// conversion, it deletes nothing - "this converted and I noticed late" is
+    /// exactly the data the zombie report needs (Wave 7).
+    ///
+    /// Nil unless the subscription is a converted-unacknowledged trial, which
+    /// also makes the caller's flow idempotent: once flipped, there is nothing
+    /// to confirm.
+    public func confirmingConversion(asOf today: CalendarDay, at now: Date) -> Subscription? {
+        guard isConvertedTrial(asOf: today), let trial else { return nil }
+        return Subscription(
+            id: id,
+            name: name,
+            vendorURL: vendorURL,
+            category: category,
+            status: .active,
+            amountCents: trial.convertsToAmountCents,
+            currencyCode: currencyCode,
+            cycle: cycle,
+            cycleStartDay: trial.conversionDate,
+            reminderLeadDays: reminderLeadDays,
+            sameDayReminder: sameDayReminder,
+            pauseEndsOn: pauseEndsOn,
+            trial: trial,
+            paymentMethodID: paymentMethodID,
+            cancellationURL: cancellationURL,
+            cancellationNotes: cancellationNotes,
+            lastUsedDate: lastUsedDate,
+            notes: notes,
+            createdAt: createdAt,
+            updatedAt: now,
+            deletedAt: deletedAt
+        )
+    }
 }
 
 // MARK: - Codable

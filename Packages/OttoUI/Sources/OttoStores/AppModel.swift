@@ -40,6 +40,10 @@ public final class AppModel {
     /// Permission and coverage state (Wave 4). Nil in previews and store tests
     /// that construct the model without a notification engine.
     public let notifications: NotificationStatusStore?
+    /// The Wave 5 flows - trial confirmation, cancellation, verification. Built
+    /// over the same repositories, so the screens and the notification actions
+    /// share one implementation of every state change.
+    public let flows: SubscriptionFlowService
     public let dates: DateProvider
 
     /// A subscription the notification layer asked the UI to show - a tap on a
@@ -56,6 +60,12 @@ public final class AppModel {
     ) {
         self.repositories = repositories
         self.notifications = notifications
+        self.flows = SubscriptionFlowService(
+            subscriptions: repositories.subscriptions,
+            cancellations: repositories.cancellations,
+            billingEvents: repositories.billingEvents,
+            priceChanges: repositories.priceChanges
+        )
         self.dates = dates
         self.subscriptionsStore = SubscriptionsStore(
             subscriptionRepository: repositories.subscriptions,
@@ -69,6 +79,75 @@ public final class AppModel {
                 await notifications?.reschedule()
             }
         }
+    }
+
+    // MARK: - Wave 5 flows
+
+    /// Every flow method runs the state work, then reschedules (a state change
+    /// is a §6.2 trigger) and refreshes the published lists so every screen
+    /// reflects it.
+    private func flowFinished() async {
+        await notifications?.reschedule()
+        await subscriptionsStore.refresh()
+    }
+
+    /// The user confirmed they know the trial converted (spec §5.2a): records,
+    /// never deletes, and the Needs-action card retires because the stored state
+    /// now says what the derivation said.
+    public func confirmTrialConversion(subscriptionID: UUID) async throws {
+        try await flows.confirmTrialConversion(
+            subscriptionID: subscriptionID, now: dates.now(), today: dates.today()
+        )
+        await flowFinished()
+    }
+
+    /// "Keeping it" from a screen: same acknowledgement the notification action
+    /// writes (spec §6.4).
+    public func keepCurrentCharge(subscriptionID: UUID) async throws {
+        try await flows.acknowledgeCurrentCharge(
+            subscriptionID: subscriptionID, now: dates.now(), today: dates.today()
+        )
+        await flowFinished()
+    }
+
+    /// Marks the subscription cancelling (spec §5.4) - same state work as the
+    /// notification action, plus whatever evidence the screen captured.
+    @discardableResult
+    public func startCancellation(
+        subscriptionID: UUID, evidenceNote: String?
+    ) async throws -> CancellationStart? {
+        let start = try await flows.startCancellation(
+            subscriptionID: subscriptionID,
+            evidenceNote: evidenceNote,
+            now: dates.now(),
+            today: dates.today()
+        )
+        await flowFinished()
+        return start
+    }
+
+    /// Saves the evidence captured after the fact - the confirmation number the
+    /// vendor page produced once the cancellation actually happened.
+    public func updateCancellationEvidence(subscriptionID: UUID, note: String?) async throws {
+        try await flows.updateCancellationEvidence(
+            subscriptionID: subscriptionID, note: note, now: dates.now()
+        )
+        await subscriptionsStore.refresh()
+    }
+
+    /// Answers a verification check (spec §5.4). Returns the dispute summary on
+    /// the no-path; nil on the yes-path, which archives.
+    public func answerVerification(
+        subscriptionID: UUID, chargesStopped: Bool
+    ) async throws -> DisputeSummary? {
+        let summary = try await flows.answerVerification(
+            subscriptionID: subscriptionID,
+            chargesStopped: chargesStopped,
+            now: dates.now(),
+            today: dates.today()
+        )
+        await flowFinished()
+        return summary
     }
 
     /// A fresh detail store for one subscription's screen.

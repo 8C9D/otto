@@ -109,11 +109,7 @@ public actor NotificationScheduler: ReminderScheduling {
         let ledgerFailures = await reconcileLedger(for: live, today: today, now: now)
 
         // The pure plan, budgeted beneath whatever snoozes already occupy.
-        var records: [UUID: CancellationRecord] = [:]
-        for subscription in live
-        where subscription.status == .cancellationPending || subscription.status == .cancelled {
-            records[subscription.id] = try await cancellations.record(forSubscription: subscription.id)
-        }
+        let records = try await caughtUpCancellationRecords(for: live, today: today, now: now)
         let acknowledged = try await acknowledgedChargeDays(for: live)
         let plan = live.flatMap {
             reminderSchedule(
@@ -127,7 +123,9 @@ public actor NotificationScheduler: ReminderScheduling {
         let pending = await client.pendingRequests()
         let snoozeCount = pending.filter { NotificationPlanIdentifier.isSnooze($0.identifier) }.count
         let (scheduled, truncatedAfter) = budgeted(plan, limit: max(0, Self.slotLimit - snoozeCount))
-        let specs = requestSpecs(for: scheduled, subscriptions: live, now: now, timeZone: timeZone)
+        let specs = requestSpecs(
+            for: scheduled, subscriptions: live, cancellations: records, now: now, timeZone: timeZone
+        )
 
         // Replace: every planned identifier goes, snoozes stay, the fresh plan
         // lands. Identifiers are deterministic, so this is idempotent.
@@ -145,6 +143,30 @@ public actor NotificationScheduler: ReminderScheduling {
             coveredThrough: min(truncatedAfter ?? horizonEnd, horizonEnd),
             ledgerFailures: ledgerFailures
         )
+    }
+
+    /// The cancellation records the plan needs - and loading them doubles as the
+    /// §5.4 roll-forward: every scheduling pass catches unanswered checks up to
+    /// today, so the three-strike escalation depends on stored state and the
+    /// current date, never on the app having been opened at the right time.
+    private func caughtUpCancellationRecords(
+        for live: [Subscription],
+        today: CalendarDay,
+        now: Date
+    ) async throws -> [UUID: CancellationRecord] {
+        var records: [UUID: CancellationRecord] = [:]
+        for subscription in live
+        where subscription.status == .cancellationPending || subscription.status == .cancelled {
+            guard let record = try await cancellations.record(forSubscription: subscription.id) else {
+                continue
+            }
+            let caughtUp = record.catchingUpOnUnansweredChecks(for: subscription, asOf: today, at: now)
+            if caughtUp != record {
+                try await cancellations.save(caughtUp)
+            }
+            records[subscription.id] = caughtUp
+        }
+        return records
     }
 
     /// Acknowledged charges by subscription (spec §5.3, v1.4): the planner skips
@@ -197,6 +219,7 @@ public actor NotificationScheduler: ReminderScheduling {
     private func requestSpecs(
         for scheduled: [PlannedReminder],
         subscriptions live: [Subscription],
+        cancellations records: [UUID: CancellationRecord],
         now: Date,
         timeZone: TimeZone
     ) -> [NotificationRequestSpec] {
@@ -208,10 +231,17 @@ public actor NotificationScheduler: ReminderScheduling {
                   fireDate > now
             else { continue }
             let time = fireTimes.fireTime(for: reminder.kind)
+            let body = reminder.kind == .verification
+                ? NotificationContent.verificationBody(
+                    subscription: subscription,
+                    cancelledAt: records[subscription.id]?.markedCancelledAt,
+                    timeZone: timeZone
+                )
+                : NotificationContent.body(for: reminder, subscription: subscription)
             specs.append(NotificationRequestSpec(
                 identifier: NotificationPlanIdentifier.planned(reminder),
                 title: NotificationContent.title(for: reminder, subscription: subscription),
-                body: NotificationContent.body(for: reminder, subscription: subscription),
+                body: body,
                 year: reminder.day.year,
                 month: reminder.day.month,
                 day: reminder.day.day,
@@ -227,10 +257,11 @@ public actor NotificationScheduler: ReminderScheduling {
 
 /// The notification categories and their action buttons (spec §6.4).
 public enum NotificationCategory {
-    /// Renewal and trial reminders carry the three actions.
+    /// Renewal and trial reminders carry the three §6.4 actions.
     public static let actionable = "otto.category.reminder"
-    /// Everything else is informational in Wave 4; verification answers and
-    /// usage responses are Wave 5 and Wave 7 flows.
+    /// Verification checks carry the yes/no answer buttons (spec §5.4, Wave 5).
+    public static let verification = "otto.category.verification"
+    /// Everything else is informational; usage responses are a Wave 7 flow.
     public static let plain = ""
 
     public static func identifier(for kind: PlannedReminder.Kind) -> String {
@@ -238,15 +269,24 @@ public enum NotificationCategory {
         case .renewal, .renewalDayOf, .trialLead, .trialDayOfMorning,
              .trialDayOfEvening, .trialDaily:
             actionable
-        case .conversionAnnouncement, .verification, .usageCheckIn, .pauseEnding:
+        case .verification:
+            verification
+        case .conversionAnnouncement, .usageCheckIn, .pauseEnding:
             plain
         }
     }
 }
 
-/// The three action buttons (spec §6.4), by stable identifier.
+/// The action buttons (spec §6.4 and, since Wave 5, the §5.4 verification
+/// answers), by stable identifier.
 public enum NotificationAction: String, CaseIterable, Sendable {
     case keepingIt = "otto.action.keepingIt"
     case cancelling = "otto.action.cancelling"
     case remindLater = "otto.action.remindLater"
+    /// Verification yes-path: the charge stopped - verify and archive, all in
+    /// the background.
+    case chargesStopped = "otto.action.chargesStopped"
+    /// Verification no-path: a charge arrived - record it and bring the dispute
+    /// summary to the screen (foreground-registered).
+    case stillCharging = "otto.action.stillCharging"
 }

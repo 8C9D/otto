@@ -11,10 +11,11 @@ public final class LiveNotificationClient: NotificationClient {
 
     private var center: UNUserNotificationCenter { .current() }
 
-    /// Registers the actionable category (spec §6.4). Called once at launch,
-    /// before any notification can be interacted with.
+    /// Registers the action categories (spec §6.4; §5.4's verification answers
+    /// since Wave 5). Called once at launch, before any notification can be
+    /// interacted with.
     public func registerCategories() {
-        let category = UNNotificationCategory(
+        let reminder = UNNotificationCategory(
             identifier: NotificationCategory.actionable,
             actions: [
                 UNNotificationAction(
@@ -36,7 +37,25 @@ public final class LiveNotificationClient: NotificationClient {
             ],
             intentIdentifiers: []
         )
-        center.setNotificationCategories([category])
+        let verification = UNNotificationCategory(
+            identifier: NotificationCategory.verification,
+            actions: [
+                UNNotificationAction(
+                    identifier: NotificationAction.chargesStopped.rawValue,
+                    title: String(localized: "Yes - it stopped")
+                ),
+                UNNotificationAction(
+                    identifier: NotificationAction.stillCharging.rawValue,
+                    title: String(localized: "No - still charging"),
+                    // Foreground so the dispute summary is on screen the moment
+                    // it exists; the state work happened in the background
+                    // handler regardless.
+                    options: [.foreground]
+                )
+            ],
+            intentIdentifiers: []
+        )
+        center.setNotificationCategories([reminder, verification])
     }
 
     public func permission() async -> NotificationPermission {

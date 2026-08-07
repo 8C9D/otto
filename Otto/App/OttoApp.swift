@@ -54,14 +54,27 @@ struct OttoApp: App {
         let coordinator = NotificationCoordinator(
             scheduler: scheduler,
             handler: NotificationActionHandler(
-                subscriptions: store, cancellations: store, billingEvents: store,
-                client: client, scheduler: scheduler
+                subscriptions: store,
+                flows: model.flows,
+                client: client,
+                scheduler: scheduler
             ),
             client: client,
             now: dates.now,
             today: dates.today,
             timeZone: dates.timeZone
         )
+        wire(coordinator, to: model, notifications: notifications)
+        // BGTaskScheduler registration must complete before launch finishes.
+        coordinator.start()
+        return (model, coordinator)
+    }
+
+    private static func wire(
+        _ coordinator: NotificationCoordinator,
+        to model: AppModel,
+        notifications: NotificationStatusStore
+    ) {
         coordinator.onOutcome = { [weak notifications] outcome in
             notifications?.apply(outcome)
         }
@@ -78,9 +91,6 @@ struct OttoApp: App {
                 break
             }
         }
-        // BGTaskScheduler registration must complete before launch finishes.
-        coordinator.start()
-        return (model, coordinator)
     }
 
     var body: some Scene {

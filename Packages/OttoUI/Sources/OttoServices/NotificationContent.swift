@@ -41,9 +41,7 @@ enum NotificationContent {
                 ?? perCycle(subscription.amountCents, subscription)
             return String(localized: "Your \(name) trial converted today. You're now being charged \(amount).")
         case .verification:
-            return String(
-                localized: "You cancelled \(name). A charge was due today - check your statement. Did it stop?"
-            )
+            return verificationBody(subscription: subscription, cancelledAt: nil, timeZone: nil)
         case .usageCheckIn:
             return String(localized: "Have you used \(name) lately? If not, it may be money moving for nothing.")
         case .pauseEnding:
@@ -73,6 +71,29 @@ enum NotificationContent {
                 localized: "The \(name) cancel-by day has passed, but it hasn't converted yet. It converts to \(price) on \(conversion)."
             )
         }
+    }
+
+    /// The §6.3 verification check, with the cancellation date when the record is
+    /// on hand: "You cancelled FoodApp on Aug 12. A charge was due today - check
+    /// your statement. Did it stop?" The date is the one fact that anchors the
+    /// question to the user's memory of actually cancelling.
+    static func verificationBody(
+        subscription: Subscription,
+        cancelledAt: Date?,
+        timeZone: TimeZone?
+    ) -> String {
+        let name = subscription.name
+        guard let cancelledAt, let timeZone else {
+            return String(
+                localized: "You cancelled \(name). A charge was due today - check your statement. Did it stop?"
+            )
+        }
+        let cancelled = cancelledAt.formatted(
+            Date.FormatStyle(timeZone: timeZone).month(.abbreviated).day()
+        )
+        return String(
+            localized: "You cancelled \(name) on \(cancelled). A charge was due today - check your statement. Did it stop?"
+        )
     }
 
     /// "$11.00" - notification copy formats money exactly once, here.

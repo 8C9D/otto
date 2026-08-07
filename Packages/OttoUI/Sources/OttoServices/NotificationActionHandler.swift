@@ -21,23 +21,20 @@ public enum NotificationActionFollowUp: Hashable, Sendable {
 public actor NotificationActionHandler {
 
     private let subscriptions: any SubscriptionRepository
-    private let cancellations: any CancellationRepository
-    private let billingEvents: any BillingEventRepository
+    private let flows: SubscriptionFlowService
     private let client: any NotificationClient
     private let scheduler: any ReminderScheduling
     private let fireTimes: FireTimePolicy
 
     public init(
         subscriptions: any SubscriptionRepository,
-        cancellations: any CancellationRepository,
-        billingEvents: any BillingEventRepository,
+        flows: SubscriptionFlowService,
         client: any NotificationClient,
         scheduler: any ReminderScheduling,
         fireTimes: FireTimePolicy = .standard
     ) {
         self.subscriptions = subscriptions
-        self.cancellations = cancellations
-        self.billingEvents = billingEvents
+        self.flows = flows
         self.client = client
         self.scheduler = scheduler
         self.fireTimes = fireTimes
@@ -59,12 +56,32 @@ public actor NotificationActionHandler {
         }
         switch NotificationAction(rawValue: actionIdentifier) {
         case .keepingIt:
-            try await keepIt(subscriptionID: subscriptionID, now: now, today: today, timeZone: timeZone)
+            try await flows.acknowledgeCurrentCharge(subscriptionID: subscriptionID, now: now, today: today)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
             return .none
         case .cancelling:
-            return try await startCancelling(
-                subscriptionID: subscriptionID, now: now, today: today, timeZone: timeZone
+            guard let start = try await flows.startCancellation(
+                subscriptionID: subscriptionID, now: now, today: today
+            ) else { return .none }
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            return .openCancellation(subscriptionID: subscriptionID, url: start.cancellationURL)
+        case .chargesStopped:
+            // The verification yes-path (spec §5.4): verify and archive, all
+            // background-safe - answering must succeed with the phone in a pocket.
+            _ = try await flows.answerVerification(
+                subscriptionID: subscriptionID, chargesStopped: true, now: now, today: today
             )
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            return .none
+        case .stillCharging:
+            // The no-path: the state work is background-safe, and the action is
+            // foreground-registered so the dispute summary is on screen the
+            // moment the user needs it.
+            _ = try await flows.answerVerification(
+                subscriptionID: subscriptionID, chargesStopped: false, now: now, today: today
+            )
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            return .openDetail(subscriptionID: subscriptionID)
         case .remindLater:
             try await snooze(
                 subscriptionID: subscriptionID,
@@ -79,95 +96,6 @@ public actor NotificationActionHandler {
             // also a reschedule trigger (spec §6.2), which the caller performs.
             return .openDetail(subscriptionID: subscriptionID)
         }
-    }
-
-    /// "Keeping it" (spec §6.4): mark the charge's `BillingEvent` acknowledged and
-    /// silence this cycle only. The acknowledgement is PERSISTED (spec §5.3, v1.4)
-    /// and honoured by the planner, so the silencing holds through any number of
-    /// cancel-all-then-replan reschedules - the Wave 4 gap. For a trial that
-    /// cancels the remaining escalation but never the conversion announcement,
-    /// which §5.2a sends whether or not the user ever acknowledged anything.
-    /// Reminders resume next cycle because the next cycle's event is a different
-    /// row. Redelivery-safe: an already-acknowledged event keeps its first
-    /// acknowledgement instant, and the reschedule is idempotent.
-    func keepIt(
-        subscriptionID: UUID,
-        now: Date,
-        today: CalendarDay,
-        timeZone: TimeZone
-    ) async throws {
-        // The charge this cycle's reminders point at: the earliest still-expected
-        // event on or after today. Lead, same-day, catch-up, and every trial rung
-        // all warn about exactly this event.
-        let target = try await billingEvents.events(forSubscription: subscriptionID)
-            .filter { $0.state == .upcoming && $0.expectedDate >= today }
-            .min { $0.expectedDate < $1.expectedDate }
-        if var event = target, event.acknowledgedAt == nil {
-            event.acknowledgedAt = now
-            event.updatedAt = now
-            try await billingEvents.save(event)
-        }
-        _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
-    }
-
-    /// "I'm cancelling" (spec §6.4): flip to `.cancellationPending`, create the
-    /// watching record with its check date computed NOW from the anchor and cycle
-    /// (spec §5.4), reschedule so the verification check is pending, and hand the
-    /// UI the stored cancellation URL. Redelivery-safe: a subscription already in
-    /// a cancellation state with a record is left exactly as it is.
-    private func startCancelling(
-        subscriptionID: UUID,
-        now: Date,
-        today: CalendarDay,
-        timeZone: TimeZone
-    ) async throws -> NotificationActionFollowUp {
-        guard var subscription = try await subscriptions.subscription(withID: subscriptionID) else {
-            return .none
-        }
-        let followUp = NotificationActionFollowUp.openCancellation(
-            subscriptionID: subscriptionID, url: subscription.cancellationURL
-        )
-        let alreadyCancelling = subscription.status == .cancellationPending
-            || subscription.status == .cancelled
-        if alreadyCancelling, try await cancellations.record(forSubscription: subscriptionID) != nil {
-            return followUp
-        }
-
-        let wasUnconvertedTrial = subscription.status == .trial
-            && subscription.trial.map { today < $0.conversionDate } ?? false
-        if !alreadyCancelling {
-            subscription.status = .cancellationPending
-            subscription.updatedAt = now
-            try await subscriptions.save(subscription)
-        }
-        if try await cancellations.record(forSubscription: subscriptionID) == nil {
-            // The next date a charge would land if the cancellation silently
-            // failed, computed exactly once, here (spec §5.4). For a trial
-            // cancelled before converting, that charge IS the conversion charge -
-            // the anchor sequence describes the paid cycle, which never starts if
-            // the cancellation works.
-            let checkDate: CalendarDay
-            if wasUnconvertedTrial, let trial = subscription.trial {
-                checkDate = trial.conversionDate
-            } else {
-                checkDate = nextBillingDate(
-                    after: today.adding(days: -1),
-                    anchor: subscription.billingAnchor(asOf: today),
-                    cycle: subscription.cycle
-                )
-            }
-            try await cancellations.save(CancellationRecord(
-                id: UUID(),
-                subscriptionID: subscriptionID,
-                markedCancelledAt: now,
-                nextChargeDateIfNotCancelled: checkDate,
-                verificationState: .pending,
-                createdAt: now,
-                updatedAt: now
-            ))
-        }
-        _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
-        return followUp
     }
 
     /// "Remind me later" (spec §6.4): tomorrow at the preferred hour, hard-capped

@@ -114,12 +114,19 @@ actor FakeNotificationClient: NotificationClient {
 actor FakeSubscriptionRepository: SubscriptionRepository {
     private var stored: [UUID: Subscription] = [:]
     private(set) var savedValues: [Subscription] = []
+    private var saveFailure: (any Error)?
 
     func seed(_ subscriptions: [Subscription]) {
         for subscription in subscriptions { stored[subscription.id] = subscription }
     }
 
+    /// Primes the next saves to fail - for asserting what a flow leaves behind
+    /// when it dies mid-way.
+    func failSaves(with error: any Error) { saveFailure = error }
+    func recoverSaves() { saveFailure = nil }
+
     func save(_ subscription: Subscription) async throws {
+        if let saveFailure { throw saveFailure }
         stored[subscription.id] = subscription
         savedValues.append(subscription)
     }
@@ -262,19 +269,22 @@ actor FakeBillingEventRepository: BillingEventRepository {
     }
 }
 
-/// One assembled scheduler (and, on demand, its action handler) over fresh fakes.
+/// One assembled scheduler (and, on demand, its flow service and action handler)
+/// over fresh fakes.
 struct SchedulerFixture {
     let scheduler: NotificationScheduler
     let client: FakeNotificationClient
     let subscriptions: FakeSubscriptionRepository
     let cancellations: FakeCancellationRepository
     let billingEvents: FakeBillingEventRepository
+    let priceChanges: FakePriceChangeRepository
 
     init() {
         client = FakeNotificationClient()
         subscriptions = FakeSubscriptionRepository()
         cancellations = FakeCancellationRepository()
         billingEvents = FakeBillingEventRepository()
+        priceChanges = FakePriceChangeRepository()
         scheduler = NotificationScheduler(
             subscriptions: subscriptions,
             cancellations: cancellations,
@@ -283,14 +293,42 @@ struct SchedulerFixture {
         )
     }
 
-    var handler: NotificationActionHandler {
-        NotificationActionHandler(
+    var flows: SubscriptionFlowService {
+        SubscriptionFlowService(
             subscriptions: subscriptions,
             cancellations: cancellations,
             billingEvents: billingEvents,
+            priceChanges: priceChanges
+        )
+    }
+
+    var handler: NotificationActionHandler {
+        NotificationActionHandler(
+            subscriptions: subscriptions,
+            flows: flows,
             client: client,
             scheduler: scheduler
         )
+    }
+}
+
+actor FakePriceChangeRepository: PriceChangeRepository {
+    private var changes: [UUID: PriceChange] = [:]
+
+    func append(_ change: PriceChange) async throws {
+        changes[change.id] = change
+    }
+
+    func history(forSubscription subscriptionID: UUID) async throws -> [PriceChange] {
+        changes.values
+            .filter { $0.subscriptionID == subscriptionID && $0.deletedAt == nil }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
+    }
+
+    func historyIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [PriceChange] {
+        changes.values
+            .filter { $0.subscriptionID == subscriptionID }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
     }
 }
 

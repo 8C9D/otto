@@ -49,6 +49,32 @@ extension CalendarDay {
     }
 }
 
+extension DisputeSummary {
+    /// The dispute, as one paragraph the user can read aloud to a bank or
+    /// screenshot (spec §5.4, §7.1 screen 6). Every fact the summary holds, in
+    /// sentence form, real formatters throughout.
+    public func spokenText(
+        calendar: Calendar = .current,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String {
+        let cancelled = markedCancelledAt.formatted(
+            Date.FormatStyle(date: .abbreviated, timeZone: timeZone).locale(locale)
+        )
+        let charge = chargeDate.displayText(calendar: calendar, locale: locale)
+        let amount = currencyText(cents: chargeAmountCents, currencyCode: currencyCode, locale: locale)
+        var lines = [
+            String(localized: "I cancelled my \(subscriptionName) subscription on \(cancelled)."),
+            String(localized: "A charge of \(amount) was still made on \(charge).")
+        ]
+        if let evidenceNote {
+            lines.append(String(localized: "Cancellation evidence: \(evidenceNote)."))
+        }
+        lines.append(String(localized: "I am disputing this charge."))
+        return lines.joined(separator: "\n")
+    }
+}
+
 /// The friendly cadence name for a cycle, e.g. "Monthly" or "Every 45 days".
 public func cycleText(_ cycle: BillingCycle) -> String {
     switch (cycle.unit, cycle.interval) {

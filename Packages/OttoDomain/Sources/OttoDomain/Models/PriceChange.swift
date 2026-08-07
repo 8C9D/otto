@@ -10,6 +10,12 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
         case userEdit
         /// A confirmed charge differed from the expected amount.
         case chargeMismatch
+        /// A trial converted: the price went from the trial-era amount to
+        /// `convertsToAmountCents` (spec §5.2a's "record the price transition",
+        /// written when the user confirms the conversion). Its own case because
+        /// it is neither a user edit nor a mismatch, and Insights will want to
+        /// tell them apart.
+        case trialConversion
     }
 
     public let id: UUID

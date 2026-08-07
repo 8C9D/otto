@@ -85,5 +85,33 @@ struct DynamicTypeTests {
         let event = try #require(fixtures.events.first)
         assertGrows(BillingEventRow(event: event, currencyCode: "CAD"))
     }
+
+    @Test("the dispute summary text grows to the largest accessibility size")
+    func disputeSummaryText() throws {
+        let summary = DisputeSummary(
+            subscriptionName: "FoodApp",
+            markedCancelledAt: PreviewData.now,
+            evidenceNote: "Confirmation: 4821, spoke to Dana",
+            chargeDate: try #require(CalendarDay(year: 2026, month: 8, day: 31)),
+            chargeAmountCents: 1100,
+            currencyCode: "CAD"
+        )
+        assertGrows(Text(summary.spokenText()).font(.callout))
+    }
+
+    @Test("the cancellation flow screen renders against the preview fixtures")
+    func cancellationFlowRenders() throws {
+        let subscription = try #require(fixtures.subscriptions.first)
+        let host = UIHostingController(
+            rootView: CancellationFlowView(subscription: subscription)
+                .environment(PreviewData.model())
+        )
+        // A full screen, so it takes the proposed size rather than compressing;
+        // rendering it at all is the assertion - a broken environment crashes.
+        let screen = CGSize(width: 390, height: 844)
+        host.view.frame = CGRect(origin: .zero, size: screen)
+        host.view.layoutIfNeeded()
+        #expect(host.sizeThatFits(in: screen).height > 0)
+    }
 }
 #endif

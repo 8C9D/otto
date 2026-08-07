@@ -9,6 +9,8 @@ struct SubscriptionDetailView: View {
     @Environment(AppModel.self) private var model
     @State private var store: SubscriptionDetailStore?
     @State private var isEditing = false
+    @State private var isCancelling = false
+    @State private var actionFailure: String?
 
     var body: some View {
         Group {
@@ -32,6 +34,37 @@ struct SubscriptionDetailView: View {
             if let subscription = store?.state.value?.subscription {
                 AddEditSubscriptionView(form: model.formModel(editing: subscription))
             }
+        }
+        .sheet(isPresented: $isCancelling) {
+            Task { await store?.refresh() }
+        } content: {
+            if let subscription = store?.state.value?.subscription {
+                CancellationFlowView(subscription: subscription)
+            }
+        }
+        .alert(
+            String(localized: "Something went wrong"),
+            isPresented: Binding(
+                get: { actionFailure != nil },
+                set: { if !$0 { actionFailure = nil } }
+            )
+        ) {
+            Button(String(localized: "OK"), role: .cancel) {}
+        } message: {
+            Text(actionFailure ?? "")
+        }
+    }
+
+    /// Runs one flow action, surfacing a failure instead of swallowing it, and
+    /// reloads the screen either way.
+    private func perform(_ action: @escaping () async throws -> Void) {
+        Task {
+            do {
+                try await action()
+            } catch {
+                actionFailure = error.localizedDescription
+            }
+            await store?.refresh()
         }
     }
 
@@ -64,7 +97,7 @@ struct SubscriptionDetailView: View {
         List {
             overviewSection(detail)
             trialSection(detail)
-            cancellationSection(detail)
+            CancellationSectionView(detail: detail, isCancelling: $isCancelling, perform: perform)
             ledgerSection(detail)
             priceHistorySection(detail)
         }
@@ -142,67 +175,41 @@ struct SubscriptionDetailView: View {
                         currencyCode: detail.subscription.currencyCode
                     )
                 )
+                trialActions(detail, trial: trial)
             }
         }
     }
 
+    /// The trial flow's two verbs - keep, or cancel (which hands off to the
+    /// cancellation flow). A converted-unacknowledged trial gets the §5.2a
+    /// confirmation instead: money is moving, and confirming records that the
+    /// user knows - it deletes nothing.
     @ViewBuilder
-    private func cancellationSection(_ detail: SubscriptionDetail) -> some View {
-        Section {
-            if let record = detail.cancellation {
-                LabeledContent(
-                    String(localized: "Marked cancelled"),
-                    value: record.markedCancelledAt.formatted(date: .abbreviated, time: .omitted)
-                )
-                LabeledContent(
-                    String(localized: "Watching for a charge on"),
-                    value: record.nextChargeDateIfNotCancelled.displayText()
-                )
-                LabeledContent(String(localized: "Verification")) {
-                    verificationBadge(record.verificationState)
-                }
-                if let note = record.evidenceNote {
-                    LabeledContent(String(localized: "Evidence"), value: note)
-                }
+    private func trialActions(_ detail: SubscriptionDetail, trial: TrialTerm) -> some View {
+        let subscription = detail.subscription
+        let today = model.subscriptionsStore.today
+        if subscription.isConvertedTrial(asOf: today) {
+            let converted = trial.conversionDate.displayText()
+            let amount = currencyText(
+                cents: trial.convertsToAmountCents, currencyCode: subscription.currencyCode
+            )
+            Text(String(localized: "This trial converted on \(converted). You're now being charged \(amount)."))
+                .font(.callout)
+                .foregroundStyle(.orange)
+            Button(String(localized: "Got it - I'm keeping it")) {
+                perform { try await model.confirmTrialConversion(subscriptionID: subscription.id) }
             }
-            if let url = detail.subscription.cancellationURL {
-                Link(destination: url) {
-                    Label(String(localized: "Open cancellation page"), systemImage: "safari")
-                }
+            Button(String(localized: "I'm cancelling it…")) {
+                isCancelling = true
             }
-            if let notes = detail.subscription.cancellationNotes {
-                Text(notes)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        } else if subscription.status == .trial {
+            Button(String(localized: "Keeping it - stop the countdown reminders")) {
+                perform { try await model.keepCurrentCharge(subscriptionID: subscription.id) }
             }
-            if detail.cancellation == nil {
-                // The guided flow - mark cancelling, capture evidence, schedule
-                // the verification - is Wave 5; the entry point is stubbed so the
-                // screen's shape is honest about what is coming.
-                Button(String(localized: "Mark as cancelling…")) {}
-                    .disabled(true)
-            }
-        } header: {
-            Text(String(localized: "Cancelling"))
-        } footer: {
-            if detail.cancellation == nil {
-                Text(String(localized: "The guided cancellation flow arrives in a later update."))
+            Button(String(localized: "Cancel this trial…"), role: .destructive) {
+                isCancelling = true
             }
         }
-    }
-
-    private func verificationBadge(_ state: CancellationRecord.VerificationState) -> some View {
-        let badge: BadgeSpec = switch state {
-        case .pending:
-            BadgeSpec(text: String(localized: "Waiting"), symbolName: "clock", color: .orange)
-        case .verifiedStopped:
-            BadgeSpec(text: String(localized: "Charges stopped"), symbolName: "checkmark.circle", color: .green)
-        case .stillCharging:
-            BadgeSpec(text: String(localized: "Still charging"), symbolName: "exclamationmark.triangle", color: .red)
-        case .needsManualReview:
-            BadgeSpec(text: String(localized: "Needs review"), symbolName: "exclamationmark.triangle", color: .red)
-        }
-        return badge.label
     }
 
     @ViewBuilder
@@ -252,7 +259,7 @@ struct SubscriptionDetailView: View {
 
 /// A small state badge: text and symbol always carry the meaning, colour only
 /// reinforces it.
-private struct BadgeSpec {
+struct BadgeSpec {
     let text: String
     let symbolName: String
     let color: Color
