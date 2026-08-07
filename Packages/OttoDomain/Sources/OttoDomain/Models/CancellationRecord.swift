@@ -24,8 +24,13 @@ public struct CancellationRecord: Hashable, Codable, Sendable {
     /// When the user marked it cancelled - a UTC audit instant, not a billing day.
     public var markedCancelledAt: Date
 
-    /// The last charge that was legitimately due, when the user knows it.
-    public var expectedFinalChargeDate: CalendarDay?
+    /// The date a charge would land if the cancellation silently failed - the
+    /// verification trigger (spec §5.4). Required, and computed once at cancellation
+    /// time from the immutable anchor and the cycle: `markedCancelledAt` is a UTC
+    /// instant, so no calendar-day fallback is derivable from it later without a
+    /// timezone, and a "next date after today" fallback would drift later every day
+    /// the app goes unopened.
+    public var nextChargeDateIfNotCancelled: CalendarDay
 
     public var verificationState: VerificationState
     public var verifiedAt: Date?
@@ -36,14 +41,14 @@ public struct CancellationRecord: Hashable, Codable, Sendable {
     public init(
         subscriptionID: UUID,
         markedCancelledAt: Date,
-        expectedFinalChargeDate: CalendarDay? = nil,
+        nextChargeDateIfNotCancelled: CalendarDay,
         verificationState: VerificationState,
         verifiedAt: Date? = nil,
         evidenceNote: String? = nil
     ) {
         self.subscriptionID = subscriptionID
         self.markedCancelledAt = markedCancelledAt
-        self.expectedFinalChargeDate = expectedFinalChargeDate
+        self.nextChargeDateIfNotCancelled = nextChargeDateIfNotCancelled
         self.verificationState = verificationState
         self.verifiedAt = verifiedAt
         self.evidenceNote = evidenceNote

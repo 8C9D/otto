@@ -31,6 +31,9 @@ public struct Subscription: Identifiable, Hashable, Codable, Sendable {
     /// comes from settings at the UI layer, not from the domain.
     public var reminderLeadDays: Int
 
+    /// Whether a second renewal reminder fires on the billing day itself (spec §6.3).
+    public var sameDayReminder: Bool
+
     /// When a paused subscription resumes billing; drives the resume reminder.
     /// Meaningful only while `status` is `.paused` (spec §5.1).
     public var pauseEndsOn: CalendarDay?
@@ -69,6 +72,7 @@ public struct Subscription: Identifiable, Hashable, Codable, Sendable {
         cycle: BillingCycle,
         cycleStartDay: CalendarDay,
         reminderLeadDays: Int,
+        sameDayReminder: Bool = false,
         pauseEndsOn: CalendarDay? = nil,
         trial: TrialTerm? = nil,
         paymentMethodID: UUID? = nil,
@@ -90,6 +94,7 @@ public struct Subscription: Identifiable, Hashable, Codable, Sendable {
         self.cycle = cycle
         self.cycleStartDay = cycleStartDay
         self.reminderLeadDays = reminderLeadDays
+        self.sameDayReminder = sameDayReminder
         self.pauseEndsOn = pauseEndsOn
         self.trial = trial
         self.paymentMethodID = paymentMethodID

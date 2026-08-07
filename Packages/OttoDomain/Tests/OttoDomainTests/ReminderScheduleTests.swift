@@ -84,25 +84,45 @@ struct ReminderScheduleTests {
         #expect(reminderSchedule(for: sub, from: today, horizonDays: 90).isEmpty)
     }
 
-    @Test("a pending cancellation schedules one verification check after the final charge")
+    @Test("a pending cancellation schedules its verification check on the stored date")
     func pendingVerification() throws {
         let sub = try makeSubscription(status: .cancellationPending, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
+        // The check date was computed once, at cancellation time, from the anchor
+        // and the cycle (spec §5.4) - the planner fires on it as stored.
         let record = CancellationRecord(
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
-            expectedFinalChargeDate: try day(2026, 8, 20),
+            nextChargeDateIfNotCancelled: try day(2026, 8, 20),
             verificationState: .pending
         )
         let today = try day(2026, 8, 6)
 
         let planned = reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90)
 
-        // The final legitimate charge lands Aug 20; the first date a charge would
-        // have landed post-cancellation is Sep 20, and that is the check.
+        let aug20 = try day(2026, 8, 20)
+        #expect(planned.map(\.day) == [aug20])
+        #expect(planned.map(\.kind) == [.verification])
+        #expect(planned.first?.priority == .verification)
+    }
+
+    @Test("a pending cancellation whose check date has passed keeps watching the next would-be charge")
+    func staleVerification() throws {
+        let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
+        let record = CancellationRecord(
+            subscriptionID: sub.id,
+            markedCancelledAt: Date(timeIntervalSince1970: 0),
+            nextChargeDateIfNotCancelled: try day(2026, 8, 20),
+            verificationState: .pending
+        )
+        // The Aug 20 check came and went unanswered; verification is still the point,
+        // so the plan moves to the first would-be charge date on or after today.
+        let today = try day(2026, 9, 6)
+
+        let planned = reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90)
+
         let sep20 = try day(2026, 9, 20)
         #expect(planned.map(\.day) == [sep20])
         #expect(planned.map(\.kind) == [.verification])
-        #expect(planned.first?.priority == .verification)
     }
 
     @Test("a verified cancellation generates nothing")
@@ -111,7 +131,7 @@ struct ReminderScheduleTests {
         let record = CancellationRecord(
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
-            expectedFinalChargeDate: try day(2026, 8, 20),
+            nextChargeDateIfNotCancelled: try day(2026, 8, 20),
             verificationState: .verifiedStopped
         )
         let today = try day(2026, 8, 6)

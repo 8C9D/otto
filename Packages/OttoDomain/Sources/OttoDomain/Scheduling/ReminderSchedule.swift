@@ -150,13 +150,20 @@ private func verificationReminders(
     // moves to the dispute flow.
     if let cancellation, cancellation.verificationState != .pending { return [] }
 
-    // The reference is the recorded final legitimate charge when known, otherwise
-    // today. `markedCancelledAt` is a UTC instant; turning an instant into a calendar
-    // day requires a timezone, so it deliberately plays no part in date arithmetic.
-    let reference = max(cancellation?.expectedFinalChargeDate ?? today, today)
-    let checkDay = nextBillingDate(
-        after: reference, anchor: subscription.cycleStartDay, cycle: subscription.cycle
-    )
+    // The check fires on the stored next-would-be charge date, computed once at
+    // cancellation time (spec §5.4). Once that date has passed unverified - or when
+    // no record exists at all - the app keeps watching the first would-be charge
+    // date on or after today, computed from the anchor as always. `markedCancelledAt`
+    // is a UTC instant; turning an instant into a calendar day requires a timezone,
+    // so it deliberately plays no part in date arithmetic.
+    let checkDay: CalendarDay
+    if let stored = cancellation?.nextChargeDateIfNotCancelled, stored >= today {
+        checkDay = stored
+    } else {
+        checkDay = nextBillingDate(
+            after: today.adding(days: -1), anchor: subscription.cycleStartDay, cycle: subscription.cycle
+        )
+    }
     guard window.contains(checkDay) else { return [] }
     return [PlannedReminder(subscriptionID: subscription.id, day: checkDay, kind: .verification)]
 }
