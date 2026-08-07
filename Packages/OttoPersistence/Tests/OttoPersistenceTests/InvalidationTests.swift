@@ -115,7 +115,7 @@ struct ScheduleChangeInvalidationTests {
 
     @Test(
         "a transition into a non-expecting status invalidates every .upcoming row (spec §5.3, v1.4)",
-        arguments: [SubscriptionStatus.paused, .cancellationPending, .cancelled, .archived]
+        arguments: [SubscriptionStatus.cancellationPending, .cancelled, .archived]
     )
     func statusTransitionInvalidates(status: SubscriptionStatus) async throws {
         let (store, _) = try makeStore()
@@ -139,6 +139,54 @@ struct ScheduleChangeInvalidationTests {
         #expect(try await store.events(forSubscription: transitioned.id).isEmpty)
     }
 
+    @Test("an indefinite pause invalidates every .upcoming row (spec §5.3, v1.4/v1.6)")
+    func indefinitePauseInvalidates() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let original = try makeSubscription(cycleStartDay: try day(2026, 1, 15))
+        try await store.save(original)
+        let created = try await store.materializeEvents(
+            for: original, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+        #expect(created.count == 3)
+
+        let paused = try makeSubscription(
+            status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: .some(nil)
+        )
+        try await store.save(paused)
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: paused, asOf: today, at: editInstant
+        )
+
+        #expect(invalidated.map(\.expectedDate) == created.map(\.expectedDate))
+        #expect(try await store.events(forSubscription: paused.id).isEmpty)
+    }
+
+    @Test("a dated pause invalidates only the rows inside the pause - the resumed sequence keeps its rows (spec §5.2a, v1.6)")
+    func datedPauseKeepsResumedRows() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let original = try makeSubscription(cycleStartDay: try day(2026, 1, 15))
+        try await store.save(original)
+        let created = try await store.materializeEvents(
+            for: original, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+        #expect(created.map(\.expectedDate) == [try day(2026, 8, 15), try day(2026, 9, 15), try day(2026, 10, 15)])
+
+        // Paused until Oct 1: Aug 15 and Sep 15 fall inside the pause and are
+        // phantoms; Oct 15 belongs to the resumed sequence and stays.
+        let paused = try makeSubscription(
+            status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: try day(2026, 10, 1)
+        )
+        try await store.save(paused)
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: paused, asOf: today, at: editInstant
+        )
+
+        #expect(invalidated.map(\.expectedDate) == [try day(2026, 8, 15), try day(2026, 9, 15)])
+        #expect(try await store.events(forSubscription: paused.id).map(\.expectedDate) == [try day(2026, 10, 15)])
+    }
+
     @Test("resuming from .paused re-materializes - tombstoned .upcoming rows never block (spec §5.3)")
     func resumeFromPauseRematerializes() async throws {
         let (store, _) = try makeStore()
@@ -149,7 +197,9 @@ struct ScheduleChangeInvalidationTests {
             for: active, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
         )
 
-        let paused = try makeSubscription(status: .paused, cycleStartDay: try day(2026, 1, 15))
+        let paused = try makeSubscription(
+            status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: .some(nil)
+        )
         try await store.save(paused)
         _ = try await store.invalidateOutdatedUpcomingEvents(for: paused, asOf: today, at: editInstant)
         #expect(try await store.events(forSubscription: paused.id).isEmpty)

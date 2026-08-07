@@ -53,6 +53,17 @@ extension OttoStore: BillingEventRepository {
         let windowStart = min(storedWatermark ?? today, today)
         let windowEnd = today.adding(days: horizonDays + maxReminderLeadDays)
 
+        // An indefinitely paused subscription has no derivable resume date, so
+        // its watermark must not advance (spec §5.3, v1.6): it freezes at the
+        // pause, and the manual resume backfills from it. Advancing here is how
+        // Wave 5.5's fourth escape route worked - the pause ends, and the dates
+        // it covered are behind a watermark that vouches for rows that never
+        // existed. A pause WITH an end date advances normally, because its
+        // resumed sequence materializes below while the pause runs out.
+        if subscription.effectiveStatus(asOf: today) == .paused && subscription.pauseEndsOn == nil {
+            return []
+        }
+
         // Which charges the effective status expects is a domain decision
         // (spec §5.2a, §5.3) - this store only creates the rows it names.
         let chargeDates = expectedCharges(
@@ -97,8 +108,10 @@ extension OttoStore: BillingEventRepository {
         // Advanced in the same save as the rows it vouches for: the watermark
         // asserts "every expected charge through this day has a row", and must
         // never persist without them (spec §5.3, v1.5). `updatedAt` is left
-        // alone - this is scheduler bookkeeping, not a user edit; Wave 6 must
-        // decide how the watermark merges under sync.
+        // alone - this is scheduler bookkeeping, not a user edit, and bumping it
+        // would make every pass look like a user modification to conflict
+        // resolution (spec §5.3, v1.6: the watermark is device-local, never
+        // synced, and Wave 6 must move it out of the CloudKit-backed schema).
         parent.lastMaterializedThrough = windowEnd.yyyymmdd
         try modelContext.save()
         return created

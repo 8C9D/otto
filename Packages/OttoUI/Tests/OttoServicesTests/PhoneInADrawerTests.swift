@@ -120,6 +120,44 @@ struct PhoneInADrawerTests {
         #expect(kinds.contains(.renewal))
     }
 
+    @Test("pause resume: a pause that ended in the drawer is active on wake, with both vendor charges materialized")
+    func pauseResumeDerivation() async throws {
+        let fixture = SchedulerFixture()
+        // Paused in August until Sep 1, monthly on the 1st; the drawer lasts
+        // until Oct 15. The vendor resumed on schedule and charged Sep 1 and
+        // Oct 1. Before spec v1.6 the watermark advanced through the pause, so
+        // a manual resume could never backfill those two charges - the fourth
+        // escape route.
+        let subscription = try makeSubscription(
+            index: 1, status: .paused, cycleStartDay: try day(2026, 6, 1),
+            pauseEndsOn: try day(2026, 9, 1),
+            lastMaterializedThrough: try day(2026, 8, 20)
+        )
+        await fixture.subscriptions.seed([subscription])
+        let wakeDay = try day(2026, 10, 15)
+        _ = try await wake(fixture, on: wakeDay)
+
+        // The stored status still says .paused - no flow ran to flip it - and
+        // every consumer must already treat it as active.
+        let stored = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        #expect(stored.status == .paused)
+        #expect(stored.effectiveStatus(asOf: wakeDay) == .active)
+
+        // Both charges that fell in the drawer have ledger rows; nothing from
+        // inside the pause does.
+        let rows = try await fixture.billingEvents.events(forSubscription: subscription.id)
+        let resumeDay = try day(2026, 9, 1)
+        #expect(rows.contains { $0.expectedDate == resumeDay })
+        #expect(rows.contains { $0.expectedDate == (try? day(2026, 10, 1)) })
+        #expect(rows.allSatisfy { $0.expectedDate >= resumeDay })
+
+        // And the next charge plans a renewal reminder, not a pause-ending one.
+        let kinds = await fixture.client.pendingRequests()
+            .compactMap { NotificationPlanIdentifier.kind(of: $0.identifier) }
+        #expect(kinds.contains(.renewal))
+        #expect(!kinds.contains(.pauseEnding))
+    }
+
     @Test("verification roll-forward: three checks missed in the drawer escalate on wake, exactly once")
     func verificationRollForward() async throws {
         let fixture = SchedulerFixture()

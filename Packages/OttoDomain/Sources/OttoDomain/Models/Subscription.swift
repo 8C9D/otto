@@ -151,8 +151,24 @@ extension Subscription {
     /// depend on the status flip having been persisted - a trial that converts while
     /// the phone is in a drawer for six weeks still bills, still materializes, and
     /// still reminds the moment anything asks.
+    ///
+    /// Pause resume is derived by the same rule (spec §5.2a, v1.6): a `.paused`
+    /// subscription past its `pauseEndsOn` IS `.active` - the vendor resumed
+    /// billing on schedule whether or not the user opened the app. Any state
+    /// whose exit is a known future date must exit by derivation; a state that
+    /// waits to be told it has ended will eventually not be told.
     public func effectiveStatus(asOf today: CalendarDay) -> SubscriptionStatus {
-        isConvertedTrial(asOf: today) ? .active : status
+        if isConvertedTrial(asOf: today) || isResumedPause(asOf: today) { return .active }
+        return status
+    }
+
+    /// True when the stored status still says `.paused` but `pauseEndsOn` has
+    /// arrived - billing has resumed on the vendor's side (spec §5.2a, v1.6).
+    /// An indefinite pause (nil `pauseEndsOn`) has no derivable resume date and
+    /// never resumes this way; it freezes the materialization watermark instead
+    /// (spec §5.3) and waits for a manual resume, which backfills from it.
+    public func isResumedPause(asOf today: CalendarDay) -> Bool {
+        status == .paused && pauseEndsOn.map { today >= $0 } ?? false
     }
 
     /// True when the stored status still says `.trial` but the conversion date has

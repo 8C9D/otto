@@ -31,12 +31,18 @@ func makeStore() throws -> (store: OttoStore, container: ModelContainer) {
 }
 
 /// A fully populated subscription so round-trips exercise every field.
+///
+/// `pauseEndsOn` is double-optional so tests can say three things: omit it for
+/// the automatic anchor+60 date a `.paused` fixture gets (full-field round-trip
+/// coverage), pass a day to pin the resume, or pass `.some(nil)` for an
+/// indefinite pause - which since spec v1.6 behaves differently from a dated one.
 func makeSubscription(
     index: Int = 0,
     status: SubscriptionStatus = .active,
     amountCents: Int = 1099,
     cycle: BillingCycle = .monthly,
     cycleStartDay: CalendarDay,
+    pauseEndsOn: CalendarDay?? = nil,
     lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     deletedAt: Date? = nil
@@ -53,7 +59,7 @@ func makeSubscription(
         cycleStartDay: cycleStartDay,
         reminderLeadDays: 3,
         sameDayReminder: true,
-        pauseEndsOn: status == .paused ? cycleStartDay.adding(days: 60) : nil,
+        pauseEndsOn: pauseEndsOn ?? (status == .paused ? cycleStartDay.adding(days: 60) : nil),
         lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: try fixtureUUID(900),
