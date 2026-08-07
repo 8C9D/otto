@@ -1,0 +1,174 @@
+import Foundation
+import OttoDomain
+import OttoRepositories
+import SwiftData
+import Testing
+@testable import OttoPersistence
+
+@Suite("Export and import against the real store (Wave 8)")
+struct DataTransferTests {
+
+    /// Seeds a store through its public save paths with every model type,
+    /// including a soft-deleted subscription and a stored watermark.
+    private func seedRichStore() async throws -> (store: OttoStore, container: ModelContainer) {
+        let (store, container) = try makeStore()
+
+        let active = try makeSubscription(
+            index: 1,
+            cycleStartDay: try day(2026, 1, 15),
+            lastMaterializedThrough: try day(2026, 9, 1),
+            trial: try makeTrialTerm(index: 501, startDate: try day(2026, 1, 1))
+        )
+        try await store.save(active)
+        let trial = try makeSubscription(
+            index: 2, status: .trial, cycleStartDay: try day(2026, 8, 1),
+            trial: try makeTrialTerm(index: 502, startDate: try day(2026, 8, 1))
+        )
+        try await store.save(trial)
+        let cancelled = try makeSubscription(index: 3, status: .cancelled, cycleStartDay: try day(2026, 2, 1))
+        try await store.save(cancelled)
+        let doomed = try makeSubscription(index: 4, cycleStartDay: try day(2026, 3, 1))
+        try await store.save(doomed)
+        try await store.save(try makeBillingEvent(index: 103, subscriptionID: doomed.id, expectedDate: try day(2026, 3, 1)))
+
+        try await store.save(try makeBillingEvent(index: 101, subscriptionID: active.id, expectedDate: try day(2026, 1, 15)))
+        try await store.save(try makeBillingEvent(index: 102, subscriptionID: active.id, expectedDate: try day(2026, 2, 15)))
+        try await store.append(try makePriceChange(index: 201, subscriptionID: active.id, effectiveDate: try day(2025, 3, 1)))
+        try await store.save(try makeCancellationRecord(
+            index: 601, subscriptionID: cancelled.id, nextChargeDateIfNotCancelled: try day(2026, 9, 1)
+        ))
+        try await store.save(try makePaymentMethod(index: 300))
+
+        // The tombstoned subscription and its cascade stay in the snapshot.
+        try await store.deleteSubscription(withID: doomed.id, at: Date(timeIntervalSince1970: 9_000))
+        return (store, container)
+    }
+
+    @Test("export, wipe, import: the restored store holds identical domain values")
+    func roundTripThroughRealStore() async throws {
+        let (source, _) = try await seedRichStore()
+        let original = try await source.completeSnapshot()
+        let file = try exportData(from: original, exportedAt: Date(timeIntervalSince1970: 10_000))
+
+        // Wipe: restore an empty snapshot, prove it is empty, then import.
+        try await source.restore(OttoDataSnapshot())
+        #expect(try await source.completeSnapshot().isEmpty)
+
+        let resolved = try resolveImport(
+            current: try await source.completeSnapshot(),
+            incoming: try importedSnapshot(from: file),
+            strategy: .replace
+        )
+        try await source.restore(resolved.snapshot)
+
+        var expected = original
+        // The one designed difference: the watermark is device state and does
+        // not travel (spec §5.3). Everything else is value-identical.
+        expected.subscriptions = original.subscriptions.map { subscription in
+            var copy = subscription
+            copy.lastMaterializedThrough = nil
+            return copy
+        }
+        #expect(try await source.completeSnapshot() == expected)
+    }
+
+    @Test("the snapshot includes tombstones - a backup without them is not a backup")
+    func snapshotIncludesTombstones() async throws {
+        let (store, _) = try await seedRichStore()
+        let snapshot = try await store.completeSnapshot()
+        #expect(snapshot.subscriptions.contains { $0.deletedAt != nil })
+        #expect(snapshot.billingEvents.contains { $0.deletedAt != nil })
+    }
+
+    @Test("a truncated or corrupted file leaves the database exactly as it was")
+    func corruptedFileChangesNothing() async throws {
+        let (store, _) = try await seedRichStore()
+        let before = try await store.completeSnapshot()
+        let file = try exportData(from: before, exportedAt: Date(timeIntervalSince1970: 10_000))
+
+        var corruptions: [Data] = []
+        // Truncations at several offsets, including a cut mid-record.
+        for fraction in [0.25, 0.5, 0.75, 0.98] {
+            corruptions.append(file.prefix(Int(Double(file.count) * fraction)))
+        }
+        // Overwrites at several offsets with bytes no JSON can contain.
+        for offset in [file.count / 5, file.count / 2, file.count - 10] {
+            var damaged = file
+            damaged.replaceSubrange(offset ..< offset + 4, with: [0xFF, 0xFE, 0x00, 0xFF])
+            corruptions.append(damaged)
+        }
+
+        for corrupted in corruptions {
+            await #expect(throws: (any Error).self) {
+                let incoming = try importedSnapshot(from: corrupted)
+                let resolved = try resolveImport(
+                    current: try await store.completeSnapshot(),
+                    incoming: incoming,
+                    strategy: .replace
+                )
+                try await store.restore(resolved.snapshot)
+            }
+            #expect(try await store.completeSnapshot() == before)
+        }
+    }
+
+    @Test("a snapshot the store cannot hold is refused before anything is touched")
+    func unholdableSnapshotRefused() async throws {
+        let (store, _) = try await seedRichStore()
+        let before = try await store.completeSnapshot()
+
+        // A child naming an absent parent. resolveImport catches this earlier;
+        // the store's refuse-first check is the last line, and it must fire
+        // BEFORE the wipe - restore deliberately has no failure path between
+        // its first mutation and the final save.
+        let poisoned = OttoDataSnapshot(billingEvents: [
+            try makeBillingEvent(index: 999, subscriptionID: try fixtureUUID(999), expectedDate: try day(2026, 1, 1))
+        ])
+
+        await #expect(throws: RepositoryError.self) { try await store.restore(poisoned) }
+        #expect(try await store.completeSnapshot() == before)
+    }
+
+    @Test("a merge import leaves the stored watermark untouched (spec §5.3)")
+    func importLeavesWatermarkAlone() async throws {
+        let (store, _) = try await seedRichStore()
+        let subscriptionID = try fixtureUUID(1)
+
+        // The file carries a newer copy of the same subscription (no watermark -
+        // the format has no field for one).
+        var newer = try makeSubscription(
+            index: 1,
+            cycleStartDay: try day(2026, 1, 15),
+            trial: try makeTrialTerm(index: 501, startDate: try day(2026, 1, 1))
+        )
+        newer.updatedAt = Date(timeIntervalSince1970: 99_999)
+        newer.notes = "edited on the other device"
+        let file = try exportData(
+            from: OttoDataSnapshot(subscriptions: [newer]),
+            exportedAt: Date(timeIntervalSince1970: 10_000)
+        )
+
+        let resolved = try resolveImport(
+            current: try await store.completeSnapshot(),
+            incoming: try importedSnapshot(from: file),
+            strategy: .merge
+        )
+        try await store.restore(resolved.snapshot)
+
+        let stored = try #require(try await store.subscription(withID: subscriptionID))
+        #expect(stored.notes == "edited on the other device")
+        #expect(stored.lastMaterializedThrough == (try day(2026, 9, 1)))
+    }
+
+    @Test("an unreadable record fails the export loudly - a backup with a silent hole is worse than none")
+    func exportRefusesUnmappableRecord() async throws {
+        let (store, container) = try makeStore()
+        try await store.save(try makeSubscription(index: 1, cycleStartDay: try day(2026, 8, 15)))
+        let context = ModelContext(container)
+        let record = try #require(try context.fetch(FetchDescriptor<StoredSubscription>()).first)
+        record.status = "hibernating"
+        try context.save()
+
+        await #expect(throws: MappingError.self) { try await store.completeSnapshot() }
+    }
+}
