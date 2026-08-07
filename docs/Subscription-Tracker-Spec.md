@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.4** — revised Aug 7 against Claude Code's Wave 4 report. Waves 0–4 complete and committed (`~/dev/otto`, 203 tests passing).
+**Status:** **v1.5** — revised Aug 7 against Claude Code's Wave 5 report. Waves 0–5 complete and committed (`~/dev/otto`, 252 tests passing).
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -282,6 +282,16 @@ On conversion, the paid sequence takes over: **anchor becomes `conversionDate`, 
 
 **Persistence is an optimisation, not the mechanism.** When the app next runs and observes a converted trial, it may write the status through and record the price transition — but **no behaviour may depend on that write having happened.** If it does, the six-weeks-in-a-drawer case fails again.
 
+#### ⚠ Derive before you mutate *(added v1.5, after this exact bug shipped in Wave 4)*
+
+Wave 4's `startCancelling` flipped the status **before** computing the verification check date. Because `billingAnchor(asOf:)` keys off the stored status, a converted-but-unflipped trial cancelled after conversion computed its watch date from the **trial-start** anchor rather than the **conversion** anchor.
+
+Concretely: a trial starting Jul 1, converting Jul 31, monthly, cancelled Aug 5 would have watched **Sep 1 instead of Aug 31** — the app's differentiating feature, pointed at the wrong day, in the flow it exists for.
+
+> **Any operation that both mutates status and derives from status must derive first, then mutate.** Where practical, derive from data that survives the mutation — the fix here reads the trial *term*, which the status overwrite cannot destroy.
+
+The derived-status design in §5.2a is correct and is not what failed. **What failed was ordering inside a single operation** — which is a category of bug that pure functions cannot prevent, because both the read and the write are individually correct.
+
 #### Two consequences
 
 - **Otto must announce the conversion.** A notification on `conversionDate`: *"Your FoodApp trial converted today. You're now being charged $11/month."* Not a reminder to act — a statement of fact about money that started moving. Wave 4 owns it; it is P1.
@@ -302,6 +312,7 @@ Aggregate rather than per-record because **Wave 6 will make partially-synced rec
 
 | Invariant | Why |
 |---|---|
+| A `TrialTerm` on a **non-`.trial`** subscription is **history, not a toggle** — never derived from, never rebuilt from, and never deleted by an edit *(added v1.5)* | Wave 5 found Add/Edit deriving its trial toggle from `status == .trial`, so **editing the price of a confirmed-converted subscription silently rebuilt it with `trial: nil`** — destroying exactly the *"converted and noticed late"* record that §7.3's zombie report depends on |
 | A `.trial` subscription **must** have a `TrialTerm` | Without one there is no `conversionDate`, so §5.2a cannot compute anything. Wave 3 found three separate sites no-op'ing on this |
 | A `.cancelled` or `.cancellationPending` subscription **must** have a `CancellationRecord` | Otherwise it is unwatched, which is Failure B with extra steps |
 | `cycleStartDay` is **never mutated in place** | See below |
@@ -331,7 +342,15 @@ Every expected charge is a row. This is the backbone of both verification and re
 
 **Which window governs — the reminder's, not the charge's** *(pinned in v1.2; v1.1 left the two unreconciled)*. A reminder fires `reminderLeadDays` *before* its charge, so a reminder inside the horizon can belong to a charge that falls just outside it. Since the entire reason a row exists is to carry that reminder's state, **the row must exist whenever the reminder does.**
 
-> Materialize every charge date in `[today, today + horizonDays + maxReminderLeadDays]`.
+> Materialize every charge date in `[lastMaterializedThrough, today + horizonDays + maxReminderLeadDays]`.
+
+**⚠ The window must reach backwards, and v1.4's did not** *(fixed in v1.5 — the third time the founding scenario has slipped through a different mechanism)*. v1.4 materialized from `today` forward. **A trial that converts while the app is closed has its conversion date behind `today` by the time any pass runs** — so the single most important charge in the product never gets a ledger row, and therefore gets no verification and no price-mismatch coverage, in precisely the phone-in-a-drawer case the app exists for.
+
+**Rule: `Subscription.lastMaterializedThrough: CalendarDay` is a watermark**, initialised to the anchor (or `createdAt`, whichever is later) and advanced only after a successful pass. Every charge date between the watermark and the horizon materializes, so **no charge date can pass unobserved between scheduler runs**, however long the gap.
+
+The watermark also bounds the work: a Mode B subscription entered today does not backfill years of history it never had rows for, because the watermark starts at entry.
+
+*Noted for the pattern file:* §5.2a fixed the founding scenario in **status derivation**, v1.5 fixes it in the **ledger**. Each fix was correct and each left a different mechanism through which the same failure could recur. **Every new subsystem should be tested against the phone-in-a-drawer case explicitly**, not assumed to inherit the property.
 
 The charge window is therefore slightly wider than the reminder horizon, by the largest lead time in use. Deriving it from the charge window instead leaves the outermost reminders with no row to attach to.
 
@@ -373,6 +392,7 @@ The justification is that a row only earns storage once there is **user-facing s
 | `subscriptionID` | UUID |
 | `markedCancelledAt` | Date | UTC instant — records *when the user acted*, and is **never** used for date arithmetic (see below) |
 | `nextChargeDateIfNotCancelled` | CalendarDay | **Non-optional. Renamed and made required in v1.1.** |
+| `expectedChargeAmountCents` | Int | ⭐ **Added v1.5.** The date is stored at cancellation because it is unrecoverable afterwards — **the amount has exactly the same property and was not stored**, leaving the dispute summary to infer it heuristically (by checking whether the anchor equals the conversion date). Correct for every flow-produced state, defeatable by a hand-edited price. **The dispute summary is the deliverable that ends at a bank; nothing in it should be a heuristic.** Computed once, at cancellation, like the date |
 | `verificationState` | `.pending` `.verifiedStopped` `.stillCharging` `.needsManualReview` |
 | `unansweredCheckCount` | Int, default 0 | **Added v1.3** — §5.4's three-cycle cap needs somewhere to count. Wave 5 lands before CloudKit, so this is still a field addition rather than a migration |
 | `verifiedAt` | Date? |
@@ -382,6 +402,11 @@ The justification is that a row only earns storage once there is **user-facing s
 
 The rename matters too: *"expected final charge"* is ambiguous — some vendors bill once more, most don't. The field's actual job is to name **the date a charge would land if the cancellation silently failed**, which is exactly the verification trigger. `nextChargeDateIfNotCancelled` says that.
 
+**Cancelling a *paused* subscription** *(specified in v1.5; §5.4 and §5.1 did not compose)*. The check date comes from the anchor sequence, which ignores `pauseEndsOn` — so the verification could fire on a date the vendor would never have charged, and a "no charge arrived" answer would prove nothing.
+
+- **`pauseEndsOn` set:** the next would-be charge is the first billing occurrence **on or after `pauseEndsOn`**.
+- **`pauseEndsOn` nil** (indefinite pause): there is no determinate date. **Do not guess** — defer the check and surface the subscription in *needs review* so the user supplies a resume date. A verification answered against a fabricated date is worse than no verification, because it produces false confidence in exactly the place the product promises certainty.
+
 **A cancelled subscription is not archived until verification passes.** It stays in a "Watching" state and the app checks back on the next date a charge would have landed. If the user reports a charge did arrive, the record flips to `.stillCharging` and the app surfaces everything needed for a dispute: cancellation date, confirmation note, the charge date and amount.
 
 **When a verification check goes unanswered** *(specified in v1.2; v1.1 was silent, and §6.2's catch-up rule covers reminders-before-a-billing-date, not this)*. The user opens the app a week after the check date and the state is still `.pending`.
@@ -390,7 +415,7 @@ The rename matters too: *"expected final charge"* is ambiguous — some vendors 
 
 ### 5.5 `PriceChange` and `PaymentMethod`
 
-`PriceChange`: `id`, `subscriptionID`, `effectiveDate`, `oldAmountCents`, `newAmountCents`, `source` (`.userEdit` / `.chargeMismatch`), `note`, plus the §5.0 quartet. *(v1.3: `recordedAt` **dropped** — it duplicated §5.0's `createdAt`. Two fields meaning almost the same thing is how they drift apart.)* Editing a price never overwrites history — it appends. This is what lets Insights show "Netflix has gone up 34% in three years."
+`PriceChange`: `id`, `subscriptionID`, `effectiveDate`, `oldAmountCents`, `newAmountCents`, `source` (`.userEdit` / `.chargeMismatch` / `.trialConversion` — the third added in v1.5, written when a trial's confirm flow appends the trial→paid price transition), `note`, plus the §5.0 quartet. *(v1.3: `recordedAt` **dropped** — it duplicated §5.0's `createdAt`. Two fields meaning almost the same thing is how they drift apart.)* Editing a price never overwrites history — it appends. This is what lets Insights show "Netflix has gone up 34% in three years."
 
 `PaymentMethod`: `id`, `label` ("Bank Mastercard ••4821"), `last4`, `issuer`, `expiryMonth`, `expiryYear`, `isDefault`. Card-expiry warnings fall out of this for free, and the second user runs multiple cards so it earns its place in v1.
 
@@ -479,7 +504,18 @@ The escalation exists because **a notification is not persistent**. Swipe it awa
 
 ### 6.4 Notification actions
 
-Registered via `UNNotificationCategory`. Tap opens the subscription detail. Three buttons:
+Registered via `UNNotificationCategory`. Tap opens the subscription detail.
+
+**There are two categories, not one** *(corrected in v1.5 — v1.4 described "three buttons" and the verification flow needs its own pair)*:
+
+| Category | Actions |
+|---|---|
+| Reminder | **Keeping it** · **I'm cancelling** · **Remind me later** |
+| Verification | **Yes, it stopped** · **No, I was charged** |
+
+The verification pair is answerable from the notification itself and from Detail, and remains answerable from `.needsManualReview` — the persistent card exists precisely to be answered. A `.stillCharging` record also offers **"Resolved — charges stopped"**, because disputes end.
+
+The reminder category's three buttons:
 
 **⚠ v1.3 contradicted itself here and v1.4 resolves it.** It required both that *"I'm cancelling"* open the stored cancellation URL **and** that all three actions work from the background without launching the UI. **iOS cannot open a URL from a background action handler**, so the two requirements were incompatible.
 
@@ -575,7 +611,7 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **2** ✅ | SwiftData models, mapping layer, repository protocols + implementations, as a second SPM package (`Packages/OttoPersistence`) so the layer boundary is compiler-enforced. Local only — **CloudKit explicitly `.none`** | ✅ **Done** — commits `fcdcf2d` / `92879f9` / `634e209` / `4b9db37`; **92 tests passing** (51 domain + 41 persistence), incl. a mutation-tested CloudKit-compatibility assertion |
 | **3** ✅ | Store layer (`Packages/OttoUI`, `@MainActor @Observable`, protocol-dependent) then Today / Subscriptions / Add-Edit / Detail. Native components only | ✅ **Done** — commits `9982746`–`909777e`; **156 tests**; layering verified by a failing `import OttoPersistence`. ⚠ Hands-on add-a-subscription pass still unsigned-off by the owner |
 | **4** ✅ | Notification engine as a layer-4 `OttoServices` target behind a `NotificationClient` protocol, so the whole engine tests host-side | ✅ **Done** — commits `768525c`–`29811ca`; **203 tests**. Both ⛔ gates pass, incl. the derivation-path test (conversion announcement fires with stored status still `.trial`). ⚠ `BGAppRefreshTask` **not yet observed to run** — by this spec's own standard it does not exist until it is |
-| **5** | Trial flows, cancellation flow, verification flow | ⛔ End-to-end trial test on device with a compressed timeline |
+| **5** ✅ | Trial, cancellation and verification flows, behind one `SubscriptionFlowService` actor so both entry points share a single state-change path | ✅ **Code done** — commits `30e2e99`–`cb3486f`; **252 tests**. ⛔ **Gate NOT met** — the compressed-timeline trial test on a real device is still outstanding |
 | **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall |
 | **7** | Insights, payment methods, zombie detection | Numbers reconcile against a hand-computed fixture |
 | **8** | Export/import (JSON + CSV), settings, accessibility, Dynamic Type, VoiceOver | Export → wipe → import restores exactly |
@@ -613,6 +649,15 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.5 — revised against the Wave 5 report)** — Wave 5 shipped: **252 tests**, both cancellation entry points routed through one `SubscriptionFlowService` actor so identical state is guaranteed *by construction* rather than by test. Six findings, one of which is about process rather than code:
+  - **⚠⚠ Wave 4's committed HEAD did not compile.** A commit changed `NotificationPlanIdentifier.snooze` without updating a domain test that called it, so **"203 tests passing" was not reproducible from the commit.** Not dishonesty — the suite passed before a final refactor — but it means a green report is not evidence about the artifact. **This is the concrete cost of five waves without CI**, and it converts the remote-and-CI item from hygiene into the fix for a demonstrated failure. Repaired by updating the call and *adding* an assertion rather than deleting the test.
+  - **⚠ A real check-date bug shipped in Wave 4** and was caught here: `startCancelling` flipped the status **before** computing the check date, and `billingAnchor(asOf:)` keys off stored status — so a converted-but-unflipped trial cancelled after conversion watched **Sep 1 instead of Aug 31**. The differentiating feature, aimed at the wrong day. Generalized into a spec rule: **derive before you mutate**, and prefer deriving from data that survives the mutation. Worth noting that §5.2a's derived-status design was *not* what failed — **ordering inside a single operation is a bug class pure functions cannot prevent**, because the read and the write are each individually correct.
+  - **⚠ The founding scenario slipped through a third mechanism.** §5.3 materialized from `today` forward, so a trial converting while the app is closed has its conversion date **behind** `today` on the first pass — the most important charge in the product, with no ledger row, no verification, no price-mismatch coverage, in exactly the phone-in-a-drawer case. Fixed with a **`lastMaterializedThrough` watermark** so no charge date can pass unobserved between runs. **Pattern now explicit: §5.2a fixed this in status derivation, v1.5 in the ledger — every new subsystem must be tested against the phone-in-a-drawer case rather than assumed to inherit it.**
+  - **The dispute amount was a heuristic.** The check *date* is stored at cancellation because it is unrecoverable later; the *amount* has the same property and wasn't. `expectedChargeAmountCents` added — **the dispute summary is the artifact that ends at a bank, and nothing in it should be inferred.**
+  - **Add/Edit could silently delete a confirmed conversion's `TrialTerm`**, because the form derived its trial toggle from `status == .trial`. That record is what §7.3's zombie report needs. New invariant: a `TrialTerm` on a non-`.trial` subscription is **history, not a toggle**.
+  - **Cancelling a paused subscription** now specified: check date is the first occurrence on or after `pauseEndsOn`; with no resume date, **defer and ask** rather than guess — a verification answered against a fabricated date produces false confidence exactly where the product promises certainty.
+  - **Folded in:** `PriceChange.Source.trialConversion`; verification as its own notification category with two actions, since v1.4's "three buttons" didn't describe them.
 
 - **2026-08-07 (v1.4 — revised against the Wave 4 report)** — Wave 4 shipped: **203 tests**, engine behind a `NotificationClient` protocol so it tests host-side rather than needing a device. Both gates pass, including the one that matters — the conversion announcement firing with the stored status never flipped, which proves §5.2a's derivation path rather than the persisted one. One adjudication and eight findings:
   - **⭐ `acknowledgedAt` did not exist, so two promised behaviours were unimplementable.** §6.4's *"Keeping it"* and §6.3's *"remainder is cancelled on acknowledgement"* both named a state with no field behind it — and because rescheduling is cancel-all-then-replan, **the silenced reminders get replanned right back in the same cycle.** Wave 4 knowingly under-delivered here rather than inventing a schema. Field added; **must land before Wave 6.**
