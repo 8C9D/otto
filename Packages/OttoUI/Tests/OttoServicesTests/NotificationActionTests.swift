@@ -84,7 +84,7 @@ struct NotificationActionTests {
         ))
         let updated = try #require(try await subscriptions.subscription(withID: subscription.id))
         #expect(updated.storedStatus == .cancellationPending)
-        let record = try #require(try await cancellations.record(forSubscription: subscription.id))
+        let record = try #require(try await cancellations.openEpisode(forSubscription: subscription.id))
         #expect(record.verificationState == .pending)
         // The check date was computed once, now, from the effective anchor: the
         // trial's would-be conversion charge on Aug 10.
@@ -101,7 +101,7 @@ struct NotificationActionTests {
             now: now, today: today, timeZone: torontoZone
         )
         #expect(again == followUp)
-        #expect(try await cancellations.record(forSubscription: subscription.id)?.id == record.id)
+        #expect(try await cancellations.openEpisode(forSubscription: subscription.id)?.id == record.id)
         #expect(await subscriptions.savedValues.filter { $0.id == subscription.id }.count == 1)
     }
 

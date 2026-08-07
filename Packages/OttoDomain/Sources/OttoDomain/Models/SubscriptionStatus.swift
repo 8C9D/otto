@@ -6,7 +6,7 @@
 /// so billing cannot silently restart unwatched.
 ///
 /// `cancelled` is not terminal: a cancelled subscription stays under verification
-/// until its `CancellationRecord` confirms the charges actually stopped (spec §5.4);
+/// until its `CancellationEpisode` confirms the charges actually stopped (spec §5.4);
 /// only then does it become `archived`.
 ///
 /// Raw values are stable strings, never ordinals, so reordering cases can never

@@ -15,8 +15,9 @@ public enum ExportFormatError: Error, Hashable, LocalizedError {
     /// A child row names a subscription that exists neither in the file nor in
     /// the database it is being imported into.
     case danglingReference(entity: String, subscriptionID: UUID)
-    /// Two records claim the same subscription's single cancellation slot
-    /// inside one file - the storage model holds exactly one.
+    /// Two OPEN cancellation episodes claim the same subscription inside one
+    /// file - at most one episode is current (spec §5.3a). Closed episodes can
+    /// pile up freely; that is what an episode table is for.
     case duplicateCancellation(subscriptionID: UUID)
 
     // Plain strings, not String(localized:) - layer 1 stays framework-free and
@@ -47,15 +48,16 @@ public enum ExportFormatError: Error, Hashable, LocalizedError {
             """
         case .duplicateCancellation(let subscriptionID):
             return """
-            The export file is damaged: it contains two cancellation records for \
-            one subscription (\(subscriptionID.uuidString)). Nothing was changed.
+            The export file is damaged: it contains two open cancellation \
+            episodes for one subscription (\(subscriptionID.uuidString)). \
+            Nothing was changed.
             """
         }
     }
 }
 
-/// Encodes a snapshot as format v1 bytes: pretty-printed and key-sorted, so the
-/// file is inspectable by eye and identical databases produce identical bytes.
+/// Encodes a snapshot as current-format bytes: pretty-printed and key-sorted, so
+/// the file is inspectable by eye and identical databases produce identical bytes.
 public func exportData(from snapshot: OttoDataSnapshot, exportedAt: Date) throws -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -84,7 +86,10 @@ public func decodeExport(_ data: Data) throws -> OttoExport {
         )
     }
     do {
-        return try decoder.decode(OttoExport.self, from: data)
+        let export = try decoder.decode(OttoExport.self, from: data)
+        // A v1 file is upgraded ONCE, here, with the documented defaults
+        // (see ExportFormat.swift's header); v2 data round-trips verbatim.
+        return probe.formatVersion == 1 ? export.upgradedFromV1() : export
     } catch let error as DecodingError {
         throw ExportFormatError.unreadable(details: describe(error))
     }

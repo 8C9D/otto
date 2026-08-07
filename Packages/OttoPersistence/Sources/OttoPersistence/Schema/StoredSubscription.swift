@@ -1,11 +1,15 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV1 {
+extension OttoSchemaV2 {
     /// Persistence record for `Subscription` (spec §5.1). Fields the domain requires
     /// are stored optional and their absence is a mapping error; only fields with a
     /// true domain default carry a storage default, so a partially synced record can
     /// never silently invent data.
+    ///
+    /// V2 (spec §5.3a): the `pausedOn`/`pauseEndsOn` pair became the one-to-many
+    /// `pauseEpisodes`, and the one-to-one `cancellationRecord` slot became the
+    /// one-to-many `cancellationEpisodes`.
     @Model
     final class StoredSubscription {
         var id: UUID?
@@ -21,18 +25,11 @@ extension OttoSchemaV1 {
         var cycleStartDay: Int?
         var reminderLeadDays: Int?
         var sameDayReminder: Bool = false
-        /// yyyymmdd
-        var pauseEndsOn: Int?
-        /// yyyymmdd - when the pause began (Wave 7): the freeze point for §5.1's
-        /// paused-spend price. Optional like every stored field; nil on rows
-        /// paused before the field existed, and Insights falls back to the
-        /// current price for those.
-        var pausedOn: Int?
         /// yyyymmdd - the §5.3 materialization watermark (added v1.5). Optional
         /// like every stored field, which doubles as the migration: pre-v1.5 rows
         /// read nil, materialize from today once, and carry a watermark after
-        /// their first pass. An additive optional is lightweight-migratable, which
-        /// is why this lands before Wave 6 turns on CloudKit.
+        /// their first pass. Device-local; Wave 6's first schema act is moving it
+        /// into the local-only configuration before CloudKit sees the schema.
         var lastMaterializedThrough: Int?
         var paymentMethodID: UUID?
         var cancellationURL: String?
@@ -50,8 +47,11 @@ extension OttoSchemaV1 {
         @Relationship(deleteRule: .cascade, inverse: \StoredBillingEvent.subscription)
         var billingEvents: [StoredBillingEvent]?
 
-        @Relationship(deleteRule: .cascade, inverse: \StoredCancellationRecord.subscription)
-        var cancellationRecord: StoredCancellationRecord?
+        @Relationship(deleteRule: .cascade, inverse: \StoredCancellationEpisode.subscription)
+        var cancellationEpisodes: [StoredCancellationEpisode]?
+
+        @Relationship(deleteRule: .cascade, inverse: \StoredPauseEpisode.subscription)
+        var pauseEpisodes: [StoredPauseEpisode]?
 
         @Relationship(deleteRule: .cascade, inverse: \StoredPriceChange.subscription)
         var priceChanges: [StoredPriceChange]?

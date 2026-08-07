@@ -85,7 +85,7 @@ public struct TodayOverview: Hashable, Sendable {
 ///   exists, keyed by subscription id - it drives the verification entries.
 public func todayOverview(
     subscriptions: [Subscription],
-    cancellations: [UUID: CancellationRecord],
+    cancellations: [UUID: CancellationEpisode],
     from today: CalendarDay
 ) -> TodayOverview {
     let entries = subscriptions
@@ -109,7 +109,7 @@ public func todayOverview(
 /// entry's date, and two derivations of the same fact would eventually disagree.
 public func todayEntry(
     for subscription: Subscription,
-    cancellation: CancellationRecord?,
+    cancellation: CancellationEpisode?,
     from today: CalendarDay
 ) -> TodayEntry? {
     // Conversion is derived, never awaited (spec §5.2a): a converted trial is
@@ -173,7 +173,7 @@ private func trialEntry(for subscription: Subscription, today: CalendarDay) -> T
 
 private func verificationEntry(
     for subscription: Subscription,
-    cancellation: CancellationRecord?,
+    cancellation: CancellationEpisode?,
     today: CalendarDay
 ) -> TodayEntry? {
     guard let record = cancellation, record.deletedAt == nil else {

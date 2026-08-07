@@ -6,10 +6,10 @@ import OttoRepositories
 /// URL the UI opens (Otto never cancels anything itself - it opens the page and
 /// records what the user tells it).
 public struct CancellationStart: Hashable, Sendable {
-    public let record: CancellationRecord
+    public let record: CancellationEpisode
     public let cancellationURL: URL?
 
-    public init(record: CancellationRecord, cancellationURL: URL?) {
+    public init(record: CancellationEpisode, cancellationURL: URL?) {
         self.record = record
         self.cancellationURL = cancellationURL
     }
@@ -151,14 +151,14 @@ public actor SubscriptionFlowService {
 
     // MARK: - Pausing and resuming
 
-    /// Pauses billing (spec §5.1): status `.paused`, the freeze point recorded
-    /// (`pausedOn` - the day §5.1's paused-spend price freezes at), and the
-    /// resume date stored when the vendor gave one. Only an effectively active
-    /// subscription pauses - an unconverted trial has nothing to pause, and the
-    /// §5.2a derive-before-you-mutate rule means a converted-unflipped trial
-    /// gets its conversion written through FIRST, so the paused record carries
-    /// the paid anchor and amount rather than the trial-era ones the status
-    /// overwrite would strand.
+    /// Pauses billing (spec §5.1, §5.3a): status `.paused` and a new open
+    /// `PauseEpisode` opened - its start is the freeze point §7.2's paused-spend
+    /// price pins to. Only an effectively active subscription pauses - an
+    /// unconverted trial has nothing to pause, and the §5.2a
+    /// derive-before-you-mutate rule means a converted-unflipped trial gets its
+    /// conversion written through FIRST, so the paused record carries the paid
+    /// anchor and amount rather than the trial-era ones the status overwrite
+    /// would strand.
     public func pause(
         subscriptionID: UUID,
         resumesOn: CalendarDay?,
@@ -173,34 +173,43 @@ public actor SubscriptionFlowService {
             guard let flipped = try await subscriptions.subscription(withID: subscriptionID) else { return }
             subscription = flipped
         }
-        guard let paused = subscription.pausing(on: today, until: resumesOn, at: now) else { return }
+        guard let paused = subscription.pausing(
+            on: today, until: resumesOn, episodeID: UUID(), at: now
+        ) else { return }
         try await subscriptions.save(paused)
     }
 
-    /// Resumes billing: status `.active`, both pause fields cleared. Also the
-    /// manual path out of an indefinite pause - the frozen watermark then
-    /// backfills the gap on the next scheduler pass (spec §5.3, v1.6). Accepts
-    /// a derived-resumed pause too: persisting what the derivation already
-    /// decided is an optimisation, never the mechanism (spec §5.2a).
-    public func resume(subscriptionID: UUID, now: Date) async throws {
+    /// Resumes billing: status `.active`, and the open episode closed - never
+    /// cleared (spec §5.3a: exiting writes an end date). Also the manual path
+    /// out of an indefinite pause - the frozen watermark then backfills the gap
+    /// on the next scheduler pass (spec §5.3, v1.6). Accepts a derived-resumed
+    /// pause too: persisting what the derivation already decided is an
+    /// optimisation, never the mechanism (spec §5.2a).
+    public func resume(subscriptionID: UUID, now: Date, today: CalendarDay) async throws {
         guard let subscription = try await subscriptions.subscription(withID: subscriptionID),
-              let resumed = subscription.resuming(at: now)
+              let resumed = subscription.resuming(on: today, at: now)
         else { return }
         try await subscriptions.save(resumed)
     }
 
     // MARK: - The cancellation flow
 
-    /// Marks the subscription cancelling and creates the watching record
-    /// (spec §5.4): status to `.cancellationPending`, the check date computed
-    /// exactly once from the trial-aware would-be sequence, the evidence captured
-    /// if offered. Returns what the UI needs - the record and the stored
-    /// cancellation URL - or nil when the subscription no longer exists.
+    /// Marks the subscription cancelling and opens the watching episode
+    /// (spec §5.4, §5.3a): status to `.cancellationPending`, the check date and
+    /// amount computed exactly once from the pre-mutation subscription
+    /// (`openingCancellationEpisode` - §5.2a's derive-before-you-mutate), the
+    /// interrupted status recorded for the un-cancel, the evidence captured if
+    /// offered. Returns what the UI needs - the episode and the stored
+    /// cancellation URL - or nil when the subscription no longer exists or its
+    /// lifecycle is already past cancellation.
     ///
-    /// Order matters for crash-safety: the record is created BEFORE the status
-    /// flips, because `.cancellationPending` without a record is the §5.2b
-    /// invariant violation, while a record beside a still-active subscription is
-    /// merely dormant. Either interruption point heals on re-run.
+    /// Order matters for crash-safety: the episode is opened BEFORE the status
+    /// flips, because `.cancellationPending` without an episode is the §5.2b
+    /// invariant violation, while an open episode beside a still-active
+    /// subscription is merely dormant. Either interruption point heals on
+    /// re-run - including the mirror-image interruption, an un-cancel killed
+    /// between closing its episode and restoring the status, which this flow
+    /// finishes first so the new episode derives from the true state.
     public func startCancellation(
         subscriptionID: UUID,
         evidenceNote: String? = nil,
@@ -212,47 +221,82 @@ public actor SubscriptionFlowService {
         }
         let url = subscription.cancellationURL
 
-        var record: CancellationRecord
-        if let existing = try await cancellations.record(forSubscription: subscriptionID) {
-            record = existing
+        var episode: CancellationEpisode
+        if let existing = try await cancellations.openEpisode(forSubscription: subscriptionID) {
+            episode = existing
             // Redelivery never blanks or overwrites captured evidence; the UI's
             // deliberate edits go through updateCancellationEvidence.
-            if let evidenceNote, record.evidenceNote == nil {
-                record.evidenceNote = evidenceNote
-                record.updatedAt = now
-                try await cancellations.save(record)
+            if let evidenceNote, episode.evidenceNote == nil {
+                episode.evidenceNote = evidenceNote
+                episode.updatedAt = now
+                try await cancellations.save(episode)
             }
         } else {
-            // Date and amount are both derived here, from the PRE-mutation
-            // subscription (§5.2a v1.5: derive before you mutate), because both
-            // are unrecoverable later - the amount's only other home is the
-            // price field a later edit overwrites (spec §5.4, v1.5).
-            //
-            // Cancelling an INDEFINITELY paused subscription yields no date at
-            // all (spec §5.4, v1.5): the check is deferred, never fabricated -
-            // the record waits in .awaitingResumeDate until the user supplies
-            // the resume date through supplyPausedResumeDate.
-            let checkDate = verificationCheckDate(for: subscription, asOf: today)
-            record = CancellationRecord(
-                id: UUID(),
-                subscriptionID: subscriptionID,
-                markedCancelledAt: now,
-                nextChargeDateIfNotCancelled: checkDate,
-                expectedChargeAmountCents: checkDate.map {
-                    wouldBeChargeAmountCents(on: $0, for: subscription)
-                },
-                verificationState: checkDate == nil ? .awaitingResumeDate : .pending,
-                evidenceNote: evidenceNote,
-                createdAt: now,
-                updatedAt: now
-            )
-            try await cancellations.save(record)
+            if subscription.effectiveStatus(asOf: today) == .cancellationPending
+                || subscription.effectiveStatus(asOf: today) == .cancelled {
+                // Cancelling-with-no-open-episode is an un-cancel that died
+                // between its two writes: complete the restore, then cancel
+                // from the restored truth.
+                let lastAbandoned = try await cancellations.episodes(forSubscription: subscriptionID)
+                    .first { $0.outcome == .abandoned }
+                guard let restored = subscription.abandoningCancellation(
+                    restoringTo: lastAbandoned?.statusAtStart, at: now
+                ) else { return nil }
+                try await subscriptions.save(restored)
+                subscription = restored
+            }
+            guard let opened = subscription.openingCancellationEpisode(
+                id: UUID(), evidenceNote: evidenceNote, asOf: today, at: now
+            ) else { return nil }
+            episode = opened
+            try await cancellations.save(episode)
         }
 
         if let pending = subscription.markingCancellationPending(at: now) {
             try await subscriptions.save(pending)
         }
-        return CancellationStart(record: record, cancellationURL: url)
+        return CancellationStart(record: episode, cancellationURL: url)
+    }
+
+    /// The un-cancel (spec §5.4, §5.3a): the open episode closes with
+    /// `.abandoned` - never deleted, "I thought I'd cancelled this and hadn't"
+    /// is exactly the data this product is about - and the subscription
+    /// returns to the status the cancellation interrupted.
+    ///
+    /// Episode first, then the status restore, so a kill between the two heals
+    /// on re-run (the else-branch finds the just-closed episode). The
+    /// watermark rewinds to the day before the watched charge date when it has
+    /// moved past it (spec §5.3, v1.7's rewind rule): un-cancelling asserts
+    /// the vendor was charging all along, so the dates the watch covered must
+    /// materialize retroactively. New episodes freeze the watermark for their
+    /// whole life (the materializer skips cancellation states), so the rewind
+    /// only really moves for data migrated from before the freeze existed.
+    public func abandonCancellation(
+        subscriptionID: UUID,
+        now: Date,
+        today: CalendarDay
+    ) async throws {
+        guard let subscription = try await subscriptions.subscription(withID: subscriptionID) else { return }
+        let reference: CancellationEpisode?
+        if let open = try await cancellations.openEpisode(forSubscription: subscriptionID),
+           let closed = open.abandoning(at: now) {
+            try await cancellations.save(closed)
+            reference = closed
+        } else {
+            reference = try await cancellations.episodes(forSubscription: subscriptionID)
+                .first { $0.outcome == .abandoned }
+        }
+        guard let reference,
+              var restored = subscription.abandoningCancellation(
+                  restoringTo: reference.statusAtStart, at: now
+              )
+        else { return }
+        if let watched = reference.nextChargeDateIfNotCancelled,
+           let watermark = restored.lastMaterializedThrough,
+           watched <= watermark {
+            restored.lastMaterializedThrough = watched.adding(days: -1)
+        }
+        try await subscriptions.save(restored)
     }
 
     /// The user supplied the resume date a deferred verification was waiting on
@@ -266,7 +310,7 @@ public actor SubscriptionFlowService {
         now: Date
     ) async throws {
         guard let subscription = try await subscriptions.subscription(withID: subscriptionID),
-              let record = try await cancellations.record(forSubscription: subscriptionID)
+              let record = try await cancellations.openEpisode(forSubscription: subscriptionID)
         else { return }
         let supplied = record.supplyingResumeDate(resumeDate, for: subscription, at: now)
         if supplied != record {
@@ -282,7 +326,7 @@ public actor SubscriptionFlowService {
         note: String?,
         now: Date
     ) async throws {
-        guard var record = try await cancellations.record(forSubscription: subscriptionID) else { return }
+        guard var record = try await cancellations.openEpisode(forSubscription: subscriptionID) else { return }
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         let newValue = (trimmed?.isEmpty ?? true) ? nil : trimmed
         guard record.evidenceNote != newValue else { return }
@@ -309,7 +353,7 @@ public actor SubscriptionFlowService {
         today: CalendarDay
     ) async throws -> DisputeSummary? {
         guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
-              let record = try await cancellations.record(forSubscription: subscriptionID),
+              let record = try await cancellations.openEpisode(forSubscription: subscriptionID),
               // A deferred check has never watched a date, so there is nothing
               // to answer - and the yes-path must not archive an unverified
               // cancellation (spec §5.4: not archived until verification passes).

@@ -24,7 +24,7 @@ struct VerificationFlowTests {
             index: 1, status: .cancelled, cycleStartDay: try day(2026, 1, 15)
         )
         await fixture.subscriptions.seed([subscription])
-        await fixture.cancellations.seed([CancellationRecord(
+        await fixture.cancellations.seed([CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: subscription.id,
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),
@@ -51,9 +51,14 @@ struct VerificationFlowTests {
             subscriptionID: subscription.id, chargesStopped: true, now: now, today: today
         )
         #expect(summary == nil)
-        let record = try await fixture.cancellations.record(forSubscription: subscription.id)
+        // Verification passing is also the episode's end (spec §5.3a): it is
+        // closed now, so the open-episode read is empty and history holds it.
+        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id) == nil)
+        let record = try await fixture.cancellations.episodes(forSubscription: subscription.id).first
         #expect(record?.verificationState == .verifiedStopped)
         #expect(record?.verifiedAt == now)
+        #expect(record?.endedAt == now)
+        #expect(record?.outcome == .verifiedStopped)
         #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .archived)
 
         // Redelivery: same state, first instant kept.
@@ -61,7 +66,7 @@ struct VerificationFlowTests {
             subscriptionID: subscription.id, chargesStopped: true,
             now: now.addingTimeInterval(600), today: today
         )
-        #expect(try await fixture.cancellations.record(forSubscription: subscription.id) == record)
+        #expect(try await fixture.cancellations.episodes(forSubscription: subscription.id).first == record)
 
         // An archived subscription plans nothing and its rows are invalidated on
         // the next pass (spec §5.3, v1.4).
@@ -85,7 +90,7 @@ struct VerificationFlowTests {
         #expect(summary.chargeAmountCents == subscription.amountCents)
         #expect(summary.currencyCode == "CAD")
 
-        let record = try await fixture.cancellations.record(forSubscription: subscription.id)
+        let record = try await fixture.cancellations.openEpisode(forSubscription: subscription.id)
         #expect(record?.verificationState == .stillCharging)
         // Not archived: the money did NOT stop, so the lifecycle is not over.
         #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .cancelled)
@@ -168,7 +173,7 @@ struct RollForwardSchedulingTests {
             index: 1, status: .cancelled, cycleStartDay: try day(2026, 1, 15)
         )
         await fixture.subscriptions.seed([subscription])
-        await fixture.cancellations.seed([CancellationRecord(
+        await fixture.cancellations.seed([CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: subscription.id,
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),
@@ -186,7 +191,7 @@ struct RollForwardSchedulingTests {
         _ = try await fixture.scheduler.reschedule(
             now: now, today: try day(2026, 8, 20), timeZone: torontoZone
         )
-        let rolled = try #require(try await fixture.cancellations.record(forSubscription: subscription.id))
+        let rolled = try #require(try await fixture.cancellations.openEpisode(forSubscription: subscription.id))
         #expect(rolled.unansweredCheckCount == 1)
         #expect(rolled.nextChargeDateIfNotCancelled == (try day(2026, 9, 15)))
         let pending = await fixture.client.pendingRequests()
@@ -202,7 +207,7 @@ struct RollForwardSchedulingTests {
             index: 1, status: .cancelled, cycleStartDay: try day(2026, 1, 15)
         )
         await fixture.subscriptions.seed([subscription])
-        await fixture.cancellations.seed([CancellationRecord(
+        await fixture.cancellations.seed([CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: subscription.id,
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),
@@ -222,7 +227,7 @@ struct RollForwardSchedulingTests {
             now: now, today: try day(2026, 12, 20), timeZone: torontoZone
         )
 
-        let escalated = try #require(try await fixture.cancellations.record(forSubscription: subscription.id))
+        let escalated = try #require(try await fixture.cancellations.openEpisode(forSubscription: subscription.id))
         #expect(escalated.unansweredCheckCount == 3)
         #expect(escalated.verificationState == .needsManualReview)
         #expect(await fixture.client.pendingRequests().isEmpty)
@@ -232,7 +237,7 @@ struct RollForwardSchedulingTests {
         _ = try await fixture.scheduler.reschedule(
             now: now, today: try day(2026, 12, 21), timeZone: torontoZone
         )
-        #expect(try await fixture.cancellations.record(forSubscription: subscription.id) == escalated)
+        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id) == escalated)
         #expect(await fixture.client.pendingRequests().isEmpty)
     }
 }

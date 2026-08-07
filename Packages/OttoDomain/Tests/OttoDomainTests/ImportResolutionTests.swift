@@ -95,31 +95,45 @@ struct ImportResolutionTests {
         #expect(resolved.summary.subscriptions == ImportCounts(added: 1, removed: 2))
     }
 
-    @Test("two cancellations for one subscription resolve to the newer, counted - never silent")
-    func singleCancellationSlot() throws {
+    @Test("two open cancellations for one subscription keep both - the older closes as superseded")
+    func singleOpenCancellation() throws {
+        // Each side cancelled independently, so the merge unites two OPEN
+        // episodes. v1's single slot discarded the loser outright; the episode
+        // table keeps both (spec §5.3a) - the newest stays the current watch
+        // and the older closes as `.superseded`, counted, never silent.
         let sub = try subscription(1, updatedAt: older)
-        func record(_ index: Int, updatedAt: Date) throws -> CancellationRecord {
-            CancellationRecord(
+        func episode(_ index: Int, markedCancelledAt: Date) throws -> CancellationEpisode {
+            CancellationEpisode(
                 id: try fixtureUUID(index),
                 subscriptionID: sub.id,
-                markedCancelledAt: older,
+                markedCancelledAt: markedCancelledAt,
                 nextChargeDateIfNotCancelled: try day(2026, 9, 1),
                 verificationState: .pending,
                 createdAt: older,
-                updatedAt: updatedAt
+                updatedAt: markedCancelledAt
             )
         }
         let current = OttoDataSnapshot(
-            subscriptions: [sub], cancellationRecords: [try record(601, updatedAt: older)]
+            subscriptions: [sub], cancellationEpisodes: [try episode(601, markedCancelledAt: older)]
         )
         let incoming = OttoDataSnapshot(
-            subscriptions: [sub], cancellationRecords: [try record(602, updatedAt: newer)]
+            subscriptions: [sub], cancellationEpisodes: [try episode(602, markedCancelledAt: newer)]
         )
 
         let resolved = try resolveImport(current: current, incoming: incoming, strategy: .merge)
 
-        #expect(resolved.snapshot.cancellationRecords.map(\.id) == [try fixtureUUID(602)])
-        #expect(resolved.summary.cancellationRecords.removed == 1)
+        #expect(resolved.snapshot.cancellationEpisodes.count == 2)
+        let open = resolved.snapshot.cancellationEpisodes.filter(\.isOpen)
+        #expect(open.map(\.id) == [try fixtureUUID(602)])
+        let closed = try #require(
+            resolved.snapshot.cancellationEpisodes.first { $0.id == (try fixtureUUID(601)) }
+        )
+        #expect(closed.outcome == .superseded)
+        #expect(closed.endedAt == newer)
+        #expect(resolved.summary.cancellationEpisodes.removed == 0)
+        // Added (the incoming episode) plus updated (the superseded closure).
+        #expect(resolved.summary.cancellationEpisodes.added == 1)
+        #expect(resolved.summary.cancellationEpisodes.updated == 1)
     }
 
     @Test("a merge that produces two live default cards keeps the newest default")

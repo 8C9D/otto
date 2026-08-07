@@ -64,7 +64,7 @@ struct SubscriptionsStoreTests {
         let (store, subscriptions, cancellations) = (fixture.store, fixture.subscriptions, fixture.cancellations)
         let active = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
         let cancelled = try makeSubscription(index: 2, status: .cancelled, cycleStartDay: try day(2026, 5, 20))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: cancelled.id, nextChargeDateIfNotCancelled: try day(2026, 8, 20)
         )
         await subscriptions.seed([active, cancelled])
@@ -175,7 +175,8 @@ struct SubscriptionsStoreTests {
         ])
 
         var edited = old
-        edited.pauseEndsOn = try day(2026, 9, 1)
+        let openIndex = try #require(edited.pauseEpisodes.firstIndex { $0.endedOn == nil })
+        edited.pauseEpisodes[openIndex].scheduledResumeOn = try day(2026, 9, 1)
         try await fixture.store.save(edited)
 
         let saved = try #require(await fixture.subscriptions.savedValues.last)

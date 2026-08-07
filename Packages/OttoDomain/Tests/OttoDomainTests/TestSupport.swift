@@ -55,14 +55,14 @@ func makeTrialTerm(
     )
 }
 
-func makeCancellationRecord(
+func makeCancellationEpisode(
     index: Int = 600,
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
     expectedChargeAmountCents: Int? = 1099,
-    verificationState: CancellationRecord.VerificationState = .pending
-) throws -> CancellationRecord {
-    CancellationRecord(
+    verificationState: CancellationEpisode.VerificationState = .pending
+) throws -> CancellationEpisode {
+    CancellationEpisode(
         id: try fixtureUUID(index),
         subscriptionID: subscriptionID,
         markedCancelledAt: Date(timeIntervalSince1970: 0),
@@ -74,7 +74,30 @@ func makeCancellationRecord(
     )
 }
 
+/// An open pause episode fixture (spec §5.3a) - what a paused subscription's
+/// current pause looks like in tests.
+func makePauseEpisode(
+    index: Int = 700,
+    startedOn: CalendarDay? = nil,
+    scheduledResumeOn: CalendarDay? = nil,
+    endedOn: CalendarDay? = nil,
+    outcome: PauseEpisode.Outcome? = nil
+) throws -> PauseEpisode {
+    PauseEpisode(
+        id: try fixtureUUID(index),
+        startedOn: startedOn,
+        scheduledResumeOn: scheduledResumeOn,
+        endedOn: endedOn,
+        outcome: outcome,
+        createdAt: Date(timeIntervalSince1970: 0),
+        updatedAt: Date(timeIntervalSince1970: 0)
+    )
+}
+
 /// A subscription fixture exposing only the fields the scheduling tests vary.
+/// The v1.7-era `pausedOn`/`pauseEndsOn` parameters survive as the open pause
+/// episode they now describe (spec §5.3a), so tests keep stating pause state
+/// in the two values that matter.
 func makeSubscription(
     index: Int = 0,
     status: SubscriptionStatus,
@@ -83,11 +106,23 @@ func makeSubscription(
     reminderLeadDays: Int = 3,
     sameDayReminder: Bool = false,
     pauseEndsOn: CalendarDay? = nil,
+    pausedOn: CalendarDay? = nil,
+    pauseEpisodes: [PauseEpisode]? = nil,
     lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     lastUsedDate: CalendarDay? = nil
 ) throws -> Subscription {
-    Subscription(
+    let episodes: [PauseEpisode]
+    if let pauseEpisodes {
+        episodes = pauseEpisodes
+    } else if status == .paused || pausedOn != nil || pauseEndsOn != nil {
+        episodes = [try makePauseEpisode(
+            index: index + 700, startedOn: pausedOn, scheduledResumeOn: pauseEndsOn
+        )]
+    } else {
+        episodes = []
+    }
+    return Subscription(
         id: try fixtureUUID(index),
         name: "Fixture \(index)",
         category: .other,
@@ -98,7 +133,7 @@ func makeSubscription(
         cycleStartDay: cycleStartDay,
         reminderLeadDays: reminderLeadDays,
         sameDayReminder: sameDayReminder,
-        pauseEndsOn: pauseEndsOn,
+        pauseEpisodes: episodes,
         lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         lastUsedDate: lastUsedDate,

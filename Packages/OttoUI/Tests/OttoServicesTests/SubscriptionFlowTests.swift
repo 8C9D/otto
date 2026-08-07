@@ -12,7 +12,7 @@ struct CancellationFlowTests {
 
     private struct WorldState: Equatable {
         var subscription: Subscription?
-        var record: CancellationRecord?
+        var record: CancellationEpisode?
         var events: [BillingEvent]
         var pendingIdentifiers: [String]
     }
@@ -21,8 +21,8 @@ struct CancellationFlowTests {
     /// event UUIDs) normalised out so two worlds compare on substance.
     private func worldState(_ fixture: SchedulerFixture, id: UUID) async throws -> WorldState {
         let nullID = UUID(uuid: UUID_NULL)
-        let record = try await fixture.cancellations.record(forSubscription: id).map { record in
-            CancellationRecord(
+        let record = try await fixture.cancellations.openEpisode(forSubscription: id).map { record in
+            CancellationEpisode(
                 id: nullID,
                 subscriptionID: record.subscriptionID,
                 markedCancelledAt: record.markedCancelledAt,
@@ -154,14 +154,14 @@ struct CancellationFlowTests {
         _ = try await flows.startCancellation(
             subscriptionID: subscription.id, evidenceNote: "something else", now: now, today: today
         )
-        #expect(try await fixture.cancellations.record(forSubscription: subscription.id)?.evidenceNote
+        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id)?.evidenceNote
             == "Confirmation: 4821")
 
         // The deliberate edit path does replace it.
         try await flows.updateCancellationEvidence(
             subscriptionID: subscription.id, note: "Confirmation: 4821, rep was Dana", now: now
         )
-        #expect(try await fixture.cancellations.record(forSubscription: subscription.id)?.evidenceNote
+        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id)?.evidenceNote
             == "Confirmation: 4821, rep was Dana")
     }
 
@@ -183,7 +183,7 @@ struct CancellationFlowTests {
         // still-active subscription - never .cancellationPending with nothing
         // watching it (§5.2b's invariant, Failure B with extra steps).
         #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.storedStatus == .active)
-        #expect(try await fixture.cancellations.record(forSubscription: subscription.id) != nil)
+        #expect(try await fixture.cancellations.openEpisode(forSubscription: subscription.id) != nil)
 
         // And the re-run heals it.
         await fixture.subscriptions.recoverSaves()
@@ -218,8 +218,8 @@ struct PauseFlowTests {
         #expect(paused.pauseEndsOn == (try day(2026, 9, 1)))
     }
 
-    @Test("resuming clears both pause fields - including from an indefinite pause")
-    func resumeClearsPauseFields() async throws {
+    @Test("resuming closes the episode - including from an indefinite pause")
+    func resumeClosesEpisode() async throws {
         let fixture = SchedulerFixture()
         let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
         await fixture.subscriptions.seed([subscription])
@@ -228,15 +228,23 @@ struct PauseFlowTests {
             now: try fixtureNow(), today: try day(2026, 8, 6)
         )
 
-        try await fixture.flows.resume(subscriptionID: subscription.id, now: try fixtureNow())
+        try await fixture.flows.resume(
+            subscriptionID: subscription.id, now: try fixtureNow(), today: try day(2026, 8, 20)
+        )
 
         let resumed = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
         #expect(resumed.storedStatus == .active)
         #expect(resumed.pausedOn == nil)
         #expect(resumed.pauseEndsOn == nil)
+        // The pause is history now, not gone (spec §5.3a).
+        #expect(resumed.pauseEpisodes.count == 1)
+        #expect(resumed.pauseEpisodes.first?.endedOn == (try day(2026, 8, 20)))
+        #expect(resumed.pauseEpisodes.first?.outcome == .resumed)
 
         // Twice equals once.
-        try await fixture.flows.resume(subscriptionID: subscription.id, now: try fixtureNow())
+        try await fixture.flows.resume(
+            subscriptionID: subscription.id, now: try fixtureNow(), today: try day(2026, 8, 20)
+        )
         #expect(try await fixture.subscriptions.subscription(withID: subscription.id) == resumed)
     }
 

@@ -9,7 +9,7 @@ struct TodayOverviewTests {
 
     private func overview(
         _ subscriptions: [Subscription],
-        cancellations: [UUID: CancellationRecord] = [:]
+        cancellations: [UUID: CancellationEpisode] = [:]
     ) throws -> TodayOverview {
         let today = try #require(today)
         return todayOverview(subscriptions: subscriptions, cancellations: cancellations, from: today)
@@ -118,10 +118,10 @@ struct TodayOverviewTests {
             index: 2, status: .cancellationPending, cycle: .monthly, cycleStartDay: try day(2026, 5, 25)
         )
         let cancellations = [
-            due.id: try makeCancellationRecord(
+            due.id: try makeCancellationEpisode(
                 index: 601, subscriptionID: due.id, nextChargeDateIfNotCancelled: try day(2026, 7, 20)
             ),
-            ahead.id: try makeCancellationRecord(
+            ahead.id: try makeCancellationEpisode(
                 index: 602, subscriptionID: ahead.id, nextChargeDateIfNotCancelled: try day(2026, 8, 25)
             )
         ]
@@ -140,11 +140,11 @@ struct TodayOverviewTests {
         let failed = try makeSubscription(index: 1, status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
         let stopped = try makeSubscription(index: 2, status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 25))
         let cancellations = [
-            failed.id: try makeCancellationRecord(
+            failed.id: try makeCancellationEpisode(
                 index: 601, subscriptionID: failed.id,
                 nextChargeDateIfNotCancelled: try day(2026, 7, 20), verificationState: .stillCharging
             ),
-            stopped.id: try makeCancellationRecord(
+            stopped.id: try makeCancellationEpisode(
                 index: 602, subscriptionID: stopped.id,
                 nextChargeDateIfNotCancelled: try day(2026, 7, 25), verificationState: .verifiedStopped
             )
@@ -169,7 +169,7 @@ struct TodayOverviewTests {
     @Test("a needs-manual-review verification stays a persistent card (spec §5.4)")
     func needsManualReviewStaysVisible() throws {
         let sub = try makeSubscription(index: 1, status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
-        var record = try makeCancellationRecord(
+        var record = try makeCancellationEpisode(
             index: 601, subscriptionID: sub.id, nextChargeDateIfNotCancelled: try day(2026, 7, 20)
         )
         record.verificationState = .needsManualReview

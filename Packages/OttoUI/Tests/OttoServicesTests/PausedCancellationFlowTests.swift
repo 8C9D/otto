@@ -45,7 +45,7 @@ struct PausedCancellationFlowTests {
         try await flows.supplyPausedResumeDate(
             subscriptionID: subscription.id, resumeDate: try day(2026, 9, 1), now: now
         )
-        let watching = try #require(try await fixture.cancellations.record(forSubscription: subscription.id))
+        let watching = try #require(try await fixture.cancellations.openEpisode(forSubscription: subscription.id))
         #expect(watching.verificationState == .pending)
         #expect(watching.nextChargeDateIfNotCancelled == (try day(2026, 9, 15)))
         #expect(watching.expectedChargeAmountCents == subscription.amountCents)
@@ -54,7 +54,7 @@ struct PausedCancellationFlowTests {
         try await flows.supplyPausedResumeDate(
             subscriptionID: subscription.id, resumeDate: try day(2026, 12, 1), now: now
         )
-        let unchanged = try await fixture.cancellations.record(forSubscription: subscription.id)
+        let unchanged = try await fixture.cancellations.openEpisode(forSubscription: subscription.id)
         #expect(unchanged == watching)
     }
 

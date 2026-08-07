@@ -165,7 +165,7 @@ struct PhoneInADrawerTests {
             index: 1, status: .cancelled, cycleStartDay: try day(2026, 1, 15)
         )
         await fixture.subscriptions.seed([subscription])
-        await fixture.cancellations.seed([CancellationRecord(
+        await fixture.cancellations.seed([CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: subscription.id,
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),
@@ -181,7 +181,7 @@ struct PhoneInADrawerTests {
         // One wake resolves to the same state three timely passes would have:
         // escalated at exactly the three-check limit, generating no further
         // verification notifications.
-        let record = try #require(try await fixture.cancellations.record(forSubscription: subscription.id))
+        let record = try #require(try await fixture.cancellations.openEpisode(forSubscription: subscription.id))
         #expect(record.verificationState == .needsManualReview)
         #expect(record.unansweredCheckCount == unansweredCheckLimit)
         let kinds = await fixture.client.pendingRequests()

@@ -46,7 +46,8 @@ extension OttoStore: SubscriptionRepository {
         // instant. Hard deletes happen nowhere (spec §3.5).
         setIfLive(&record.deletedAt, instant)
         if let trial = record.trial { setIfLive(&trial.deletedAt, instant) }
-        if let cancellation = record.cancellationRecord { setIfLive(&cancellation.deletedAt, instant) }
+        for episode in record.cancellationEpisodes ?? [] { setIfLive(&episode.deletedAt, instant) }
+        for episode in record.pauseEpisodes ?? [] { setIfLive(&episode.deletedAt, instant) }
         for event in record.billingEvents ?? [] { setIfLive(&event.deletedAt, instant) }
         for change in record.priceChanges ?? [] { setIfLive(&change.deletedAt, instant) }
         try modelContext.save()

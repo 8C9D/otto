@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV1 {
+extension OttoSchemaV2 {
     /// Persistence record for `PriceChange` (spec §5.5) - append-only history.
     @Model
     final class StoredPriceChange {

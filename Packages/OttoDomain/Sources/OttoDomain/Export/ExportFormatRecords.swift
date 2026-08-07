@@ -1,7 +1,7 @@
 import Foundation
 
-// The remaining format v1 wire records - see ExportFormat.swift for the
-// format's conventions and the reason these are their own types.
+// The remaining wire records - see ExportFormat.swift for the format's
+// conventions and the reason these are their own types.
 
 public struct ExportedPaymentMethod: Codable, Hashable, Sendable {
     public let id: UUID
@@ -82,38 +82,48 @@ public struct ExportedBillingEvent: Codable, Hashable, Sendable {
     }
 }
 
-public struct ExportedCancellationRecord: Codable, Hashable, Sendable {
+public struct ExportedCancellationEpisode: Codable, Hashable, Sendable {
     public let id: UUID
     public let subscriptionID: UUID
     public var markedCancelledAt: Date
+    /// Absent in v1 files, which never captured what the cancellation
+    /// interrupted; the un-cancel restore derives an honest answer for nil.
+    public var statusAtStart: String?
     public var nextChargeDateIfNotCancelled: String?
     public var expectedChargeAmountCents: Int?
     public var verificationState: String
     public var unansweredCheckCount: Int
     public var verifiedAt: Date?
     public var evidenceNote: String?
+    /// Absent in v1 files; `upgradedFromV1` closes what v1 semantics say was
+    /// finished and leaves the rest open (spec §5.3a).
+    public var endedAt: Date?
+    public var outcome: String?
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?
 
-    public init(_ domain: CancellationRecord) {
+    public init(_ domain: CancellationEpisode) {
         id = domain.id
         subscriptionID = domain.subscriptionID
         markedCancelledAt = domain.markedCancelledAt
+        statusAtStart = domain.statusAtStart?.rawValue
         nextChargeDateIfNotCancelled = domain.nextChargeDateIfNotCancelled?.description
         expectedChargeAmountCents = domain.expectedChargeAmountCents
         verificationState = domain.verificationState.rawValue
         unansweredCheckCount = domain.unansweredCheckCount
         verifiedAt = domain.verifiedAt
         evidenceNote = domain.evidenceNote
+        endedAt = domain.endedAt
+        outcome = domain.outcome?.rawValue
         createdAt = domain.createdAt
         updatedAt = domain.updatedAt
         deletedAt = domain.deletedAt
     }
 
-    public func domainValue() throws -> CancellationRecord {
-        let entity = "cancellationRecord \(id)"
-        let state: CancellationRecord.VerificationState = try wireEnum(
+    public func domainValue() throws -> CancellationEpisode {
+        let entity = "cancellationEpisode \(id)"
+        let state: CancellationEpisode.VerificationState = try wireEnum(
             verificationState, entity: entity, field: "verificationState"
         )
         let checkDate = try wireDay(
@@ -127,20 +137,59 @@ public struct ExportedCancellationRecord: Codable, Hashable, Sendable {
                 value: "\(nextChargeDateIfNotCancelled ?? "absent") while \(verificationState)"
             )
         }
-        return CancellationRecord(
+        // The §5.3a open-or-closed pairing, thrown for the same reason.
+        let domainOutcome: CancellationEpisode.Outcome? = try outcome.map {
+            try wireEnum($0, entity: entity, field: "outcome")
+        }
+        guard (endedAt == nil) == (domainOutcome == nil) else {
+            throw ExportFormatError.invalidValue(
+                entity: entity,
+                field: "endedAt/outcome",
+                value: "\(endedAt.map(String.init(describing:)) ?? "absent")/\(outcome ?? "absent")"
+            )
+        }
+        // Only a state a cancellation can interrupt is a valid start
+        // (spec §5.3a); anything else in the field is a damaged file.
+        let domainStatusAtStart: SubscriptionStatus? = try statusAtStart.map {
+            let status: SubscriptionStatus = try wireEnum($0, entity: entity, field: "statusAtStart")
+            guard [.trial, .active, .paused].contains(status) else {
+                throw ExportFormatError.invalidValue(entity: entity, field: "statusAtStart", value: $0)
+            }
+            return status
+        }
+        return CancellationEpisode(
             id: id,
             subscriptionID: subscriptionID,
             markedCancelledAt: markedCancelledAt,
+            statusAtStart: domainStatusAtStart,
             nextChargeDateIfNotCancelled: checkDate,
             expectedChargeAmountCents: expectedChargeAmountCents,
             verificationState: state,
             unansweredCheckCount: unansweredCheckCount,
             verifiedAt: verifiedAt,
             evidenceNote: evidenceNote,
+            endedAt: endedAt,
+            outcome: domainOutcome,
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
         )
+    }
+
+    /// The v1 upgrade: one rule with the SwiftData migration
+    /// (`CancellationEpisode.legacyClosure`) - a verified-stopped record closes
+    /// at its verification instant, every other state stays open.
+    func upgradedFromV1() -> ExportedCancellationEpisode {
+        guard endedAt == nil, outcome == nil else { return self }
+        let closure = CancellationEpisode.legacyClosure(
+            verificationStateRaw: verificationState,
+            verifiedAt: verifiedAt,
+            updatedAt: updatedAt
+        )
+        var upgraded = self
+        upgraded.endedAt = closure.endedAt
+        upgraded.outcome = closure.outcome?.rawValue
+        return upgraded
     }
 }
 
@@ -219,4 +268,123 @@ func wireEnum<Value: RawRepresentable>(
         throw ExportFormatError.invalidValue(entity: entity, field: field, value: raw)
     }
     return value
+}
+
+// MARK: - Nested wire records (subscription children)
+
+/// The id a v1 subscription's synthesized pause episode gets - DERIVED from the
+/// subscription's id rather than minted, so importing the same v1 file twice
+/// produces the same episode instead of a duplicate, and identical files
+/// upgrade to identical values. The mask is arbitrary but FROZEN ("PauseEpi" in
+/// ASCII); a derived id can never equal the subscription's own.
+func legacyPauseEpisodeID(for subscriptionID: UUID) -> UUID {
+    var bytes = subscriptionID.uuid
+    bytes.0 ^= 0x50; bytes.1 ^= 0x61; bytes.2 ^= 0x75; bytes.3 ^= 0x73
+    bytes.4 ^= 0x65; bytes.5 ^= 0x45; bytes.6 ^= 0x70; bytes.7 ^= 0x69
+    return UUID(uuid: bytes)
+}
+
+public struct ExportedPauseEpisode: Codable, Hashable, Sendable {
+    public let id: UUID
+    public var startedOn: String?
+    public var scheduledResumeOn: String?
+    public var endedOn: String?
+    public var outcome: String?
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var deletedAt: Date?
+
+    public init(_ domain: PauseEpisode) {
+        id = domain.id
+        startedOn = domain.startedOn?.description
+        scheduledResumeOn = domain.scheduledResumeOn?.description
+        endedOn = domain.endedOn?.description
+        outcome = domain.outcome?.rawValue
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
+    }
+
+    init(
+        id: UUID, startedOn: String?, scheduledResumeOn: String?, endedOn: String?,
+        outcome: String?, createdAt: Date, updatedAt: Date, deletedAt: Date?
+    ) {
+        self.id = id
+        self.startedOn = startedOn
+        self.scheduledResumeOn = scheduledResumeOn
+        self.endedOn = endedOn
+        self.outcome = outcome
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    public func domainValue() throws -> PauseEpisode {
+        let entity = "pauseEpisode \(id)"
+        let endedOn = try wireDay(self.endedOn, entity: entity, field: "endedOn")
+        let outcome: PauseEpisode.Outcome? = try self.outcome.map {
+            try wireEnum($0, entity: entity, field: "outcome")
+        }
+        // The §5.3a pairing, thrown instead of the domain's precondition.
+        guard (endedOn == nil) == (outcome == nil) else {
+            throw ExportFormatError.invalidValue(
+                entity: entity,
+                field: "endedOn/outcome",
+                value: "\(self.endedOn ?? "absent")/\(self.outcome ?? "absent")"
+            )
+        }
+        return PauseEpisode(
+            id: id,
+            startedOn: try wireDay(startedOn, entity: entity, field: "startedOn"),
+            scheduledResumeOn: try wireDay(scheduledResumeOn, entity: entity, field: "scheduledResumeOn"),
+            endedOn: endedOn,
+            outcome: outcome,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt
+        )
+    }
+}
+
+public struct ExportedTrialTerm: Codable, Hashable, Sendable {
+    public let id: UUID
+    public var startDate: String
+    public var lengthDays: Int
+    public var bufferDays: Int
+    public var convertsToAmountCents: Int
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var deletedAt: Date?
+
+    public init(_ domain: TrialTerm) {
+        id = domain.id
+        startDate = domain.startDate.description
+        lengthDays = domain.lengthDays
+        bufferDays = domain.bufferDays
+        convertsToAmountCents = domain.convertsToAmountCents
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
+    }
+
+    public func domainValue() throws -> TrialTerm {
+        let entity = "trial \(id)"
+        guard let term = TrialTerm(
+            id: id,
+            startDate: try wireDay(startDate, entity: entity, field: "startDate"),
+            lengthDays: lengthDays,
+            bufferDays: bufferDays,
+            convertsToAmountCents: convertsToAmountCents,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt
+        ) else {
+            throw ExportFormatError.invalidValue(
+                entity: entity,
+                field: "lengthDays/bufferDays/convertsToAmountCents",
+                value: "\(lengthDays)/\(bufferDays)/\(convertsToAmountCents)"
+            )
+        }
+        return term
+    }
 }

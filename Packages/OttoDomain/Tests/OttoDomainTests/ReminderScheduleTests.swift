@@ -204,7 +204,7 @@ struct ReminderScheduleTests {
         let sub = try makeSubscription(status: .cancellationPending, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
         // The check date was computed once, at cancellation time, from the anchor
         // and the cycle (spec §5.4) - the planner fires on it as stored.
-        let record = CancellationRecord(
+        let record = CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
@@ -226,7 +226,7 @@ struct ReminderScheduleTests {
     @Test("a pending cancellation whose check date has passed keeps watching the next would-be charge")
     func staleVerification() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
-        let record = CancellationRecord(
+        let record = CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
@@ -249,7 +249,7 @@ struct ReminderScheduleTests {
     @Test("a verified cancellation generates nothing")
     func verifiedCancellation() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
-        let record = CancellationRecord(
+        let record = CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
@@ -265,7 +265,7 @@ struct ReminderScheduleTests {
     @Test("three unanswered checks stop verification notifications - the Today card escalates instead (spec §5.4)")
     func threeStrikesStopsNotifications() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
-        let record = CancellationRecord(
+        let record = CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
@@ -282,7 +282,7 @@ struct ReminderScheduleTests {
     @Test("a needs-manual-review record generates nothing either")
     func needsManualReviewGeneratesNothing() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
-        let record = CancellationRecord(
+        let record = CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),

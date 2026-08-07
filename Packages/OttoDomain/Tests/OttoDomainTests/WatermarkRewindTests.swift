@@ -7,6 +7,19 @@ struct WatermarkRewindTests {
 
     private var today: CalendarDay { get throws { try day(2026, 8, 7) } }
 
+    /// Edits the open episode's scheduled resume in place - the §5.3 (v1.7)
+    /// "pause end corrected" edit, expressed against the episode that now
+    /// carries the date (spec §5.3a).
+    private func reschedulingPauseEnd(
+        _ subscription: Subscription, to newDay: CalendarDay
+    ) throws -> Subscription {
+        var updated = subscription
+        let open = try #require(updated.currentPauseEpisode)
+        let index = try #require(updated.pauseEpisodes.firstIndex { $0.id == open.id })
+        updated.pauseEpisodes[index].scheduledResumeOn = newDay
+        return updated
+    }
+
     // MARK: - The founding case: a pause end pulled earlier
 
     @Test("pulling a pause's end date earlier rewinds to just before the newly expected charges")
@@ -17,8 +30,7 @@ struct WatermarkRewindTests {
             pauseEndsOn: try day(2026, 12, 1),
             lastMaterializedThrough: try day(2026, 12, 15)
         )
-        var new = old
-        new.pauseEndsOn = try day(2026, 9, 1)
+        let new = try reschedulingPauseEnd(old, to: try day(2026, 9, 1))
 
         let rewound = watermarkAfterEdit(
             from: old, to: new, trackedSince: try day(2026, 1, 1), asOf: try today
@@ -55,8 +67,7 @@ struct WatermarkRewindTests {
             pauseEndsOn: try day(2026, 9, 1),
             lastMaterializedThrough: try day(2026, 12, 15)
         )
-        var new = old
-        new.pauseEndsOn = try day(2026, 12, 1)
+        let new = try reschedulingPauseEnd(old, to: try day(2026, 12, 1))
 
         let kept = watermarkAfterEdit(
             from: old, to: new, trackedSince: try day(2026, 1, 1), asOf: try today

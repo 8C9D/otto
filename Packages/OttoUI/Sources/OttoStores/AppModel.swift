@@ -170,10 +170,21 @@ public final class AppModel {
         await flowFinished()
     }
 
-    /// Resumes billing - also the manual path out of an indefinite pause, which
-    /// backfills the frozen watermark's gap on the next scheduler pass.
+    /// Resumes billing, closing the pause episode with its actual end day -
+    /// also the manual path out of an indefinite pause, which backfills the
+    /// frozen watermark's gap on the next scheduler pass.
     public func resumeSubscription(subscriptionID: UUID) async throws {
-        try await flows.resume(subscriptionID: subscriptionID, now: dates.now())
+        try await flows.resume(subscriptionID: subscriptionID, now: dates.now(), today: dates.today())
+        await flowFinished()
+    }
+
+    /// The un-cancel (spec §5.4, §5.3a): closes the open cancellation episode
+    /// as `.abandoned` - kept as history, never deleted - and returns the
+    /// subscription to the status the cancellation interrupted.
+    public func abandonCancellation(subscriptionID: UUID) async throws {
+        try await flows.abandonCancellation(
+            subscriptionID: subscriptionID, now: dates.now(), today: dates.today()
+        )
         await flowFinished()
     }
 

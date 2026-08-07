@@ -1,9 +1,11 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV1 {
+extension OttoSchemaV2 {
     /// Persistence record for `PaymentMethod` (spec §5.5). Subscriptions reference
-    /// it by scalar `paymentMethodID`, matching the domain - no relationship.
+    /// it by scalar `paymentMethodID`, matching the domain - no relationship, and
+    /// a dangling id is a valid state that renders as "Unknown payment method"
+    /// (spec §3.5): under sync a subscription can arrive before its card.
     @Model
     final class StoredPaymentMethod {
         var id: UUID?

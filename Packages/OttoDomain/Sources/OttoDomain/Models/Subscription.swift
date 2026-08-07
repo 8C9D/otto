@@ -47,17 +47,20 @@ public struct Subscription: Identifiable, Hashable, Sendable {
     /// Whether a second renewal reminder fires on the billing day itself (spec §6.3).
     public var sameDayReminder: Bool
 
-    /// When a paused subscription resumes billing; drives the resume reminder.
-    /// Meaningful only while `status` is `.paused` (spec §5.1).
-    public var pauseEndsOn: CalendarDay?
-
-    /// The day the pause began; meaningful only while `status` is `.paused`.
-    /// Added in Wave 7 because §5.1 pins paused spend to "the monthly-equivalent
-    /// at the price frozen when the pause began" - a rule that is uncomputable
-    /// without knowing when that was. Nil on records paused before the field
-    /// existed; Insights then falls back to the current price, which is the
-    /// honest answer when the freeze point is unknown.
-    public var pausedOn: CalendarDay?
+    /// Every pause in this subscription's life (spec §5.3a) - a one-to-many
+    /// history, embedded like `trial` because `effectiveStatus(asOf:)` derives
+    /// from the current pause and must not need a repository to answer. The
+    /// current pause is the open episode (no `endedOn`); v1.7's `pausedOn` and
+    /// `pauseEndsOn` survive as derived accessors onto it, so nothing above
+    /// reads episode plumbing to ask the two old questions.
+    ///
+    /// Construction enforces §5.3a's shape: at most one live open episode, a
+    /// `.paused` subscription always has one, and an open episode cannot
+    /// coexist with a stored `.active` or `.trial` (pausing sets `.paused`,
+    /// resuming closes the episode - in the same value, so the states cannot
+    /// drift apart). A cancellation or archive leaves the episode open
+    /// deliberately: billing never resumed, so writing an end would be fiction.
+    public var pauseEpisodes: [PauseEpisode]
 
     /// The materialization watermark (spec §5.3, v1.5): the last day through which
     /// a ledger pass has observed this subscription's expected charges. The window
@@ -104,8 +107,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         cycleStartDay: CalendarDay,
         reminderLeadDays: Int,
         sameDayReminder: Bool = false,
-        pauseEndsOn: CalendarDay? = nil,
-        pausedOn: CalendarDay? = nil,
+        pauseEpisodes: [PauseEpisode] = [],
         lastMaterializedThrough: CalendarDay? = nil,
         trial: TrialTerm? = nil,
         paymentMethodID: UUID? = nil,
@@ -121,6 +123,19 @@ public struct Subscription: Identifiable, Hashable, Sendable {
             status != .trial || trial != nil,
             "A .trial subscription must have a TrialTerm (spec §5.2b)"
         )
+        let openPauses = pauseEpisodes.count { $0.endedOn == nil && $0.deletedAt == nil }
+        precondition(
+            openPauses <= 1,
+            "At most one pause episode can be current (spec §5.3a)"
+        )
+        precondition(
+            status != .paused || openPauses == 1,
+            "A .paused subscription must have an open PauseEpisode (spec §5.3a)"
+        )
+        precondition(
+            openPauses == 0 || (status != .active && status != .trial),
+            "An open PauseEpisode cannot coexist with a stored .active or .trial (spec §5.3a)"
+        )
         self.id = id
         self.name = name
         self.vendorURL = vendorURL
@@ -132,8 +147,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         self.cycleStartDay = cycleStartDay
         self.reminderLeadDays = reminderLeadDays
         self.sameDayReminder = sameDayReminder
-        self.pauseEndsOn = pauseEndsOn
-        self.pausedOn = pausedOn
+        self.pauseEpisodes = pauseEpisodes
         self.lastMaterializedThrough = lastMaterializedThrough
         self.trial = trial
         self.paymentMethodID = paymentMethodID
@@ -236,8 +250,7 @@ extension Subscription {
             cycleStartDay: trial.conversionDate,
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
-            pauseEndsOn: pauseEndsOn,
-            pausedOn: pausedOn,
+            pauseEpisodes: pauseEpisodes,
             lastMaterializedThrough: lastMaterializedThrough,
             trial: trial,
             paymentMethodID: paymentMethodID,
@@ -257,14 +270,15 @@ extension Subscription {
 extension Subscription: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, vendorURL, category, status, amountCents, currencyCode
-        case cycle, cycleStartDay, reminderLeadDays, sameDayReminder, pauseEndsOn, pausedOn
+        case cycle, cycleStartDay, reminderLeadDays, sameDayReminder, pauseEpisodes
         case lastMaterializedThrough
         case trial, paymentMethodID, cancellationURL, cancellationNotes
         case lastUsedDate, notes, createdAt, updatedAt, deletedAt
     }
 
-    // Hand-written so decoding routes through the §5.2b invariant instead of
-    // assigning stored properties directly, which is what a synthesized decoder does.
+    // Hand-written so decoding routes through the §5.2b and §5.3a invariants
+    // instead of assigning stored properties directly, which is what a
+    // synthesized decoder does.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let status = try container.decode(SubscriptionStatus.self, forKey: .status)
@@ -273,6 +287,12 @@ extension Subscription: Codable {
             throw DecodingError.dataCorrupted(DecodingError.Context(
                 codingPath: decoder.codingPath,
                 debugDescription: "A .trial subscription must have a TrialTerm (spec §5.2b)"
+            ))
+        }
+        let pauseEpisodes = try container.decodeIfPresent([PauseEpisode].self, forKey: .pauseEpisodes) ?? []
+        try Subscription.checkPauseInvariants(status: status, pauseEpisodes: pauseEpisodes) {
+            DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath, debugDescription: $0
             ))
         }
         self.init(
@@ -287,8 +307,7 @@ extension Subscription: Codable {
             cycleStartDay: try container.decode(CalendarDay.self, forKey: .cycleStartDay),
             reminderLeadDays: try container.decode(Int.self, forKey: .reminderLeadDays),
             sameDayReminder: try container.decode(Bool.self, forKey: .sameDayReminder),
-            pauseEndsOn: try container.decodeIfPresent(CalendarDay.self, forKey: .pauseEndsOn),
-            pausedOn: try container.decodeIfPresent(CalendarDay.self, forKey: .pausedOn),
+            pauseEpisodes: pauseEpisodes,
             lastMaterializedThrough: try container.decodeIfPresent(
                 CalendarDay.self, forKey: .lastMaterializedThrough
             ),
@@ -317,8 +336,9 @@ extension Subscription: Codable {
         try container.encode(cycleStartDay, forKey: .cycleStartDay)
         try container.encode(reminderLeadDays, forKey: .reminderLeadDays)
         try container.encode(sameDayReminder, forKey: .sameDayReminder)
-        try container.encodeIfPresent(pauseEndsOn, forKey: .pauseEndsOn)
-        try container.encodeIfPresent(pausedOn, forKey: .pausedOn)
+        if !pauseEpisodes.isEmpty {
+            try container.encode(pauseEpisodes, forKey: .pauseEpisodes)
+        }
         try container.encodeIfPresent(lastMaterializedThrough, forKey: .lastMaterializedThrough)
         try container.encodeIfPresent(trial, forKey: .trial)
         try container.encodeIfPresent(paymentMethodID, forKey: .paymentMethodID)

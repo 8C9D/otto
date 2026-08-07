@@ -10,7 +10,7 @@ import OttoStores
 /// The preview data set, grouped so callers take what they need.
 struct PreviewFixtures {
     var subscriptions: [Subscription] = []
-    var cancellations: [CancellationRecord] = []
+    var cancellations: [CancellationEpisode] = []
     var events: [BillingEvent] = []
     var priceChanges: [PriceChange] = []
 }
@@ -130,7 +130,7 @@ enum PreviewData {
             amountCents: 999, anchor: anchor, status: .cancelled
         )
         fixtures.subscriptions.append(cancelled)
-        fixtures.cancellations.append(CancellationRecord(
+        fixtures.cancellations.append(CancellationEpisode(
             id: uuid(601), subscriptionID: cancelled.id, markedCancelledAt: now,
             nextChargeDateIfNotCancelled: checkDate, verificationState: .pending,
             evidenceNote: "Confirmation #58291", createdAt: now, updatedAt: now
@@ -148,7 +148,18 @@ enum PreviewData {
         pauseEndsOn: CalendarDay? = nil,
         trial: TrialTerm? = nil
     ) -> Subscription {
-        Subscription(
+        // A paused fixture needs its open episode (spec §5.3a) - the invariant
+        // holds in previews too.
+        let pauseEpisodes: [PauseEpisode] = status == .paused
+            ? [PauseEpisode(
+                id: uuid(index + 700),
+                startedOn: anchor,
+                scheduledResumeOn: pauseEndsOn,
+                createdAt: now,
+                updatedAt: now
+            )]
+            : []
+        return Subscription(
             id: uuid(index),
             name: name,
             category: category,
@@ -158,7 +169,7 @@ enum PreviewData {
             cycle: cycle,
             cycleStartDay: anchor,
             reminderLeadDays: status == .trial ? 5 : 3,
-            pauseEndsOn: pauseEndsOn,
+            pauseEpisodes: pauseEpisodes,
             trial: trial,
             createdAt: now,
             updatedAt: now
@@ -179,14 +190,14 @@ actor PreviewRepository:
 
     private var subscriptions: [UUID: Subscription] = [:]
     private var events: [UUID: BillingEvent] = [:]
-    private var cancellations: [UUID: CancellationRecord] = [:]
+    private var cancellations: [UUID: CancellationEpisode] = [:]
     private var priceChanges: [UUID: PriceChange] = [:]
     private var paymentMethods: [UUID: PaymentMethod] = [:]
 
     init() {
         let fixtures = PreviewData.fixtures()
         for subscription in fixtures.subscriptions { subscriptions[subscription.id] = subscription }
-        for record in fixtures.cancellations { cancellations[record.subscriptionID] = record }
+        for record in fixtures.cancellations { cancellations[record.id] = record }
         for event in fixtures.events { events[event.id] = event }
         for change in fixtures.priceChanges { priceChanges[change.id] = change }
     }
@@ -256,16 +267,26 @@ actor PreviewRepository:
 
     // MARK: CancellationRepository
 
-    func save(_ record: CancellationRecord) async throws {
-        cancellations[record.subscriptionID] = record
+    func save(_ episode: CancellationEpisode) async throws {
+        cancellations[episode.id] = episode
     }
 
-    func record(forSubscription subscriptionID: UUID) async throws -> CancellationRecord? {
-        cancellations[subscriptionID].flatMap { $0.deletedAt == nil ? $0 : nil }
+    func openEpisode(forSubscription subscriptionID: UUID) async throws -> CancellationEpisode? {
+        try await episodes(forSubscription: subscriptionID).first { $0.isOpen }
     }
 
-    func recordIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> CancellationRecord? {
-        cancellations[subscriptionID]
+    func episodes(forSubscription subscriptionID: UUID) async throws -> [CancellationEpisode] {
+        cancellations.values
+            .filter { $0.subscriptionID == subscriptionID && $0.deletedAt == nil }
+            .sorted { ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString) }
+    }
+
+    func episodesIncludingDeleted(
+        forSubscription subscriptionID: UUID
+    ) async throws -> [CancellationEpisode] {
+        cancellations.values
+            .filter { $0.subscriptionID == subscriptionID }
+            .sorted { ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString) }
     }
 
     // MARK: PriceChangeRepository
@@ -318,7 +339,7 @@ actor PreviewRepository:
             subscriptions: subscriptions.values.sorted { $0.id.uuidString < $1.id.uuidString },
             paymentMethods: paymentMethods.values.sorted { $0.id.uuidString < $1.id.uuidString },
             billingEvents: events.values.sorted { $0.id.uuidString < $1.id.uuidString },
-            cancellationRecords: cancellations.values.sorted { $0.id.uuidString < $1.id.uuidString },
+            cancellationEpisodes: cancellations.values.sorted { $0.id.uuidString < $1.id.uuidString },
             priceChanges: priceChanges.values.sorted { $0.id.uuidString < $1.id.uuidString }
         )
     }
@@ -328,7 +349,7 @@ actor PreviewRepository:
         paymentMethods = Dictionary(uniqueKeysWithValues: snapshot.paymentMethods.map { ($0.id, $0) })
         events = Dictionary(uniqueKeysWithValues: snapshot.billingEvents.map { ($0.id, $0) })
         cancellations = Dictionary(
-            uniqueKeysWithValues: snapshot.cancellationRecords.map { ($0.subscriptionID, $0) }
+            uniqueKeysWithValues: snapshot.cancellationEpisodes.map { ($0.subscriptionID, $0) }
         )
         priceChanges = Dictionary(uniqueKeysWithValues: snapshot.priceChanges.map { ($0.id, $0) })
     }

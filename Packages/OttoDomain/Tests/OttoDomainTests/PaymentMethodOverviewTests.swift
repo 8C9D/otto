@@ -72,6 +72,9 @@ struct PaymentMethodLoadTests {
                 cycle: cycle,
                 cycleStartDay: try day(2026, 1, 15),
                 reminderLeadDays: 3,
+                pauseEpisodes: status == .paused
+                    ? [try makePauseEpisode(index: index + 700, startedOn: try day(2026, 7, 1))]
+                    : [],
                 paymentMethodID: method,
                 createdAt: Date(timeIntervalSince1970: 0),
                 updatedAt: Date(timeIntervalSince1970: 0)

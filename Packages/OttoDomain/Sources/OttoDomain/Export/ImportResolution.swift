@@ -19,12 +19,13 @@ public enum ImportStrategy: String, Hashable, Sendable, CaseIterable {
 public struct ImportCounts: Hashable, Sendable {
     /// Records from the file that did not exist in the database.
     public var added = 0
-    /// Existing records overwritten by a newer copy from the file.
+    /// Existing records overwritten by a newer copy from the file - including
+    /// open cancellation episodes a merge closed as `.superseded` because a
+    /// newer open one claimed the same subscription (spec §5.3a).
     public var updated = 0
     /// File records skipped because the database copy was newer or equal.
     public var skippedOlder = 0
-    /// Existing records removed (replace) or displaced by a conflicting record
-    /// (merge's single-cancellation rule).
+    /// Existing records removed (replace strategy only - merge never discards).
     public var removed = 0
 
     public init(added: Int = 0, updated: Int = 0, skippedOlder: Int = 0, removed: Int = 0) {
@@ -39,7 +40,7 @@ public struct ImportSummary: Hashable, Sendable {
     public var subscriptions = ImportCounts()
     public var paymentMethods = ImportCounts()
     public var billingEvents = ImportCounts()
-    public var cancellationRecords = ImportCounts()
+    public var cancellationEpisodes = ImportCounts()
     public var priceChanges = ImportCounts()
 
     public init() {}
@@ -74,8 +75,8 @@ public func resolveImport(
         summary.subscriptions = replaceCounts(current: current.subscriptions, incoming: incoming.subscriptions)
         summary.paymentMethods = replaceCounts(current: current.paymentMethods, incoming: incoming.paymentMethods)
         summary.billingEvents = replaceCounts(current: current.billingEvents, incoming: incoming.billingEvents)
-        summary.cancellationRecords = replaceCounts(
-            current: current.cancellationRecords, incoming: incoming.cancellationRecords
+        summary.cancellationEpisodes = replaceCounts(
+            current: current.cancellationEpisodes, incoming: incoming.cancellationEpisodes
         )
         summary.priceChanges = replaceCounts(current: current.priceChanges, incoming: incoming.priceChanges)
     case .merge:
@@ -97,15 +98,15 @@ public func resolveImport(
             current: current.billingEvents, incoming: incoming.billingEvents,
             counts: &summary.billingEvents
         )
-        resolved.cancellationRecords = merge(
-            current: current.cancellationRecords, incoming: incoming.cancellationRecords,
-            counts: &summary.cancellationRecords
+        resolved.cancellationEpisodes = merge(
+            current: current.cancellationEpisodes, incoming: incoming.cancellationEpisodes,
+            counts: &summary.cancellationEpisodes
         )
         resolved.priceChanges = merge(
             current: current.priceChanges, incoming: incoming.priceChanges,
             counts: &summary.priceChanges
         )
-        resolveSingleCancellationSlots(in: &resolved, counts: &summary.cancellationRecords)
+        resolveSingleOpenCancellation(in: &resolved, counts: &summary.cancellationEpisodes)
     }
 
     try validate(resolved)
@@ -124,7 +125,7 @@ private protocol ImportableRecord {
 extension Subscription: ImportableRecord {}
 extension PaymentMethod: ImportableRecord {}
 extension BillingEvent: ImportableRecord {}
-extension CancellationRecord: ImportableRecord {}
+extension CancellationEpisode: ImportableRecord {}
 extension PriceChange: ImportableRecord {}
 
 // MARK: - The merge
@@ -168,28 +169,34 @@ private func replaceCounts<Record: ImportableRecord>(
     )
 }
 
-// MARK: - Structural repairs the storage model requires
+// MARK: - Structural repairs the domain model requires
 
-/// Storage holds exactly one cancellation record per subscription. A merge can
-/// legitimately produce two (each side cancelled independently, different ids):
-/// the newer record wins and the displaced one is COUNTED as removed - the one
-/// discard merge cannot avoid, made visible instead of silent.
-private func resolveSingleCancellationSlots(in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts) {
-    var keptBySubscription: [UUID: CancellationRecord] = [:]
-    var removed = 0
-    for record in snapshot.cancellationRecords {
-        if let rival = keptBySubscription[record.subscriptionID] {
-            removed += 1
-            if record.updatedAt > rival.updatedAt {
-                keptBySubscription[record.subscriptionID] = record
-            }
-        } else {
-            keptBySubscription[record.subscriptionID] = record
-        }
+/// At most one cancellation episode per subscription is OPEN (spec §5.3a). A
+/// merge can legitimately unite two open ones (each side cancelled
+/// independently, different ids): the newest stays open and the others close
+/// with `.superseded` at its start instant - recorded as what happened rather
+/// than deleted, and COUNTED as updated so nothing about the outcome is silent.
+/// This is the episode-table win over v1's single slot: the losing side's
+/// cancellation used to be discarded outright; now it stays history.
+private func resolveSingleOpenCancellation(in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts) {
+    var openBySubscription: [UUID: [CancellationEpisode]] = [:]
+    for episode in snapshot.cancellationEpisodes where episode.isOpen && episode.deletedAt == nil {
+        openBySubscription[episode.subscriptionID, default: []].append(episode)
     }
-    counts.removed += removed
-    snapshot.cancellationRecords = snapshot.cancellationRecords.filter { record in
-        keptBySubscription[record.subscriptionID]?.id == record.id
+    for (_, rivals) in openBySubscription where rivals.count > 1 {
+        let sorted = rivals.sorted {
+            ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString)
+        }
+        let winner = sorted[0]
+        for loser in sorted.dropFirst() {
+            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == loser.id }) else {
+                continue
+            }
+            snapshot.cancellationEpisodes[index].endedAt = winner.markedCancelledAt
+            snapshot.cancellationEpisodes[index].outcome = .superseded
+            snapshot.cancellationEpisodes[index].updatedAt = winner.markedCancelledAt
+            counts.updated += 1
+        }
     }
 }
 
@@ -206,8 +213,9 @@ private func normalizeSingleDefaultPaymentMethod(in snapshot: inout OttoDataSnap
 }
 
 /// Referential integrity before anything touches the store: every child names a
-/// subscription the resolved state actually contains, and no subscription's
-/// single cancellation slot is claimed twice.
+/// subscription the resolved state actually contains, and no subscription has
+/// two OPEN cancellation episodes (spec §5.3a: at most one is current - closed
+/// history can pile up freely).
 private func validate(_ snapshot: OttoDataSnapshot) throws {
     let subscriptionIDs = Set(snapshot.subscriptions.map(\.id))
     for event in snapshot.billingEvents where !subscriptionIDs.contains(event.subscriptionID) {
@@ -215,9 +223,9 @@ private func validate(_ snapshot: OttoDataSnapshot) throws {
             entity: "billingEvent \(event.id)", subscriptionID: event.subscriptionID
         )
     }
-    for record in snapshot.cancellationRecords where !subscriptionIDs.contains(record.subscriptionID) {
+    for record in snapshot.cancellationEpisodes where !subscriptionIDs.contains(record.subscriptionID) {
         throw ExportFormatError.danglingReference(
-            entity: "cancellationRecord \(record.id)", subscriptionID: record.subscriptionID
+            entity: "cancellationEpisode \(record.id)", subscriptionID: record.subscriptionID
         )
     }
     for change in snapshot.priceChanges where !subscriptionIDs.contains(change.subscriptionID) {
@@ -225,10 +233,10 @@ private func validate(_ snapshot: OttoDataSnapshot) throws {
             entity: "priceChange \(change.id)", subscriptionID: change.subscriptionID
         )
     }
-    var claimed: Set<UUID> = []
-    for record in snapshot.cancellationRecords {
-        guard claimed.insert(record.subscriptionID).inserted else {
-            throw ExportFormatError.duplicateCancellation(subscriptionID: record.subscriptionID)
+    var openClaimed: Set<UUID> = []
+    for episode in snapshot.cancellationEpisodes where episode.isOpen && episode.deletedAt == nil {
+        guard openClaimed.insert(episode.subscriptionID).inserted else {
+            throw ExportFormatError.duplicateCancellation(subscriptionID: episode.subscriptionID)
         }
     }
 }

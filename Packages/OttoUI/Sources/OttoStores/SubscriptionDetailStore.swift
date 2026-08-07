@@ -8,14 +8,14 @@ public struct SubscriptionDetail: Sendable {
     public var subscription: Subscription
     public var events: [BillingEvent]
     public var priceHistory: [PriceChange]
-    public var cancellation: CancellationRecord?
+    public var cancellation: CancellationEpisode?
     public var paymentMethod: PaymentMethod?
 
     public init(
         subscription: Subscription,
         events: [BillingEvent],
         priceHistory: [PriceChange],
-        cancellation: CancellationRecord?,
+        cancellation: CancellationEpisode?,
         paymentMethod: PaymentMethod?
     ) {
         self.subscription = subscription
@@ -70,7 +70,7 @@ public final class SubscriptionDetailStore {
             }
             let events = try await billingEventRepository.events(forSubscription: subscriptionID)
             let history = try await priceChangeRepository.history(forSubscription: subscriptionID)
-            let cancellation = try await cancellationRepository.record(forSubscription: subscriptionID)
+            let cancellation = try await cancellationRepository.openEpisode(forSubscription: subscriptionID)
             var paymentMethod: PaymentMethod?
             if let paymentMethodID = subscription.paymentMethodID {
                 paymentMethod = try await paymentMethodRepository.paymentMethod(withID: paymentMethodID)

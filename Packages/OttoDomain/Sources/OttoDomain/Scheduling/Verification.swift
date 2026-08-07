@@ -27,7 +27,7 @@ public func nextWouldBeChargeDate(after day: CalendarDay, for subscription: Subs
     return nextBillingDate(after: day, anchor: subscription.cycleStartDay, cycle: subscription.cycle)
 }
 
-/// The check date a new `CancellationRecord` stores (spec §5.4): the next date a
+/// The check date a new `CancellationEpisode` stores (spec §5.4): the next date a
 /// charge would land - today included - if the cancellation silently failed.
 /// Computed exactly once, at cancellation time, because `markedCancelledAt` is a
 /// UTC instant that §4.1 forbids turning into a calendar day later.
@@ -65,19 +65,38 @@ public func wouldBeChargeAmountCents(on day: CalendarDay, for subscription: Subs
 
 // MARK: - Verification transitions
 
-extension CancellationRecord {
-    /// The yes-path: the user confirmed the money stopped. Idempotent - a record
-    /// already verified keeps its first `verifiedAt`. Callers archive the
-    /// subscription alongside (spec §5.4: not archived until verification passes).
-    /// A deferred check cannot be answered: no date was ever watched, so there is
-    /// nothing the confirmation would be about.
-    public func confirmingChargesStopped(at now: Date) -> CancellationRecord {
-        guard verificationState != .verifiedStopped,
+extension CancellationEpisode {
+    /// The yes-path: the user confirmed the money stopped, which is also the
+    /// episode's end (spec §5.3a: exiting writes an end date) - it closes with
+    /// `.verifiedStopped` and the caller archives the subscription alongside
+    /// (spec §5.4: not archived until verification passes). Idempotent - a
+    /// closed episode keeps its first `verifiedAt` and `endedAt`. A deferred
+    /// check cannot be answered: no date was ever watched, so there is nothing
+    /// the confirmation would be about.
+    public func confirmingChargesStopped(at now: Date) -> CancellationEpisode {
+        guard isOpen,
+              verificationState != .verifiedStopped,
               verificationState != .awaitingResumeDate
         else { return self }
         var updated = self
         updated.verificationState = .verifiedStopped
         updated.verifiedAt = now
+        updated.endedAt = now
+        updated.outcome = .verifiedStopped
+        updated.updatedAt = now
+        return updated
+    }
+
+    /// The un-cancel's episode half (spec §5.4, §5.3a): closed with
+    /// `.abandoned`, never deleted - a record of "I thought I'd cancelled this
+    /// and hadn't" is exactly the data this product is about. The watch state
+    /// is left as it was; the outcome says why watching stopped. Nil when the
+    /// episode is already closed, which keeps the calling flow idempotent.
+    public func abandoning(at now: Date) -> CancellationEpisode? {
+        guard isOpen else { return nil }
+        var updated = self
+        updated.endedAt = now
+        updated.outcome = .abandoned
         updated.updatedAt = now
         return updated
     }
@@ -87,8 +106,9 @@ extension CancellationRecord {
     /// `.unexpectedCharge` ledger row (spec §5.3: this flow is that state's only
     /// producer). A deferred check cannot be answered - it has no watched date
     /// for the dispute to name.
-    public func reportingStillCharging(at now: Date) -> CancellationRecord {
-        guard verificationState != .stillCharging,
+    public func reportingStillCharging(at now: Date) -> CancellationEpisode {
+        guard isOpen,
+              verificationState != .stillCharging,
               verificationState != .awaitingResumeDate
         else { return self }
         var updated = self
@@ -112,10 +132,13 @@ extension CancellationRecord {
         for subscription: Subscription,
         asOf today: CalendarDay,
         at now: Date
-    ) -> CancellationRecord {
+    ) -> CancellationEpisode {
         // A deferred check (.awaitingResumeDate) has no date to roll: it is
         // waiting on the user, not on the calendar, and it never escalates.
-        guard verificationState == .pending,
+        // A closed episode stopped watching when it ended (spec §5.3a) - an
+        // abandoned cancellation must not keep rolling toward escalation.
+        guard isOpen,
+              verificationState == .pending,
               var watchedDate = nextChargeDateIfNotCancelled
         else { return self }
         var updated = self
@@ -153,8 +176,8 @@ extension CancellationRecord {
         _ resumeDate: CalendarDay,
         for subscription: Subscription,
         at now: Date
-    ) -> CancellationRecord {
-        guard verificationState == .awaitingResumeDate else { return self }
+    ) -> CancellationEpisode {
+        guard isOpen, verificationState == .awaitingResumeDate else { return self }
         let checkDate = nextWouldBeChargeDate(after: resumeDate.adding(days: -1), for: subscription)
         var updated = self
         updated.nextChargeDateIfNotCancelled = checkDate
@@ -204,7 +227,7 @@ public struct DisputeSummary: Hashable, Sendable {
 /// The dispute summary for a failed cancellation, or nil while there is nothing
 /// to dispute - only a `.stillCharging` record has a charge that arrived.
 public func disputeSummary(
-    for record: CancellationRecord,
+    for record: CancellationEpisode,
     subscription: Subscription
 ) -> DisputeSummary? {
     // Only a .stillCharging record disputes, and that state always carries its
@@ -226,4 +249,48 @@ public func disputeSummary(
         ),
         currencyCode: subscription.currencyCode
     )
+}
+
+// MARK: - Opening an episode
+
+extension Subscription {
+    /// The episode `startCancellation` opens (spec §5.4, §5.3a), derived from
+    /// the PRE-mutation subscription (§5.2a: derive before you mutate): the
+    /// check date and amount are computed exactly once, here, because both are
+    /// unrecoverable later - and the interrupted status is recorded alongside,
+    /// because it is what an un-cancel restores and the one ambiguity (trial
+    /// cancelled before conversion versus confirmed conversion) cannot be
+    /// derived back honestly. Lives on the subscription so flows never read
+    /// the stored status (spec §5.2a, v1.7).
+    ///
+    /// Nil when the lifecycle is already at or past cancellation - there is
+    /// nothing to interrupt, and a redelivered notification action must not
+    /// mint a fresh cancellation for an archived subscription.
+    public func openingCancellationEpisode(
+        id episodeID: UUID,
+        evidenceNote: String?,
+        asOf today: CalendarDay,
+        at now: Date
+    ) -> CancellationEpisode? {
+        guard storedStatus == .trial || storedStatus == .active || storedStatus == .paused else {
+            return nil
+        }
+        // Cancelling an INDEFINITELY paused subscription yields no date at all
+        // (spec §5.4, v1.5): the check is deferred, never fabricated - the
+        // episode waits in .awaitingResumeDate until the user supplies the
+        // resume date.
+        let checkDate = verificationCheckDate(for: self, asOf: today)
+        return CancellationEpisode(
+            id: episodeID,
+            subscriptionID: id,
+            markedCancelledAt: now,
+            statusAtStart: storedStatus,
+            nextChargeDateIfNotCancelled: checkDate,
+            expectedChargeAmountCents: checkDate.map { wouldBeChargeAmountCents(on: $0, for: self) },
+            verificationState: checkDate == nil ? .awaitingResumeDate : .pending,
+            evidenceNote: evidenceNote,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
 }

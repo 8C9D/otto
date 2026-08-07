@@ -53,8 +53,8 @@ struct DeferredVerificationRecordTests {
 
     private let now = Date(timeIntervalSince1970: 10_000)
 
-    private func deferredRecord(subscriptionID: UUID) throws -> CancellationRecord {
-        CancellationRecord(
+    private func deferredRecord(subscriptionID: UUID) throws -> CancellationEpisode {
+        CancellationEpisode(
             id: try fixtureUUID(601),
             subscriptionID: subscriptionID,
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),
@@ -85,7 +85,7 @@ struct DeferredVerificationRecordTests {
         let subscription = try makeSubscription(
             status: .cancellationPending, cycleStartDay: try day(2026, 1, 15)
         )
-        let pending = try makeCancellationRecord(
+        let pending = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 9, 15)
         )
         #expect(pending.supplyingResumeDate(try day(2026, 12, 1), for: subscription, at: now) == pending)
@@ -147,7 +147,7 @@ struct DeferredVerificationRecordTests {
             status: .cancellationPending, cycleStartDay: try day(2026, 1, 15)
         )
         // A pending record whose check date was stripped: undecodable.
-        let pending = try makeCancellationRecord(
+        let pending = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 9, 15)
         )
         var json = try #require(
@@ -156,7 +156,7 @@ struct DeferredVerificationRecordTests {
         json.removeValue(forKey: "nextChargeDateIfNotCancelled")
         let stripped = try JSONSerialization.data(withJSONObject: json)
         #expect(throws: DecodingError.self) {
-            _ = try JSONDecoder().decode(CancellationRecord.self, from: stripped)
+            _ = try JSONDecoder().decode(CancellationEpisode.self, from: stripped)
         }
     }
 }

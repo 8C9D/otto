@@ -31,7 +31,7 @@ struct SoftDeleteTests {
         let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
         try await store.save(subscription)
         try await store.save(try makeBillingEvent(subscriptionID: subscription.id, expectedDate: try day(2026, 9, 1)))
-        try await store.save(try makeCancellationRecord(
+        try await store.save(try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 9, 1)
         ))
         try await store.append(try makePriceChange(
@@ -43,19 +43,19 @@ struct SoftDeleteTests {
 
         // Every live read is empty...
         #expect(try await store.events(forSubscription: subscription.id) == [])
-        #expect(try await store.record(forSubscription: subscription.id) == nil)
+        #expect(try await store.openEpisode(forSubscription: subscription.id) == nil)
         #expect(try await store.history(forSubscription: subscription.id) == [])
 
         // ...every tombstone read still sees the record...
         #expect(try await store.eventsIncludingDeleted(forSubscription: subscription.id).count == 1)
-        #expect(try await store.recordIncludingDeleted(forSubscription: subscription.id) != nil)
+        #expect(try await store.episodesIncludingDeleted(forSubscription: subscription.id).count == 1)
         #expect(try await store.historyIncludingDeleted(forSubscription: subscription.id).count == 1)
 
         // ...and every stored child carries the cascade instant, trial included.
         let context = ModelContext(container)
         #expect(try context.fetch(FetchDescriptor<StoredTrialTerm>()).first?.deletedAt == instant)
         #expect(try context.fetch(FetchDescriptor<StoredBillingEvent>()).first?.deletedAt == instant)
-        #expect(try context.fetch(FetchDescriptor<StoredCancellationRecord>()).first?.deletedAt == instant)
+        #expect(try context.fetch(FetchDescriptor<StoredCancellationEpisode>()).first?.deletedAt == instant)
         #expect(try context.fetch(FetchDescriptor<StoredPriceChange>()).first?.deletedAt == instant)
     }
 
@@ -119,15 +119,15 @@ struct SoftDeleteTests {
         let (store, _) = try makeStore()
         let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 5, 20))
         try await store.save(subscription)
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 9, 20)
         )
         try await store.save(record)
         try await store.deleteSubscription(withID: subscription.id, at: Date(timeIntervalSince1970: 9_000))
-        #expect(try await store.record(forSubscription: subscription.id) == nil)
+        #expect(try await store.openEpisode(forSubscription: subscription.id) == nil)
 
         try await store.save(record)
 
-        #expect(try await store.record(forSubscription: subscription.id) == record)
+        #expect(try await store.openEpisode(forSubscription: subscription.id) == record)
     }
 }

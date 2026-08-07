@@ -323,7 +323,7 @@ private struct ImportSection: View {
             entityLine(String(localized: "Charges"), summary.billingEvents),
             entityLine(String(localized: "Payment methods"), summary.paymentMethods),
             entityLine(String(localized: "Price changes"), summary.priceChanges),
-            entityLine(String(localized: "Cancellation records"), summary.cancellationRecords)
+            entityLine(String(localized: "Cancellation records"), summary.cancellationEpisodes)
         ]
         .compactMap { $0 }
         .joined(separator: "\n")

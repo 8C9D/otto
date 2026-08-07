@@ -66,11 +66,11 @@ actor MockSubscriptionRepository: SubscriptionRepository {
 }
 
 actor MockCancellationRepository: CancellationRepository {
-    private var records: [UUID: CancellationRecord] = [:]
+    private var episodesByID: [UUID: CancellationEpisode] = [:]
     private var failure: (any Error)?
 
-    func seed(_ newRecords: [CancellationRecord]) {
-        for record in newRecords { records[record.subscriptionID] = record }
+    func seed(_ newEpisodes: [CancellationEpisode]) {
+        for episode in newEpisodes { episodesByID[episode.id] = episode }
     }
 
     func fail(with error: any Error) { failure = error }
@@ -79,20 +79,29 @@ actor MockCancellationRepository: CancellationRepository {
         if let failure { throw failure }
     }
 
-    func save(_ record: CancellationRecord) async throws {
+    func save(_ episode: CancellationEpisode) async throws {
         try throwPrimedFailure()
-        records[record.subscriptionID] = record
+        episodesByID[episode.id] = episode
     }
 
-    func record(forSubscription subscriptionID: UUID) async throws -> CancellationRecord? {
-        try throwPrimedFailure()
-        guard let record = records[subscriptionID], record.deletedAt == nil else { return nil }
-        return record
+    func openEpisode(forSubscription subscriptionID: UUID) async throws -> CancellationEpisode? {
+        try await episodes(forSubscription: subscriptionID).first { $0.isOpen }
     }
 
-    func recordIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> CancellationRecord? {
+    func episodes(forSubscription subscriptionID: UUID) async throws -> [CancellationEpisode] {
         try throwPrimedFailure()
-        return records[subscriptionID]
+        return episodesByID.values
+            .filter { $0.subscriptionID == subscriptionID && $0.deletedAt == nil }
+            .sorted { ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString) }
+    }
+
+    func episodesIncludingDeleted(
+        forSubscription subscriptionID: UUID
+    ) async throws -> [CancellationEpisode] {
+        try throwPrimedFailure()
+        return episodesByID.values
+            .filter { $0.subscriptionID == subscriptionID }
+            .sorted { ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString) }
     }
 }
 

@@ -59,7 +59,7 @@ struct WireFormatTests {
         #expect(BillingEvent.State.allCases.map(\.rawValue) == [
             "upcoming", "confirmedCharged", "confirmedNotCharged", "unexpectedCharge", "skipped"
         ])
-        #expect(CancellationRecord.VerificationState.allCases.map(\.rawValue) == [
+        #expect(CancellationEpisode.VerificationState.allCases.map(\.rawValue) == [
             "pending", "verifiedStopped", "stillCharging", "needsManualReview", "awaitingResumeDate"
         ])
         #expect(PriceChange.Source.allCases.map(\.rawValue) == [
@@ -90,16 +90,16 @@ struct ExportVersionTests {
     @Test("a future format version fails clearly, before anything is applied")
     func futureVersionRefused() throws {
         let data = Data("""
-        {"formatVersion": 2, "exportedAt": 0, "subscriptions": [], "paymentMethods": [],
-         "billingEvents": [], "cancellationRecords": [], "priceChanges": []}
+        {"formatVersion": 3, "exportedAt": 0, "subscriptions": [], "paymentMethods": [],
+         "billingEvents": [], "cancellationEpisodes": [], "priceChanges": []}
         """.utf8)
 
-        #expect(throws: ExportFormatError.unsupportedFormatVersion(found: 2, supported: 1)) {
+        #expect(throws: ExportFormatError.unsupportedFormatVersion(found: 3, supported: 2)) {
             try decodeExport(data)
         }
-        let message = ExportFormatError.unsupportedFormatVersion(found: 2, supported: 1)
+        let message = ExportFormatError.unsupportedFormatVersion(found: 3, supported: 2)
             .errorDescription ?? ""
-        #expect(message.contains("format 2"))
+        #expect(message.contains("format 3"))
         #expect(message.contains("Nothing was changed"))
     }
 

@@ -39,7 +39,7 @@ public final class SubscriptionListModel {
 
     public func rows(
         subscriptions: [Subscription],
-        cancellations: [UUID: CancellationRecord],
+        cancellations: [UUID: CancellationEpisode],
         today: CalendarDay
     ) -> [Row] {
         let filtered = subscriptions.filter { subscription in

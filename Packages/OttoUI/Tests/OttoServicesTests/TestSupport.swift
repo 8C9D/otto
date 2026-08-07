@@ -55,12 +55,30 @@ func makeSubscription(
     reminderLeadDays: Int = 3,
     sameDayReminder: Bool = false,
     pauseEndsOn: CalendarDay? = nil,
+    pausedOn: CalendarDay? = nil,
+    pauseEpisodes: [PauseEpisode]? = nil,
     lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     cancellationURL: URL? = nil,
     lastUsedDate: CalendarDay? = nil
 ) throws -> Subscription {
-    Subscription(
+    // The v1.7-era pause parameters survive as the open episode they now
+    // describe (spec §5.3a).
+    let episodes: [PauseEpisode]
+    if let pauseEpisodes {
+        episodes = pauseEpisodes
+    } else if status == .paused || pausedOn != nil || pauseEndsOn != nil {
+        episodes = [PauseEpisode(
+            id: try fixtureUUID(index + 700),
+            startedOn: pausedOn,
+            scheduledResumeOn: pauseEndsOn,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )]
+    } else {
+        episodes = []
+    }
+    return Subscription(
         id: try fixtureUUID(index),
         name: name,
         category: .foodAndDelivery,
@@ -71,7 +89,7 @@ func makeSubscription(
         cycleStartDay: cycleStartDay,
         reminderLeadDays: reminderLeadDays,
         sameDayReminder: sameDayReminder,
-        pauseEndsOn: pauseEndsOn,
+        pauseEpisodes: episodes,
         lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         cancellationURL: cancellationURL,
@@ -159,23 +177,32 @@ actor FakeSubscriptionRepository: SubscriptionRepository {
 }
 
 actor FakeCancellationRepository: CancellationRepository {
-    private var records: [UUID: CancellationRecord] = [:]
+    private var episodesByID: [UUID: CancellationEpisode] = [:]
 
-    func seed(_ newRecords: [CancellationRecord]) {
-        for record in newRecords { records[record.subscriptionID] = record }
+    func seed(_ newEpisodes: [CancellationEpisode]) {
+        for episode in newEpisodes { episodesByID[episode.id] = episode }
     }
 
-    func save(_ record: CancellationRecord) async throws {
-        records[record.subscriptionID] = record
+    func save(_ episode: CancellationEpisode) async throws {
+        episodesByID[episode.id] = episode
     }
 
-    func record(forSubscription subscriptionID: UUID) async throws -> CancellationRecord? {
-        guard let record = records[subscriptionID], record.deletedAt == nil else { return nil }
-        return record
+    func openEpisode(forSubscription subscriptionID: UUID) async throws -> CancellationEpisode? {
+        try await episodes(forSubscription: subscriptionID).first { $0.isOpen }
     }
 
-    func recordIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> CancellationRecord? {
-        records[subscriptionID]
+    func episodes(forSubscription subscriptionID: UUID) async throws -> [CancellationEpisode] {
+        episodesByID.values
+            .filter { $0.subscriptionID == subscriptionID && $0.deletedAt == nil }
+            .sorted { ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString) }
+    }
+
+    func episodesIncludingDeleted(
+        forSubscription subscriptionID: UUID
+    ) async throws -> [CancellationEpisode] {
+        episodesByID.values
+            .filter { $0.subscriptionID == subscriptionID }
+            .sorted { ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString) }
     }
 }
 
@@ -219,6 +246,12 @@ actor FakeBillingEventRepository: BillingEventRepository {
         guard subscription.deletedAt == nil, horizonDays >= 0, maxReminderLeadDays >= 0 else {
             return []
         }
+        // The watermark freezes where the store's does (spec §5.3): an
+        // indefinite pause, and any cancellation state - their exits re-expect
+        // charges retroactively, so nothing may vouch for the frozen window.
+        let effective = subscription.effectiveStatus(asOf: today)
+        if effective == .paused && subscription.pauseEndsOn == nil { return [] }
+        if effective == .cancellationPending || effective == .cancelled { return [] }
         // The window reaches back to the watermark, mirroring the store
         // (spec §5.3, v1.5). The mock has no stored record of its own, so the
         // passed value's watermark stands in for it.

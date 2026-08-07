@@ -36,6 +36,7 @@ struct CancellationSectionView: View {
                 evidenceRow(record: record)
                 resumeDatePrompt(record: record)
                 verificationPrompt(record: record)
+                abandonRow
             }
             if let url = detail.subscription.cancellationURL {
                 Link(destination: url) {
@@ -71,10 +72,31 @@ struct CancellationSectionView: View {
         detail.subscription.effectiveStatus(asOf: model.subscriptionsStore.today) == .archived
     }
 
+    /// The un-cancel (spec §5.4, §5.3a): an accidental "I'm cancelling" tap
+    /// used to be irreversible in-app. The episode closes as `.abandoned` and
+    /// stays in history - "I thought I'd cancelled this and hadn't" is exactly
+    /// the data Otto is for - and the subscription goes back to the state the
+    /// cancellation interrupted.
+    @ViewBuilder
+    private var abandonRow: some View {
+        if !isArchived {
+            Button {
+                perform {
+                    try await model.abandonCancellation(subscriptionID: detail.subscription.id)
+                }
+            } label: {
+                Label(
+                    String(localized: "I'm not cancelling after all"),
+                    systemImage: "arrow.uturn.backward"
+                )
+            }
+        }
+    }
+
     /// The captured evidence, editable in place - the confirmation number usually
     /// arrives only after the vendor page has been fought through.
     @ViewBuilder
-    private func evidenceRow(record: CancellationRecord) -> some View {
+    private func evidenceRow(record: CancellationEpisode) -> some View {
         Button {
             evidenceDraft = record.evidenceNote ?? ""
             isEditingEvidence = true
@@ -117,7 +139,7 @@ struct CancellationSectionView: View {
     /// date honestly exists, and Otto will not fabricate one. The user supplies
     /// the resume date the vendor gave; the watch starts from it.
     @ViewBuilder
-    private func resumeDatePrompt(record: CancellationRecord) -> some View {
+    private func resumeDatePrompt(record: CancellationEpisode) -> some View {
         if record.verificationState == .awaitingResumeDate {
             let name = detail.subscription.name
             Text(String(localized: """
@@ -148,7 +170,7 @@ struct CancellationSectionView: View {
     /// date has arrived - and kept on screen for an escalated record, which is
     /// exactly a check that went unanswered three times.
     @ViewBuilder
-    private func verificationPrompt(record: CancellationRecord) -> some View {
+    private func verificationPrompt(record: CancellationEpisode) -> some View {
         let today = model.subscriptionsStore.today
         if let checkDate = record.nextChargeDateIfNotCancelled,
            (record.verificationState == .pending && checkDate <= today)
@@ -202,7 +224,7 @@ struct CancellationSectionView: View {
         }
     }
 
-    private func verificationBadge(_ state: CancellationRecord.VerificationState) -> some View {
+    private func verificationBadge(_ state: CancellationEpisode.VerificationState) -> some View {
         let badge: BadgeSpec = switch state {
         case .pending:
             BadgeSpec(text: String(localized: "Waiting"), symbolName: "clock", color: .orange)

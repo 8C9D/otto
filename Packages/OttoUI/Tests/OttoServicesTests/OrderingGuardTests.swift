@@ -118,7 +118,7 @@ struct OrderingGuardTests {
         let fixture = SchedulerFixture()
         await fixture.subscriptions.seed([snapshot])
         let checkDate = try day(2026, 8, 15)
-        await fixture.cancellations.seed([CancellationRecord(
+        await fixture.cancellations.seed([CancellationEpisode(
             id: try fixtureUUID(600),
             subscriptionID: snapshot.id,
             markedCancelledAt: Date(timeIntervalSince1970: 4_000),

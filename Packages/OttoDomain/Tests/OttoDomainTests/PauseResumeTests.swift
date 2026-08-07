@@ -33,13 +33,23 @@ struct PauseResumeDerivationTests {
         #expect(!subscription.isResumedPause(asOf: try day(2027, 12, 31)))
     }
 
-    @Test("a stored .active subscription with a stale pauseEndsOn is not a resumed pause")
-    func staleEndDateOnActive() throws {
-        // pauseEndsOn is meaningful only while paused (spec §5.1); a manual
-        // resume that left the date behind must not re-enter pause semantics.
+    @Test("a resumed subscription's closed episode never re-enters pause semantics")
+    func closedEpisodeOnActive() throws {
+        // v1.7 stored the pause as two fields, and a manual resume that left a
+        // stale pauseEndsOn behind was a live hazard this test used to pin.
+        // The episode shape (spec §5.3a) makes that state unconstructible -
+        // resuming closes the episode inside the same value - so what remains
+        // to pin is its replacement: a CLOSED episode is history, not the
+        // current pause, and derives nothing.
         let subscription = try makeSubscription(
-            status: .active, cycleStartDay: try day(2026, 6, 1), pauseEndsOn: try day(2026, 7, 1)
+            status: .active, cycleStartDay: try day(2026, 6, 1),
+            pauseEpisodes: [try makePauseEpisode(
+                startedOn: try day(2026, 6, 15), scheduledResumeOn: try day(2026, 7, 1),
+                endedOn: try day(2026, 7, 1), outcome: .resumed
+            )]
         )
+        #expect(subscription.currentPauseEpisode == nil)
+        #expect(subscription.pauseEndsOn == nil)
         #expect(!subscription.isResumedPause(asOf: try day(2026, 8, 1)))
         #expect(subscription.effectiveStatus(asOf: try day(2026, 8, 1)) == .active)
     }

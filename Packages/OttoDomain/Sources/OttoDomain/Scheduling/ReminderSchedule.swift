@@ -21,7 +21,7 @@ import Foundation
 ///   being told money started moving.
 public func reminderSchedule(
     for subscription: Subscription,
-    cancellation: CancellationRecord? = nil,
+    cancellation: CancellationEpisode? = nil,
     acknowledgedChargeDays: Set<CalendarDay> = [],
     from today: CalendarDay,
     horizonDays: Int
@@ -244,7 +244,7 @@ private func pauseEndingReminders(
 /// their statement. A cancellation is not done until the money is confirmed stopped.
 private func verificationReminders(
     for subscription: Subscription,
-    cancellation: CancellationRecord?,
+    cancellation: CancellationEpisode?,
     from today: CalendarDay,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {

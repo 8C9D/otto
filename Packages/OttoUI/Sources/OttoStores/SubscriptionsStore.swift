@@ -17,7 +17,7 @@ public final class SubscriptionsStore {
     /// Each cancelled or cancellation-pending subscription's record, keyed by
     /// subscription id. Loaded alongside the list because Today's verification
     /// cards are derived from both together.
-    public private(set) var cancellations: [UUID: CancellationRecord] = [:]
+    public private(set) var cancellations: [UUID: CancellationEpisode] = [:]
 
     /// How many live records the last refresh could not read (spec §5.2b, v1.4).
     /// Today renders a single aggregate needs-review card whenever this is
@@ -64,13 +64,13 @@ public final class SubscriptionsStore {
         do {
             let loaded = try await subscriptionRepository.subscriptions()
             let today = dates.today()
-            var records: [UUID: CancellationRecord] = [:]
+            var records: [UUID: CancellationEpisode] = [:]
             // Effective, not stored (spec §5.2a, v1.7) - see the same filter in
             // NotificationScheduler.
             for subscription in loaded
             where subscription.effectiveStatus(asOf: today) == .cancellationPending
                 || subscription.effectiveStatus(asOf: today) == .cancelled {
-                if let record = try await cancellationRepository.record(forSubscription: subscription.id) {
+                if let record = try await cancellationRepository.openEpisode(forSubscription: subscription.id) {
                     records[subscription.id] = record
                 }
             }

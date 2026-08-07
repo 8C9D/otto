@@ -31,12 +31,45 @@ struct DataTransferTests {
         try await store.save(doomed)
         try await store.save(try makeBillingEvent(index: 103, subscriptionID: doomed.id, expectedDate: try day(2026, 3, 1)))
 
+        // Both episode tables with MULTIPLE episodes each (spec §5.3a): two
+        // separate pause periods - one closed by a resume, one current...
+        let paused = try makeSubscription(
+            index: 5, status: .paused, cycleStartDay: try day(2026, 1, 10),
+            pauseEpisodes: [
+                PauseEpisode(
+                    id: try fixtureUUID(701),
+                    startedOn: try day(2025, 11, 1),
+                    scheduledResumeOn: try day(2026, 2, 1),
+                    endedOn: try day(2026, 2, 1),
+                    outcome: .resumed,
+                    createdAt: Date(timeIntervalSince1970: 1_000),
+                    updatedAt: Date(timeIntervalSince1970: 2_000)
+                ),
+                PauseEpisode(
+                    id: try fixtureUUID(702),
+                    startedOn: try day(2026, 6, 1),
+                    createdAt: Date(timeIntervalSince1970: 3_000),
+                    updatedAt: Date(timeIntervalSince1970: 3_000)
+                )
+            ]
+        )
+        try await store.save(paused)
+
         try await store.save(try makeBillingEvent(index: 101, subscriptionID: active.id, expectedDate: try day(2026, 1, 15)))
         try await store.save(try makeBillingEvent(index: 102, subscriptionID: active.id, expectedDate: try day(2026, 2, 15)))
         try await store.append(try makePriceChange(index: 201, subscriptionID: active.id, effectiveDate: try day(2025, 3, 1)))
-        try await store.save(try makeCancellationRecord(
+        try await store.save(try makeCancellationEpisode(
             index: 601, subscriptionID: cancelled.id, nextChargeDateIfNotCancelled: try day(2026, 9, 1)
         ))
+        // ...and the same subscription's earlier cancellation, un-cancelled
+        // (§5.3a: an abandoned episode is history and must survive a backup).
+        var abandoned = try makeCancellationEpisode(
+            index: 602, subscriptionID: cancelled.id, nextChargeDateIfNotCancelled: try day(2026, 5, 1)
+        )
+        abandoned.markedCancelledAt = Date(timeIntervalSince1970: 3_000)
+        abandoned.endedAt = Date(timeIntervalSince1970: 3_500)
+        abandoned.outcome = .abandoned
+        try await store.save(abandoned)
         try await store.save(try makePaymentMethod(index: 300))
 
         // The tombstoned subscription and its cascade stay in the snapshot.

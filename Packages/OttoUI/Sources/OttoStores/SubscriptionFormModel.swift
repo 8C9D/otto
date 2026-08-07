@@ -301,8 +301,9 @@ public final class SubscriptionFormModel {
             cycleStartDay: anchor,
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
-            pauseEndsOn: original?.pauseEndsOn,
-            pausedOn: original?.pausedOn,
+            // The form DESCRIBES the subscription (spec §7.1); pause history is
+            // the pause flow's and carries through an edit untouched.
+            pauseEpisodes: original?.pauseEpisodes ?? [],
             // Spec §5.3 (v1.5): a new entry's watermark starts at the later of
             // the anchor and today, so Mode B never backfills history it had no
             // rows for. An edit carries the watermark through; the save path

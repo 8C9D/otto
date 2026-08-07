@@ -1,23 +1,15 @@
+import Foundation
 import SwiftData
 
-// The persistence schema, versioned from the first commit (Wave 2 constraint 4):
-// once CloudKit is on (Wave 6), only lightweight-migration-compatible changes are
-// permitted, so the migration machinery has to predate the constraint.
+// The FROZEN first schema version - the shape Waves 2 through 8 wrote to disk,
+// kept byte-for-byte (class names, property names, storage shapes) because it
+// is the source side of the V1→V2 migration and must match existing stores
+// exactly. Never edit these models; schema changes happen in a new version.
 //
-// Every @Model here is a PERSISTENCE RECORD ONLY, and internal on purpose: nothing
-// above layer 2 can even name one. The shapes are deliberately CloudKit-compatible
-// now, ahead of Wave 6, because retrofitting them later means migrating data that
-// already exists on devices:
-//   - no @Attribute(.unique) anywhere
-//   - every property optional or carrying a default
-//   - every relationship optional, with an explicit inverse
-//   - no .deny delete rules
-// The resulting optionals-with-defaults ugliness is absorbed entirely by the
-// mapping layer; the domain never sees it.
-//
-// Storage shapes (decision record, Wave 2): calendar days are single Ints in
-// yyyymmdd form, billing cycles are two scalar columns, enums are stable raw
-// strings, money is integer cents, and UUIDs are client-generated (spec §3.5).
+// Wave 8.5 (spec §5.3a) replaced two of these shapes: the one-to-one
+// `StoredCancellationRecord` slot and the `pausedOn`/`pauseEndsOn` field pair
+// both modelled something that recurs, and V2 turns both into one-to-many
+// episode tables. The migration in `OttoMigrationPlan` carries the data across.
 enum OttoSchemaV1: VersionedSchema {
     static let versionIdentifier = Schema.Version(1, 0, 0)
 
@@ -33,11 +25,146 @@ enum OttoSchemaV1: VersionedSchema {
     }
 }
 
-// The current schema version. Code outside the Schema directory refers to records
-// through these aliases only, so moving to a V2 is a one-line change per model.
-typealias StoredSubscription = OttoSchemaV1.StoredSubscription
-typealias StoredTrialTerm = OttoSchemaV1.StoredTrialTerm
-typealias StoredBillingEvent = OttoSchemaV1.StoredBillingEvent
-typealias StoredCancellationRecord = OttoSchemaV1.StoredCancellationRecord
-typealias StoredPriceChange = OttoSchemaV1.StoredPriceChange
-typealias StoredPaymentMethod = OttoSchemaV1.StoredPaymentMethod
+extension OttoSchemaV1 {
+    @Model
+    final class StoredSubscription {
+        var id: UUID?
+        var name: String?
+        var vendorURL: String?
+        var category: String?
+        var status: String?
+        var amountCents: Int?
+        var currencyCode: String?
+        var cycleUnit: String?
+        var cycleInterval: Int?
+        /// yyyymmdd
+        var cycleStartDay: Int?
+        var reminderLeadDays: Int?
+        var sameDayReminder: Bool = false
+        /// yyyymmdd - V1's single resume date, migrated into the open episode.
+        var pauseEndsOn: Int?
+        /// yyyymmdd - V1's single pause start, migrated into the open episode.
+        var pausedOn: Int?
+        /// yyyymmdd
+        var lastMaterializedThrough: Int?
+        var paymentMethodID: UUID?
+        var cancellationURL: String?
+        var cancellationNotes: String?
+        /// yyyymmdd
+        var lastUsedDate: Int?
+        var notes: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV1.StoredTrialTerm.subscription)
+        var trial: OttoSchemaV1.StoredTrialTerm?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV1.StoredBillingEvent.subscription)
+        var billingEvents: [OttoSchemaV1.StoredBillingEvent]?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV1.StoredCancellationRecord.subscription)
+        var cancellationRecord: OttoSchemaV1.StoredCancellationRecord?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV1.StoredPriceChange.subscription)
+        var priceChanges: [OttoSchemaV1.StoredPriceChange]?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredTrialTerm {
+        var id: UUID?
+        /// yyyymmdd
+        var startDate: Int?
+        var lengthDays: Int?
+        var bufferDays: Int?
+        var convertsToAmountCents: Int?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV1.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredBillingEvent {
+        var id: UUID?
+        var subscriptionID: UUID?
+        /// yyyymmdd
+        var expectedDate: Int?
+        var expectedAmountCents: Int?
+        var state: String?
+        var userConfirmedAt: Date?
+        var acknowledgedAt: Date?
+        var actualAmountCents: Int?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV1.StoredSubscription?
+
+        init() {}
+    }
+
+    /// V1's one-to-one cancellation slot - the shape §5.3a replaced. Exists
+    /// only as the migration source; the live model is V2's
+    /// `StoredCancellationEpisode`.
+    @Model
+    final class StoredCancellationRecord {
+        var id: UUID?
+        var subscriptionID: UUID?
+        var markedCancelledAt: Date?
+        /// yyyymmdd
+        var nextChargeDateIfNotCancelled: Int?
+        var expectedChargeAmountCents: Int?
+        var verificationState: String?
+        var unansweredCheckCount: Int?
+        var verifiedAt: Date?
+        var evidenceNote: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV1.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredPriceChange {
+        var id: UUID?
+        var subscriptionID: UUID?
+        /// yyyymmdd
+        var effectiveDate: Int?
+        var oldAmountCents: Int?
+        var newAmountCents: Int?
+        var source: String?
+        var note: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV1.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredPaymentMethod {
+        var id: UUID?
+        var label: String?
+        var last4: String?
+        var issuer: String?
+        var expiryMonth: Int?
+        var expiryYear: Int?
+        var isDefault: Bool = false
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        init() {}
+    }
+}

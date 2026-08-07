@@ -112,7 +112,7 @@ public actor NotificationScheduler: ReminderScheduling {
         let ledgerFailures = await reconcileLedger(for: live, today: today, now: now)
 
         // The pure plan, budgeted beneath whatever snoozes already occupy.
-        let records = try await caughtUpCancellationRecords(for: live, today: today, now: now)
+        let records = try await caughtUpCancellationEpisodes(for: live, today: today, now: now)
         let acknowledged = try await acknowledgedChargeDays(for: live)
         let plan = live.flatMap {
             reminderSchedule(
@@ -152,12 +152,12 @@ public actor NotificationScheduler: ReminderScheduling {
     /// §5.4 roll-forward: every scheduling pass catches unanswered checks up to
     /// today, so the three-strike escalation depends on stored state and the
     /// current date, never on the app having been opened at the right time.
-    private func caughtUpCancellationRecords(
+    private func caughtUpCancellationEpisodes(
         for live: [Subscription],
         today: CalendarDay,
         now: Date
-    ) async throws -> [UUID: CancellationRecord] {
-        var records: [UUID: CancellationRecord] = [:]
+    ) async throws -> [UUID: CancellationEpisode] {
+        var records: [UUID: CancellationEpisode] = [:]
         // Effective, not stored (spec §5.2a, v1.7): equivalent today - nothing
         // derives into or out of a cancellation state - and immune to a future
         // derived state slipping past a stored filter, which is the Wave 4 bug's
@@ -165,7 +165,7 @@ public actor NotificationScheduler: ReminderScheduling {
         for subscription in live
         where subscription.effectiveStatus(asOf: today) == .cancellationPending
             || subscription.effectiveStatus(asOf: today) == .cancelled {
-            guard let record = try await cancellations.record(forSubscription: subscription.id) else {
+            guard let record = try await cancellations.openEpisode(forSubscription: subscription.id) else {
                 continue
             }
             let caughtUp = record.catchingUpOnUnansweredChecks(for: subscription, asOf: today, at: now)
@@ -227,7 +227,7 @@ public actor NotificationScheduler: ReminderScheduling {
     private func requestSpecs(
         for scheduled: [PlannedReminder],
         subscriptions live: [Subscription],
-        cancellations records: [UUID: CancellationRecord],
+        cancellations records: [UUID: CancellationEpisode],
         now: Date,
         timeZone: TimeZone
     ) -> [NotificationRequestSpec] {

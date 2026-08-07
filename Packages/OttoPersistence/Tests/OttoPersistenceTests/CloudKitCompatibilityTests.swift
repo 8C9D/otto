@@ -14,7 +14,7 @@ struct CloudKitCompatibilityTests {
 
     @Test("no attribute is unique, and every attribute is optional or has a default")
     func attributes() {
-        let schema = Schema(versionedSchema: OttoSchemaV1.self)
+        let schema = Schema(versionedSchema: OttoSchemaV2.self)
         for entity in schema.entities {
             for attribute in entity.attributes {
                 #expect(
@@ -31,7 +31,7 @@ struct CloudKitCompatibilityTests {
 
     @Test("every relationship is optional, has an explicit inverse, and never denies deletes")
     func relationships() {
-        let schema = Schema(versionedSchema: OttoSchemaV1.self)
+        let schema = Schema(versionedSchema: OttoSchemaV2.self)
         for entity in schema.entities {
             for relationship in entity.relationships {
                 #expect(
@@ -50,9 +50,9 @@ struct CloudKitCompatibilityTests {
         }
     }
 
-    @Test("the schema actually contains all six models - the assertions above cover everything")
+    @Test("the schema actually contains all seven models - the assertions above cover everything")
     func coverage() {
-        let schema = Schema(versionedSchema: OttoSchemaV1.self)
-        #expect(schema.entities.count == 6)
+        let schema = Schema(versionedSchema: OttoSchemaV2.self)
+        #expect(schema.entities.count == 7)
     }
 }

@@ -13,7 +13,7 @@ extension OttoStore: DataTransferRepository {
         let subscriptions = try modelContext.fetch(FetchDescriptor<StoredSubscription>())
         let methods = try modelContext.fetch(FetchDescriptor<StoredPaymentMethod>())
         let events = try modelContext.fetch(FetchDescriptor<StoredBillingEvent>())
-        let cancellations = try modelContext.fetch(FetchDescriptor<StoredCancellationRecord>())
+        let cancellations = try modelContext.fetch(FetchDescriptor<StoredCancellationEpisode>())
         let changes = try modelContext.fetch(FetchDescriptor<StoredPriceChange>())
         return OttoDataSnapshot(
             subscriptions: try subscriptions.map { try $0.toDomain() }
@@ -22,7 +22,7 @@ extension OttoStore: DataTransferRepository {
                 .sorted { $0.id.uuidString < $1.id.uuidString },
             billingEvents: try events.map { try $0.toDomain() }
                 .sorted { $0.id.uuidString < $1.id.uuidString },
-            cancellationRecords: try cancellations.map { try $0.toDomain() }
+            cancellationEpisodes: try cancellations.map { try $0.toDomain() }
                 .sorted { $0.id.uuidString < $1.id.uuidString },
             priceChanges: try changes.map { try $0.toDomain() }
                 .sorted { $0.id.uuidString < $1.id.uuidString }
@@ -65,7 +65,7 @@ extension OttoStore: DataTransferRepository {
         where !knownSubscriptionIDs.contains(event.subscriptionID) {
             throw RepositoryError.subscriptionNotFound(event.subscriptionID)
         }
-        for cancellation in snapshot.cancellationRecords
+        for cancellation in snapshot.cancellationEpisodes
         where !knownSubscriptionIDs.contains(cancellation.subscriptionID) {
             throw RepositoryError.subscriptionNotFound(cancellation.subscriptionID)
         }
@@ -98,11 +98,11 @@ extension OttoStore: DataTransferRepository {
             record.subscription = parent
             record.update(from: event)
         }
-        for cancellation in snapshot.cancellationRecords {
+        for cancellation in snapshot.cancellationEpisodes {
             guard let parent = parents[cancellation.subscriptionID] else { continue }
-            let record = StoredCancellationRecord()
+            let record = StoredCancellationEpisode()
             modelContext.insert(record)
-            parent.cancellationRecord = record
+            record.subscription = parent
             record.update(from: cancellation)
         }
         for change in snapshot.priceChanges {

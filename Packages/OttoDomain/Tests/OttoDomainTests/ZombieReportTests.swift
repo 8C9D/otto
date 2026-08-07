@@ -136,6 +136,7 @@ struct ZombieReportTests {
                 cycle: .monthly,
                 cycleStartDay: try day(2026, 1, 15),
                 reminderLeadDays: 3,
+                pauseEpisodes: [try makePauseEpisode(startedOn: try day(2026, 2, 1))],
                 lastUsedDate: try day(2026, 1, 20),
                 createdAt: Date(timeIntervalSince1970: 0),
                 updatedAt: Date(timeIntervalSince1970: 0)

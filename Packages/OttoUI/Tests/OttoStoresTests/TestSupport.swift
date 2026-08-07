@@ -39,7 +39,18 @@ func makeSubscription(
     trial: TrialTerm? = nil,
     paymentMethodID: UUID? = nil
 ) throws -> Subscription {
-    Subscription(
+    // The v1.7-era pause parameter survives as the open episode it now
+    // describes (spec §5.3a).
+    let episodes: [PauseEpisode] = (status == .paused || pauseEndsOn != nil)
+        ? [PauseEpisode(
+            id: try fixtureUUID(index + 700),
+            startedOn: nil,
+            scheduledResumeOn: pauseEndsOn,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 2_000)
+        )]
+        : []
+    return Subscription(
         id: try fixtureUUID(index),
         name: name ?? "Fixture \(index)",
         category: .other,
@@ -49,7 +60,7 @@ func makeSubscription(
         cycle: cycle,
         cycleStartDay: cycleStartDay,
         reminderLeadDays: 3,
-        pauseEndsOn: pauseEndsOn,
+        pauseEpisodes: episodes,
         lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: paymentMethodID,
@@ -80,13 +91,13 @@ func makeTrialTerm(
     )
 }
 
-func makeCancellationRecord(
+func makeCancellationEpisode(
     index: Int = 600,
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
-    verificationState: CancellationRecord.VerificationState = .pending
-) throws -> CancellationRecord {
-    CancellationRecord(
+    verificationState: CancellationEpisode.VerificationState = .pending
+) throws -> CancellationEpisode {
+    CancellationEpisode(
         id: try fixtureUUID(index),
         subscriptionID: subscriptionID,
         markedCancelledAt: Date(timeIntervalSince1970: 4_000),

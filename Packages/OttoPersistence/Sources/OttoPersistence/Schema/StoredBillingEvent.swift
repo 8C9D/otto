@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV1 {
+extension OttoSchemaV2 {
     /// Persistence record for `BillingEvent` (spec §5.3), one row per expected
     /// charge. `subscriptionID` is stored as a scalar beside the relationship: the
     /// relationship is the structural link that cascades, the scalar is the domain

@@ -20,7 +20,7 @@ public enum OttoContainerFactory {
     }
 
     static var currentSchema: Schema {
-        Schema(versionedSchema: OttoSchemaV1.self)
+        Schema(versionedSchema: OttoSchemaV2.self)
     }
 
     private static func makeContainer(_ configuration: ModelConfiguration) throws -> ModelContainer {

@@ -22,7 +22,16 @@ private func insightsSubscription(
     lastUsedDate: CalendarDay? = nil,
     deletedAt: Date? = nil
 ) throws -> Subscription {
-    Subscription(
+    let episodes: [PauseEpisode] = (status == .paused || pausedOn != nil || pauseEndsOn != nil)
+        ? [PauseEpisode(
+            id: try fixtureUUID(index + 700),
+            startedOn: pausedOn,
+            scheduledResumeOn: pauseEndsOn,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )]
+        : []
+    return Subscription(
         id: try fixtureUUID(index),
         name: name,
         category: category,
@@ -32,8 +41,7 @@ private func insightsSubscription(
         cycle: cycle,
         cycleStartDay: cycleStartDay,
         reminderLeadDays: 3,
-        pauseEndsOn: pauseEndsOn,
-        pausedOn: pausedOn,
+        pauseEpisodes: episodes,
         trial: trial,
         lastUsedDate: lastUsedDate,
         createdAt: Date(timeIntervalSince1970: 0),

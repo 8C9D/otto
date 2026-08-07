@@ -64,6 +64,19 @@ extension OttoStore: BillingEventRepository {
             return []
         }
 
+        // A pending or cancelled subscription expects no charges, but its exit
+        // can re-expect them RETROACTIVELY: un-cancelling (spec §5.4, §5.3a)
+        // means the vendor was charging all along, and every date the watch
+        // covered needs its ledger row. So the watermark freezes here exactly
+        // like the indefinite pause above - advancing it would vouch for dates
+        // nothing observed, and the un-cancel backfill would find them stranded.
+        // Archival ends the freeze question: archived is terminal and
+        // materializes nothing ever again.
+        let effective = subscription.effectiveStatus(asOf: today)
+        if effective == .cancellationPending || effective == .cancelled {
+            return []
+        }
+
         // Which charges the effective status expects is a domain decision
         // (spec §5.2a, §5.3) - this store only creates the rows it names.
         let chargeDates = expectedCharges(
@@ -141,6 +154,18 @@ extension OttoStore: BillingEventRepository {
                   let day = CalendarDay(yyyymmdd: stored),
                   let amount = record.expectedAmountCents
             else { continue }
+            // Only future-dated rows are invalidated (spec §5.3, v1.8): a
+            // past-dated row is history whether or not it was acknowledged -
+            // a record of what was expected on a date that already happened -
+            // and an edit applies going forward, never retroactively. Wave 8
+            // found the old behaviour silently deleting unconfirmed past
+            // charges from the ledger the moment a price was corrected. A row
+            // dated today stays too: whether today's charge already landed is
+            // unknowable here, and Otto surfaces discrepancies rather than
+            // deciding history was wrong.
+            if day <= today {
+                continue
+            }
             if isExpectedCharge(day: day, amountCents: amount, for: subscription, asOf: today) {
                 continue
             }

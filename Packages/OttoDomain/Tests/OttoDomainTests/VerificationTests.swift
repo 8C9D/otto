@@ -92,7 +92,7 @@ struct VerificationTransitionTests {
 
     @Test("the yes-path verifies, the no-path disputes, and both keep their first answer instant")
     func answersAreIdempotent() throws {
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: try fixtureUUID(1), nextChargeDateIfNotCancelled: try day(2026, 8, 20)
         )
 
@@ -109,7 +109,7 @@ struct VerificationTransitionTests {
 
     @Test("answers are accepted from the escalated state too - the persistent card exists to be answered")
     func answersFromNeedsManualReview() throws {
-        let escalated = try makeCancellationRecord(
+        let escalated = try makeCancellationEpisode(
             subscriptionID: try fixtureUUID(1),
             nextChargeDateIfNotCancelled: try day(2026, 8, 20),
             verificationState: .needsManualReview
@@ -121,7 +121,7 @@ struct VerificationTransitionTests {
     @Test("each passed check date increments the counter and rolls the watch forward one cycle")
     func rollForwardSingleCycle() throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 8, 15)
         )
 
@@ -142,7 +142,7 @@ struct VerificationTransitionTests {
     @Test("a check dated today is still answerable today - it does not roll")
     func todayDoesNotRoll() throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 8, 15)
         )
         #expect(record.catchingUpOnUnansweredChecks(
@@ -153,7 +153,7 @@ struct VerificationTransitionTests {
     @Test("a long absence catches up in one call and stops at exactly three: .needsManualReview, date frozen")
     func threeStrikesEscalates() throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 8, 15)
         )
 
@@ -176,8 +176,8 @@ struct VerificationTransitionTests {
     @Test("an answered record never rolls - the watch ended with the answer")
     func answeredRecordsDoNotRoll() throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        for state in [CancellationRecord.VerificationState.verifiedStopped, .stillCharging] {
-            let record = try makeCancellationRecord(
+        for state in [CancellationEpisode.VerificationState.verifiedStopped, .stillCharging] {
+            let record = try makeCancellationEpisode(
                 subscriptionID: subscription.id,
                 nextChargeDateIfNotCancelled: try day(2026, 8, 15),
                 verificationState: state
@@ -196,7 +196,7 @@ struct VerificationTransitionTests {
         )
         // Watching the conversion charge (Jul 31); it passes unanswered. The next
         // would-be charge is Aug 31 - the paid cycle from the conversion anchor.
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: trial.conversionDate
         )
         let rolled = record.catchingUpOnUnansweredChecks(
@@ -214,7 +214,7 @@ struct VerificationTransitionTests {
         )
         // The stored amount has gone stale relative to the date it watches; the
         // roll to Aug 31 - a post-conversion date - re-derives it in step.
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: trial.conversionDate,
             expectedChargeAmountCents: 1099
@@ -229,7 +229,7 @@ struct VerificationTransitionTests {
     @Test("a pre-v1.5 record's missing amount is backfilled by the roll-forward, even when nothing rolls")
     func backfillsMissingAmount() throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 8, 15),
             expectedChargeAmountCents: nil
@@ -258,7 +258,7 @@ struct DisputeSummaryTests {
         let subscription = try makeSubscription(
             status: .cancellationPending, cycleStartDay: try day(2026, 7, 1), trial: trial
         )
-        var record = try makeCancellationRecord(
+        var record = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 8, 31),
             expectedChargeAmountCents: 1100
@@ -282,7 +282,7 @@ struct DisputeSummaryTests {
         // stored amount is the record of what the vendor would actually charge,
         // and the summary that ends at a bank must not infer.
         let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 1, 15))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 8, 15),
             expectedChargeAmountCents: 1399,
@@ -293,7 +293,7 @@ struct DisputeSummaryTests {
 
         // Only a pre-v1.5 record - amount never captured, never backfilled -
         // falls back to the derivation.
-        let legacy = try makeCancellationRecord(
+        let legacy = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 8, 15),
             expectedChargeAmountCents: nil,
@@ -304,11 +304,11 @@ struct DisputeSummaryTests {
     }
 
     @Test("no dispute exists before a charge was reported", arguments: [
-        CancellationRecord.VerificationState.pending, .verifiedStopped, .needsManualReview
+        CancellationEpisode.VerificationState.pending, .verifiedStopped, .needsManualReview
     ])
-    func noSummaryWithoutFailure(state: CancellationRecord.VerificationState) throws {
+    func noSummaryWithoutFailure(state: CancellationEpisode.VerificationState) throws {
         let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 8, 15),
             verificationState: state

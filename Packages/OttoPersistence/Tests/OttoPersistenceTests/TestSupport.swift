@@ -24,8 +24,21 @@ func fixtureUUID(
     return try #require(UUID(uuidString: uuidString), sourceLocation: sourceLocation)
 }
 
+/// Serializes every `ModelContainer` creation in this test target. SwiftData
+/// keeps a process-global, name-keyed model registry, and this package
+/// deliberately declares two schema versions whose classes SHARE entity names
+/// (V1 is the migration source and must match the shipped store byte for
+/// byte). Building a V1 and a V2 schema concurrently races that registry and
+/// dies in ModelCoders - a test-environment hazard only, since the app builds
+/// exactly one container. Creation is the registration point, so excluding
+/// concurrent creation is sufficient; concurrent USE of already-built
+/// containers is safe.
+let containerCreationLock = NSLock()
+
 /// A fresh isolated in-memory store per test.
 func makeStore() throws -> (store: OttoStore, container: ModelContainer) {
+    containerCreationLock.lock()
+    defer { containerCreationLock.unlock() }
     let container = try OttoContainerFactory.inMemoryContainer()
     return (OttoStore(modelContainer: container), container)
 }
@@ -43,11 +56,29 @@ func makeSubscription(
     cycle: BillingCycle = .monthly,
     cycleStartDay: CalendarDay,
     pauseEndsOn: CalendarDay?? = nil,
+    pauseEpisodes: [PauseEpisode]? = nil,
     lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     deletedAt: Date? = nil
 ) throws -> Subscription {
-    Subscription(
+    // A `.paused` fixture carries its open episode (spec §5.3a), with the same
+    // automatic dates the old field pair got so full-field round-trips still
+    // exercise every column.
+    let episodes: [PauseEpisode]
+    if let pauseEpisodes {
+        episodes = pauseEpisodes
+    } else if status == .paused {
+        episodes = [PauseEpisode(
+            id: try fixtureUUID(index + 700),
+            startedOn: cycleStartDay.adding(days: 30),
+            scheduledResumeOn: pauseEndsOn ?? cycleStartDay.adding(days: 60),
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 2_000)
+        )]
+    } else {
+        episodes = []
+    }
+    return Subscription(
         id: try fixtureUUID(index),
         name: "Fixture \(index)",
         vendorURL: URL(string: "https://example.com/account"),
@@ -59,8 +90,7 @@ func makeSubscription(
         cycleStartDay: cycleStartDay,
         reminderLeadDays: 3,
         sameDayReminder: true,
-        pauseEndsOn: pauseEndsOn ?? (status == .paused ? cycleStartDay.adding(days: 60) : nil),
-        pausedOn: status == .paused ? cycleStartDay.adding(days: 30) : nil,
+        pauseEpisodes: episodes,
         lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: try fixtureUUID(900),
@@ -112,16 +142,16 @@ func makeTrialTerm(
     )
 }
 
-func makeCancellationRecord(
+func makeCancellationEpisode(
     index: Int = 600,
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
     expectedChargeAmountCents: Int? = 1099,
-    verificationState: CancellationRecord.VerificationState = .pending,
+    verificationState: CancellationEpisode.VerificationState = .pending,
     unansweredCheckCount: Int = 0,
     evidenceNote: String? = nil
-) throws -> CancellationRecord {
-    CancellationRecord(
+) throws -> CancellationEpisode {
+    CancellationEpisode(
         id: try fixtureUUID(index),
         subscriptionID: subscriptionID,
         markedCancelledAt: Date(timeIntervalSince1970: 4_000),

@@ -49,7 +49,7 @@ struct SubscriptionDetailStoreTests {
             source: .userEdit,
             createdAt: Date(timeIntervalSince1970: 1_000), updatedAt: Date(timeIntervalSince1970: 2_000)
         )
-        let record = try makeCancellationRecord(
+        let record = try makeCancellationEpisode(
             subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 8, 20)
         )
         await mocks.subscriptions.seed([subscription])

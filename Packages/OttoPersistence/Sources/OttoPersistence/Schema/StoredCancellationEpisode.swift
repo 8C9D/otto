@@ -1,15 +1,21 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV1 {
-    /// Persistence record for `CancellationRecord` (spec §5.4) - at most one per
-    /// subscription, reached through the one-to-one relationship. Carries the same
-    /// scalar `subscriptionID` as `StoredBillingEvent`, for the same reasons.
+extension OttoSchemaV2 {
+    /// Persistence record for `CancellationEpisode` (spec §5.4, §5.3a) - one row
+    /// per cancellation, reached through the one-to-many relationship, because a
+    /// subscription can be cancelled, resubscribed, and cancelled again. The
+    /// current episode is the one with no `endedAt`. Carries the same scalar
+    /// `subscriptionID` as `StoredBillingEvent`, for the same reasons.
     @Model
-    final class StoredCancellationRecord {
+    final class StoredCancellationEpisode {
         var id: UUID?
         var subscriptionID: UUID?
         var markedCancelledAt: Date?
+        /// The stored status the cancellation interrupted - what an un-cancel
+        /// restores (spec §5.3a). Nil on episodes migrated from pre-8.5
+        /// records, which never captured it.
+        var statusAtStart: String?
         /// yyyymmdd. Required in the domain for every state except
         /// `.awaitingResumeDate` (spec §5.4): a deferred check stores no date
         /// because none honestly exists; the mapping enforces the pairing.
@@ -24,6 +30,10 @@ extension OttoSchemaV1 {
         var unansweredCheckCount: Int?
         var verifiedAt: Date?
         var evidenceNote: String?
+        /// When the episode closed; nil while it is current (spec §5.3a). The
+        /// mapping enforces the pairing with `outcome`.
+        var endedAt: Date?
+        var outcome: String?
         var createdAt: Date?
         var updatedAt: Date?
         var deletedAt: Date?

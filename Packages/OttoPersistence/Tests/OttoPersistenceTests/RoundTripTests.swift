@@ -110,12 +110,12 @@ struct RoundTripTests {
     }
 
     @Test("a cancellation record survives unchanged")
-    func cancellationRecord() async throws {
+    func cancellationEpisode() async throws {
         let (store, _) = try makeStore()
         let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 5, 20))
         try await store.save(subscription)
         // Non-default v1.3 fields included, so the round-trip proves they persist.
-        let original = try makeCancellationRecord(
+        let original = try makeCancellationEpisode(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 9, 20),
             verificationState: .needsManualReview,
@@ -124,7 +124,7 @@ struct RoundTripTests {
         )
 
         try await store.save(original)
-        let loaded = try await store.record(forSubscription: subscription.id)
+        let loaded = try await store.openEpisode(forSubscription: subscription.id)
 
         #expect(loaded == original)
     }

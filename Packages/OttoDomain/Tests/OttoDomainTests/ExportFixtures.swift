@@ -16,56 +16,107 @@ private let fixtureDeleted = Date(timeIntervalSinceReferenceDate: 776_400_001.00
 /// requires.
 func fullSnapshot() throws -> OttoDataSnapshot {
     OttoDataSnapshot(
-        subscriptions: [
-            // Confirmed conversion: active, retained term, watermark set.
-            try exportSubscription(
-                1, status: .active, cycle: .monthly, category: .foodAndDelivery,
-                watermark: try day(2026, 9, 1),
-                trial: try exportTrialTerm(501, startDate: try day(2024, 1, 17))
-            ),
-            try exportSubscription(
-                2, status: .trial, cycle: .weekly, category: .musicAndAudio,
-                trial: try exportTrialTerm(502, startDate: try day(2026, 8, 1))
-            ),
-            // Converted-unflipped: stored .trial, conversion long past.
-            try exportSubscription(
-                3, status: .trial, cycle: try cycle(.day, 45), category: .aiAndSoftwareTools,
-                trial: try exportTrialTerm(503, startDate: try day(2026, 1, 1))
-            ),
-            try exportSubscription(
-                4, status: .paused, cycle: try cycle(.year, 1), category: .gaming,
-                pauseEndsOn: try day(2026, 12, 1), pausedOn: try day(2026, 6, 1)
-            ),
-            try exportSubscription(5, status: .paused, cycle: .quarterly, pausedOn: try day(2026, 5, 1)),
-            try exportSubscription(6, status: .cancellationPending, cycle: .monthly),
-            try exportSubscription(7, status: .cancellationPending, cycle: .biweekly),
-            try exportSubscription(8, status: .cancelled, cycle: .semiannual),
-            try exportSubscription(9, status: .cancelled, cycle: .monthly),
-            try exportSubscription(10, status: .archived, cycle: .monthly),
-            try exportSubscription(11, status: .active, cycle: .monthly, deletedAt: fixtureDeleted)
-        ],
-        paymentMethods: [
-            PaymentMethod(
-                id: try fixtureUUID(300), label: "Bank Mastercard ..4821", last4: "4821",
-                issuer: "Bank", expiryMonth: 11, expiryYear: 2027, isDefault: true,
-                createdAt: fixtureCreated, updatedAt: fixtureUpdated
-            ),
-            PaymentMethod(
-                id: try fixtureUUID(301), label: "Amex ..0005", last4: "0005",
-                issuer: "Amex", expiryMonth: 2, expiryYear: 2029, isDefault: false,
-                createdAt: fixtureCreated, updatedAt: fixtureUpdated, deletedAt: fixtureDeleted
-            )
-        ],
+        subscriptions: try exportSubscriptions(),
+        paymentMethods: try exportPaymentMethods(),
         billingEvents: try exportBillingEvents(),
-        cancellationRecords: [
-            try exportCancellation(601, subscription: 6, state: .pending, checkDate: try day(2026, 9, 1)),
-            try exportCancellation(602, subscription: 7, state: .awaitingResumeDate, checkDate: nil),
-            try exportCancellation(603, subscription: 8, state: .stillCharging, checkDate: try day(2026, 7, 1)),
-            try exportCancellation(604, subscription: 9, state: .needsManualReview, checkDate: try day(2026, 6, 1)),
-            try exportCancellation(605, subscription: 10, state: .verifiedStopped, checkDate: try day(2026, 5, 1))
-        ],
+        cancellationEpisodes: try exportCancellations(),
         priceChanges: try exportPriceChanges()
     )
+}
+
+private func exportSubscriptions() throws -> [Subscription] {
+    [
+        // Confirmed conversion: active, retained term, watermark set.
+        try exportSubscription(
+            1, status: .active, cycle: .monthly, category: .foodAndDelivery,
+            watermark: try day(2026, 9, 1),
+            trial: try exportTrialTerm(501, startDate: try day(2024, 1, 17))
+        ),
+        try exportSubscription(
+            2, status: .trial, cycle: .weekly, category: .musicAndAudio,
+            trial: try exportTrialTerm(502, startDate: try day(2026, 8, 1))
+        ),
+        // Converted-unflipped: stored .trial, conversion long past.
+        try exportSubscription(
+            3, status: .trial, cycle: try cycle(.day, 45), category: .aiAndSoftwareTools,
+            trial: try exportTrialTerm(503, startDate: try day(2026, 1, 1))
+        ),
+        // Two separate pause periods (spec §5.3a): one closed by a resume,
+        // one current - the gym frozen every winter.
+        try exportSubscription(
+            4, status: .paused, cycle: try cycle(.year, 1), category: .gaming,
+            pauseEpisodes: [
+                try exportPauseEpisode(
+                    701, startedOn: try day(2025, 11, 1),
+                    scheduledResumeOn: try day(2026, 2, 1),
+                    endedOn: try day(2026, 2, 1), outcome: .resumed
+                ),
+                try exportPauseEpisode(
+                    702, startedOn: try day(2026, 6, 1),
+                    scheduledResumeOn: try day(2026, 12, 1)
+                )
+            ]
+        ),
+        // Indefinite pause, plus a migrated-era episode with no recorded
+        // start (startedOn nil is the pre-Wave-7 legacy shape).
+        try exportSubscription(
+            5, status: .paused, cycle: .quarterly,
+            pauseEpisodes: [
+                try exportPauseEpisode(
+                    703, startedOn: nil, scheduledResumeOn: try day(2026, 3, 1),
+                    endedOn: try day(2026, 3, 1), outcome: .resumed
+                ),
+                try exportPauseEpisode(704, startedOn: try day(2026, 5, 1))
+            ]
+        ),
+        try exportSubscription(6, status: .cancellationPending, cycle: .monthly),
+        try exportSubscription(7, status: .cancellationPending, cycle: .biweekly),
+        try exportSubscription(8, status: .cancelled, cycle: .semiannual),
+        try exportSubscription(9, status: .cancelled, cycle: .monthly),
+        try exportSubscription(10, status: .archived, cycle: .monthly),
+        try exportSubscription(11, status: .active, cycle: .monthly, deletedAt: fixtureDeleted)
+    ]
+}
+
+private func exportPaymentMethods() throws -> [PaymentMethod] {
+    [
+        PaymentMethod(
+            id: try fixtureUUID(300), label: "Bank Mastercard ..4821", last4: "4821",
+            issuer: "Bank", expiryMonth: 11, expiryYear: 2027, isDefault: true,
+            createdAt: fixtureCreated, updatedAt: fixtureUpdated
+        ),
+        PaymentMethod(
+            id: try fixtureUUID(301), label: "Amex ..0005", last4: "0005",
+        issuer: "Amex", expiryMonth: 2, expiryYear: 2029, isDefault: false,
+        createdAt: fixtureCreated, updatedAt: fixtureUpdated, deletedAt: fixtureDeleted
+        )
+    ]
+}
+
+private func exportCancellations() throws -> [CancellationEpisode] {
+    [
+        try exportCancellation(
+            601, subscription: 6, state: .pending, checkDate: try day(2026, 9, 1),
+            statusAtStart: .active
+        ),
+        try exportCancellation(602, subscription: 7, state: .awaitingResumeDate, checkDate: nil),
+        try exportCancellation(
+            603, subscription: 8, state: .stillCharging, checkDate: try day(2026, 7, 1),
+            statusAtStart: .paused
+        ),
+        try exportCancellation(604, subscription: 9, state: .needsManualReview, checkDate: try day(2026, 6, 1)),
+        try exportCancellation(
+            605, subscription: 10, state: .verifiedStopped, checkDate: try day(2026, 5, 1),
+            endedAt: fixtureUpdated, outcome: .verifiedStopped
+        ),
+        // Subscription 6's EARLIER cancellation, un-cancelled: an abandoned
+        // episode is history that must round-trip (spec §5.3a). Last so the
+        // fixture stays in export order (by id).
+        try exportCancellation(
+        606, subscription: 6, state: .pending, checkDate: try day(2026, 4, 1),
+        endedAt: fixtureCreated, outcome: .abandoned
+        )
+    ]
 }
 
 /// The snapshot as an import must reproduce it: identical except the
@@ -87,8 +138,7 @@ private func exportSubscription(
     status: SubscriptionStatus,
     cycle: BillingCycle,
     category: OttoDomain.Category = .streamingAndVideo,
-    pauseEndsOn: CalendarDay? = nil,
-    pausedOn: CalendarDay? = nil,
+    pauseEpisodes: [PauseEpisode] = [],
     watermark: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     deletedAt: Date? = nil
@@ -105,8 +155,7 @@ private func exportSubscription(
         cycleStartDay: try day(2024, 1, 31),
         reminderLeadDays: 3,
         sameDayReminder: index.isMultiple(of: 2),
-        pauseEndsOn: pauseEndsOn,
-        pausedOn: pausedOn,
+        pauseEpisodes: pauseEpisodes,
         lastMaterializedThrough: watermark,
         trial: trial,
         paymentMethodID: try fixtureUUID(300),
@@ -137,19 +186,43 @@ private func exportTrialTerm(
 
 private func exportCancellation(
     _ index: Int, subscription: Int,
-    state: CancellationRecord.VerificationState,
-    checkDate: CalendarDay?
-) throws -> CancellationRecord {
-    CancellationRecord(
+    state: CancellationEpisode.VerificationState,
+    checkDate: CalendarDay?,
+    statusAtStart: SubscriptionStatus? = nil,
+    endedAt: Date? = nil,
+    outcome: CancellationEpisode.Outcome? = nil
+) throws -> CancellationEpisode {
+    CancellationEpisode(
         id: try fixtureUUID(index),
         subscriptionID: try fixtureUUID(subscription),
         markedCancelledAt: fixtureCreated,
+        statusAtStart: statusAtStart,
         nextChargeDateIfNotCancelled: checkDate,
         expectedChargeAmountCents: checkDate == nil ? nil : 1099,
         verificationState: state,
         unansweredCheckCount: state == .needsManualReview ? 3 : 0,
         verifiedAt: state == .verifiedStopped ? fixtureUpdated : nil,
         evidenceNote: "conf #ABC-123",
+        endedAt: endedAt,
+        outcome: outcome,
+        createdAt: fixtureCreated,
+        updatedAt: fixtureUpdated
+    )
+}
+
+private func exportPauseEpisode(
+    _ index: Int,
+    startedOn: CalendarDay?,
+    scheduledResumeOn: CalendarDay? = nil,
+    endedOn: CalendarDay? = nil,
+    outcome: PauseEpisode.Outcome? = nil
+) throws -> PauseEpisode {
+    PauseEpisode(
+        id: try fixtureUUID(index),
+        startedOn: startedOn,
+        scheduledResumeOn: scheduledResumeOn,
+        endedOn: endedOn,
+        outcome: outcome,
         createdAt: fixtureCreated,
         updatedAt: fixtureUpdated
     )
