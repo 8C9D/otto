@@ -48,6 +48,7 @@ extension OttoStore: DataTransferRepository {
     /// on-disk state is still the old one.
     public func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {
         // Refuse-first phase: nothing below this line mutates.
+        try refuseUnlessSyncDisengaged()
         try refuseUnholdable(snapshot)
         let subscriptions = try existingByID(StoredSubscription.self)
         let methods = try existingByID(StoredPaymentMethod.self)
@@ -160,6 +161,21 @@ extension OttoStore: DataTransferRepository {
         }
         if deviceStateContext.hasChanges {
             try deviceStateContext.save()
+        }
+    }
+
+    /// Spec §8 (v2.1): `restore()` STRUCTURALLY requires the kill switch.
+    /// "Engage the kill switch before restoring during an incident" was a
+    /// documented rule, and this project's history is documentation failing
+    /// where structure holds - a rule that must be remembered DURING an
+    /// incident will not be. Restoring into a live mirror would let other
+    /// devices' syncing edits land on rows mid-restore, so a restore runs
+    /// only while sync cannot: either never enabled, or braked by the kill
+    /// switch. The error's message tells the user exactly what to do.
+    private func refuseUnlessSyncDisengaged() throws {
+        let sync = syncState()
+        if sync.isEnabled && !sync.killSwitchEngaged {
+            throw RepositoryError.restoreRequiresSyncDisengaged
         }
     }
 

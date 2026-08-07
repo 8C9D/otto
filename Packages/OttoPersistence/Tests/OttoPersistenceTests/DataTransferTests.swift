@@ -202,6 +202,31 @@ extension SerializedPersistenceTests {
             )
         }
 
+        @Test("a restore refuses while sync could still run - the kill switch is structural, not remembered (spec §8, v2.1)")
+        func restoreRefusesWhileSyncEngaged() async throws {
+            let (store, _) = try makeStore(syncState: SyncState(isEnabled: true, killSwitchEngaged: false))
+            try await store.save(try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15)))
+            let before = try await store.completeSnapshot()
+
+            await #expect(throws: RepositoryError.restoreRequiresSyncDisengaged) {
+                try await store.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 11_000))
+            }
+            // Refused before any mutation - the database is exactly as it was,
+            // and the message tells the user what to do.
+            #expect(try await store.completeSnapshot() == before)
+            #expect(RepositoryError.restoreRequiresSyncDisengaged.errorDescription?.isEmpty == false)
+        }
+
+        @Test("the engaged kill switch is what permits a restore during an incident")
+        func restoreRunsWithKillSwitchEngaged() async throws {
+            let (store, _) = try makeStore(syncState: SyncState(isEnabled: true, killSwitchEngaged: true))
+            try await store.save(try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15)))
+
+            try await store.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 11_000))
+
+            #expect(try await store.subscriptions() == [])
+        }
+
         @Test("watermarks reconstruct from the ledger: latest LIVE row, anchor when none, never today (spec §5.3, v2.1)")
         func replaceImportReconstructsWatermarks() async throws {
             let (_, containers) = try await seedRichStore()

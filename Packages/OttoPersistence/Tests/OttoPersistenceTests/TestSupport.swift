@@ -52,11 +52,14 @@ let containerCreationLock = NSLock()
 /// A fresh isolated in-memory store per test. The tuple's second element is
 /// the container PAIR (main + device state) so a test can open its own context
 /// on the main store or build a second `OttoStore` over the same data.
-func makeStore() throws -> (store: OttoStore, containers: OttoContainers) {
+/// `syncState` is pinned (default: sync off) rather than read from the
+/// process's real `UserDefaults`, so tests are deterministic; pass an engaged
+/// or enabled state to exercise the §8 restore guard.
+func makeStore(syncState: SyncState = SyncState()) throws -> (store: OttoStore, containers: OttoContainers) {
     containerCreationLock.lock()
     defer { containerCreationLock.unlock() }
     let containers = try OttoContainerFactory.inMemoryContainers()
-    return (OttoStore(containers: containers), containers)
+    return (OttoStore(containers: containers, syncState: { syncState }), containers)
 }
 
 /// A fully populated subscription so round-trips exercise every field.

@@ -32,12 +32,20 @@ public actor OttoStore {
     /// init is never used - construction goes through `init(containers:)`.
     private var deviceStateContainer: ModelContainer! = nil
     private var _deviceStateContext: ModelContext?
+    /// Read fresh on every guard rather than captured once: the kill switch
+    /// can be engaged mid-session, and `restore()` (spec §8, v2.1) must see
+    /// the switch as it is NOW. Defaulted for the macro's unused init.
+    var syncState: @Sendable () -> SyncState = { .load() }
 
-    public init(containers: OttoContainers) {
+    public init(
+        containers: OttoContainers,
+        syncState: @escaping @Sendable () -> SyncState = { .load() }
+    ) {
         let context = ModelContext(containers.main)
         self.modelExecutor = DefaultSerialModelExecutor(modelContext: context)
         self.modelContainer = containers.main
         self.deviceStateContainer = containers.deviceState
+        self.syncState = syncState
     }
 
     /// Lazily created on the actor so its use is serialized with `modelContext`.
