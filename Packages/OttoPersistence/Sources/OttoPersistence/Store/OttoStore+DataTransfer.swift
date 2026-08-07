@@ -124,13 +124,40 @@ extension OttoStore: DataTransferRepository {
         return parents
     }
 
-    /// The replace-import watermark reset (spec §5.3, Wave 6B-Prep). Ordered by
-    /// the caller AFTER a successful restore, so a refused or failed restore
-    /// leaves device state exactly as it was; the crash window between the two
-    /// saves is accepted and documented in docs/cloudkit-readiness.md.
-    public func resetMaterializationWatermarks() async throws {
+    /// The replace-import watermark reconstruction (spec §5.3, v2.1): each
+    /// live subscription's watermark becomes the latest expected date among
+    /// its LIVE ledger rows - what "materialized through" means - or its
+    /// anchor when it has none, never today. Live rows only, because a
+    /// tombstoned `.upcoming` row is an invalidation artifact of a sequence
+    /// that no longer exists; excluding it can only pull the watermark
+    /// EARLIER, and a regressed watermark re-observes idempotently while an
+    /// advanced one vouches for rows that may not exist. Ordered by the caller
+    /// AFTER a successful restore, so a refused or failed restore leaves
+    /// device state exactly as it was; the crash window between the two saves
+    /// is accepted and documented in docs/cloudkit-readiness.md.
+    public func reconstructMaterializationWatermarks() async throws {
+        let subscriptions = try modelContext.fetch(
+            FetchDescriptor<StoredSubscription>(predicate: #Predicate { $0.deletedAt == nil })
+        )
+        let events = try modelContext.fetch(
+            FetchDescriptor<StoredBillingEvent>(predicate: #Predicate { $0.deletedAt == nil })
+        )
+        var latestBySubscription: [UUID: Int] = [:]
+        for event in events {
+            guard let subscriptionID = event.subscriptionID, let date = event.expectedDate else { continue }
+            latestBySubscription[subscriptionID] = max(latestBySubscription[subscriptionID] ?? date, date)
+        }
         let rows = try deviceStateContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
         for row in rows { deviceStateContext.delete(row) }
+        for subscription in subscriptions {
+            guard let id = subscription.id,
+                  let day = latestBySubscription[id] ?? subscription.cycleStartDay
+            else { continue }
+            let row = StoredMaterializationWatermark()
+            deviceStateContext.insert(row)
+            row.subscriptionID = id
+            row.lastMaterializedThrough = day
+        }
         if deviceStateContext.hasChanges {
             try deviceStateContext.save()
         }

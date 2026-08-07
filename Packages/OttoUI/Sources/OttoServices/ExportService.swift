@@ -68,12 +68,14 @@ public actor ExportService {
         let current = try await transfer.completeSnapshot()
         let resolved = try resolveImport(current: current, incoming: incoming, strategy: strategy, at: now)
         try await transfer.restore(resolved.snapshot, at: now)
-        // A replace resets this device's ledger progress; a merge leaves it
-        // untouched (spec §5.3, Wave 6B-Prep - the watermark lives only in the
-        // device store now, so the reset is its own call, ordered after the
-        // restore so a failed restore leaves device state exactly as it was).
+        // A replace reconstructs this device's ledger progress from the
+        // imported ledger (spec §5.3, v2.1 - a nil watermark is the founding
+        // hazard, so the old reset is gone); a merge leaves it untouched. The
+        // watermark lives only in the device store, so this is its own call,
+        // ordered after the restore so a failed restore leaves device state
+        // exactly as it was.
         if strategy == .replace {
-            try await transfer.resetMaterializationWatermarks()
+            try await transfer.reconstructMaterializationWatermarks()
         }
         return resolved.summary
     }

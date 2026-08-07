@@ -202,6 +202,43 @@ extension SerializedPersistenceTests {
             )
         }
 
+        @Test("watermarks reconstruct from the ledger: latest LIVE row, anchor when none, never today (spec §5.3, v2.1)")
+        func replaceImportReconstructsWatermarks() async throws {
+            let (_, containers) = try await seedRichStore()
+
+            // A tombstoned row is an invalidation artifact of a sequence that
+            // no longer exists - it must not advance the reconstruction.
+            let context = ModelContext(containers.main)
+            let staleID: UUID? = try fixtureUUID(102)
+            let stale = try #require(
+                try context.fetch(FetchDescriptor<StoredBillingEvent>()).first { $0.id == staleID }
+            )
+            stale.deletedAt = Date(timeIntervalSince1970: 9_500)
+            try context.save()
+
+            let fresh = OttoStore(containers: containers)
+            try await fresh.reconstructMaterializationWatermarks()
+
+            // The pre-import watermark (2026-09-01) vouched for rows the file
+            // may not carry; the latest live imported row IS "materialized
+            // through".
+            #expect(
+                try await fresh.materializationWatermark(forSubscription: try fixtureUUID(1))
+                    == (try day(2026, 1, 15))
+            )
+            // No imported rows: the anchor, never today.
+            #expect(
+                try await fresh.materializationWatermark(forSubscription: try fixtureUUID(2))
+                    == (try day(2026, 8, 1))
+            )
+            #expect(
+                try await fresh.materializationWatermark(forSubscription: try fixtureUUID(5))
+                    == (try day(2026, 1, 10))
+            )
+            // A tombstoned subscription materializes nothing and needs none.
+            #expect(try await fresh.materializationWatermark(forSubscription: try fixtureUUID(4)) == nil)
+        }
+
         @Test("an unreadable record fails the export loudly - a backup with a silent hole is worse than none")
         func exportRefusesUnmappableRecord() async throws {
             let (store, containers) = try makeStore()

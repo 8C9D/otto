@@ -378,8 +378,16 @@ actor PreviewRepository:
         priceChanges = Dictionary(uniqueKeysWithValues: snapshot.priceChanges.map { ($0.id, $0) })
     }
 
-    func resetMaterializationWatermarks() async throws {
-        watermarks = [:]
+    func reconstructMaterializationWatermarks() async throws {
+        watermarks = subscriptions.values
+            .filter { $0.deletedAt == nil }
+            .reduce(into: [:]) { result, subscription in
+                let latest = events.values
+                    .filter { $0.subscriptionID == subscription.id && $0.deletedAt == nil }
+                    .map(\.expectedDate)
+                    .max()
+                result[subscription.id] = latest ?? subscription.cycleStartDay
+            }
     }
 }
 #endif

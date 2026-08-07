@@ -21,7 +21,7 @@ private actor SnapshotTransfer: DataTransferRepository {
     }
 
     func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {}
-    func resetMaterializationWatermarks() async throws {}
+    func reconstructMaterializationWatermarks() async throws {}
 }
 
 private actor SpyZonePurger: CloudZonePurging {

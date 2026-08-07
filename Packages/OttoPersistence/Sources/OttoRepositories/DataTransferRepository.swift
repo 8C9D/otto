@@ -24,10 +24,17 @@ public protocol DataTransferRepository: Sendable {
     /// is exactly the authority `save` deliberately no longer has (§4a).
     func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws
 
-    /// Clears every materialization watermark on this device - the
-    /// replace-import reset (spec §5.3, Wave 6B-Prep): after the database
+    /// Rebuilds every materialization watermark on this device from the ledger
+    /// a replace-import just restored (spec §5.3, v2.1). After the database
     /// becomes exactly what the file describes, this device's past observation
-    /// vouches for ledger rows the file may not carry, so every subscription
-    /// re-observes from its next pass. A merge never calls this.
-    func resetMaterializationWatermarks() async throws
+    /// vouches for rows the file may not carry - but a nil watermark is the
+    /// founding hazard with no safe fallback (the next pass would observe from
+    /// today and skip the window). The file carries no watermark by design,
+    /// and needs none: the latest imported `expectedDate` for a subscription
+    /// IS what "materialized through" means, so each live subscription's
+    /// watermark becomes that date - or its anchor when it has no ledger rows,
+    /// NEVER today. Both branches land safe: re-materializing from the anchor
+    /// is wasteful and harmless; observing from today is the hazard. A merge
+    /// never calls this.
+    func reconstructMaterializationWatermarks() async throws
 }
