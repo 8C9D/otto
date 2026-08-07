@@ -33,7 +33,9 @@ extension OttoSchemaV2.StoredSubscription {
             .map { try $0.toDomain() }
             .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
         // The §5.3a invariants, thrown instead of the domain's preconditions.
-        try Subscription.checkPauseInvariants(status: domainStatus, pauseEpisodes: episodes) {
+        try Subscription.checkPauseInvariants(
+            status: domainStatus, pauseEpisodes: episodes, deletedAt: deletedAt
+        ) {
             MappingError.invalidValue(entity: entity, field: "pauseEpisodes", value: $0)
         }
 

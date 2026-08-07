@@ -212,7 +212,9 @@ public struct ExportedSubscription: Hashable, Sendable {
         }
         // The §5.3a invariants, thrown instead of the domain's preconditions.
         let episodes = try pauseEpisodes.map { try $0.domainValue() }
-        try Subscription.checkPauseInvariants(status: status, pauseEpisodes: episodes) {
+        try Subscription.checkPauseInvariants(
+            status: status, pauseEpisodes: episodes, deletedAt: deletedAt
+        ) {
             ExportFormatError.invalidValue(entity: entity, field: "pauseEpisodes", value: $0)
         }
         return Subscription(

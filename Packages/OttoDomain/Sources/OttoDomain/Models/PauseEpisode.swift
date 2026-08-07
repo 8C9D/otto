@@ -167,15 +167,21 @@ extension Subscription {
     /// the persistence mapping and the export wire format, exactly like the
     /// §5.2b trial invariant. `makeError` wraps the violation in the caller's
     /// own error type.
+    ///
+    /// The status-coupled halves apply to LIVE records only (`deletedAt` nil):
+    /// deleting a paused subscription tombstones its episodes with it, and
+    /// that tombstoned whole is valid history a backup must still carry.
     public static func checkPauseInvariants(
         status: SubscriptionStatus,
         pauseEpisodes: [PauseEpisode],
+        deletedAt: Date?,
         makeError: (String) -> any Error
     ) throws {
         let openPauses = pauseEpisodes.count { $0.endedOn == nil && $0.deletedAt == nil }
         if openPauses > 1 {
             throw makeError("at most one pause episode can be current (spec §5.3a)")
         }
+        guard deletedAt == nil else { return }
         if status == .paused && openPauses == 0 {
             throw makeError("a .paused subscription must have an open PauseEpisode (spec §5.3a)")
         }

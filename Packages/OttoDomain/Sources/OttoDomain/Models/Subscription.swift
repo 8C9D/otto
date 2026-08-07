@@ -128,12 +128,15 @@ public struct Subscription: Identifiable, Hashable, Sendable {
             openPauses <= 1,
             "At most one pause episode can be current (spec §5.3a)"
         )
+        // The status-coupled halves apply to LIVE records only: deleting a
+        // paused subscription tombstones its episodes with it, and that
+        // tombstoned whole is valid history, not a violation.
         precondition(
-            status != .paused || openPauses == 1,
+            deletedAt != nil || status != .paused || openPauses == 1,
             "A .paused subscription must have an open PauseEpisode (spec §5.3a)"
         )
         precondition(
-            openPauses == 0 || (status != .active && status != .trial),
+            deletedAt != nil || openPauses == 0 || (status != .active && status != .trial),
             "An open PauseEpisode cannot coexist with a stored .active or .trial (spec §5.3a)"
         )
         self.id = id
@@ -290,7 +293,10 @@ extension Subscription: Codable {
             ))
         }
         let pauseEpisodes = try container.decodeIfPresent([PauseEpisode].self, forKey: .pauseEpisodes) ?? []
-        try Subscription.checkPauseInvariants(status: status, pauseEpisodes: pauseEpisodes) {
+        let deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+        try Subscription.checkPauseInvariants(
+            status: status, pauseEpisodes: pauseEpisodes, deletedAt: deletedAt
+        ) {
             DecodingError.dataCorrupted(DecodingError.Context(
                 codingPath: decoder.codingPath, debugDescription: $0
             ))
@@ -319,7 +325,7 @@ extension Subscription: Codable {
             notes: try container.decodeIfPresent(String.self, forKey: .notes),
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt),
-            deletedAt: try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+            deletedAt: deletedAt
         )
     }
 

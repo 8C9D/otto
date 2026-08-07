@@ -52,6 +52,29 @@ struct CancellationEpisodeStoreTests {
         #expect(try await store.openEpisode(forSubscription: subscription.id) == updated)
     }
 
+    @Test("deleting a PAUSED subscription stays readable and exportable - the tombstoned whole is history")
+    func deletedPausedSubscriptionExports() async throws {
+        // The §5.3a invariants' status-coupled halves apply to live records
+        // only: the delete cascade tombstones the open episode with its
+        // subscription, and a backup must still carry both (spec §3.5 - a
+        // soft-deleted row is communicable data).
+        let (store, _) = try makeStore()
+        let paused = try makeSubscription(status: .paused, cycleStartDay: try day(2026, 1, 15))
+        try await store.save(paused)
+
+        try await store.deleteSubscription(withID: paused.id, at: Date(timeIntervalSince1970: 9_000))
+
+        let everything = try await store.subscriptionsIncludingDeleted()
+        #expect(everything.count == 1)
+        #expect(everything.first?.deletedAt == Date(timeIntervalSince1970: 9_000))
+        #expect(everything.first?.pauseEpisodes.first?.deletedAt == Date(timeIntervalSince1970: 9_000))
+        // And the export path - the read that throws instead of skipping -
+        // still produces the complete snapshot.
+        let snapshot = try await store.completeSnapshot()
+        #expect(snapshot.subscriptions.count == 1)
+        _ = try exportData(from: snapshot, exportedAt: Date(timeIntervalSince1970: 10_000))
+    }
+
     @Test("a subscription's pause history round-trips: closed and open episodes, every field")
     func pauseEpisodesRoundTrip() async throws {
         let (store, _) = try makeStore()

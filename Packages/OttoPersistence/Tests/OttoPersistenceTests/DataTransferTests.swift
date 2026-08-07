@@ -33,27 +33,7 @@ struct DataTransferTests {
 
         // Both episode tables with MULTIPLE episodes each (spec §5.3a): two
         // separate pause periods - one closed by a resume, one current...
-        let paused = try makeSubscription(
-            index: 5, status: .paused, cycleStartDay: try day(2026, 1, 10),
-            pauseEpisodes: [
-                PauseEpisode(
-                    id: try fixtureUUID(701),
-                    startedOn: try day(2025, 11, 1),
-                    scheduledResumeOn: try day(2026, 2, 1),
-                    endedOn: try day(2026, 2, 1),
-                    outcome: .resumed,
-                    createdAt: Date(timeIntervalSince1970: 1_000),
-                    updatedAt: Date(timeIntervalSince1970: 2_000)
-                ),
-                PauseEpisode(
-                    id: try fixtureUUID(702),
-                    startedOn: try day(2026, 6, 1),
-                    createdAt: Date(timeIntervalSince1970: 3_000),
-                    updatedAt: Date(timeIntervalSince1970: 3_000)
-                )
-            ]
-        )
-        try await store.save(paused)
+        try await store.save(try twicePausedSubscription())
 
         try await store.save(try makeBillingEvent(index: 101, subscriptionID: active.id, expectedDate: try day(2026, 1, 15)))
         try await store.save(try makeBillingEvent(index: 102, subscriptionID: active.id, expectedDate: try day(2026, 2, 15)))
@@ -75,6 +55,29 @@ struct DataTransferTests {
         // The tombstoned subscription and its cascade stay in the snapshot.
         try await store.deleteSubscription(withID: doomed.id, at: Date(timeIntervalSince1970: 9_000))
         return (store, container)
+    }
+
+    private func twicePausedSubscription() throws -> Subscription {
+        try makeSubscription(
+            index: 5, status: .paused, cycleStartDay: try day(2026, 1, 10),
+            pauseEpisodes: [
+                PauseEpisode(
+                    id: try fixtureUUID(701),
+                    startedOn: try day(2025, 11, 1),
+                    scheduledResumeOn: try day(2026, 2, 1),
+                    endedOn: try day(2026, 2, 1),
+                    outcome: .resumed,
+                    createdAt: Date(timeIntervalSince1970: 1_000),
+                    updatedAt: Date(timeIntervalSince1970: 2_000)
+                ),
+                PauseEpisode(
+                    id: try fixtureUUID(702),
+                    startedOn: try day(2026, 6, 1),
+                    createdAt: Date(timeIntervalSince1970: 3_000),
+                    updatedAt: Date(timeIntervalSince1970: 3_000)
+                )
+            ]
+        )
     }
 
     @Test("export, wipe, import: the restored store holds identical domain values")
