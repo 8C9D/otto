@@ -13,6 +13,8 @@ extension OttoSchemaV1 {
         var expiryMonth: Int?
         var expiryYear: Int?
         var isDefault: Bool = false
+        var createdAt: Date?
+        var updatedAt: Date?
         var deletedAt: Date?
 
         init() {}

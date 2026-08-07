@@ -7,6 +7,7 @@ extension OttoSchemaV1 {
     /// scalar `subscriptionID` as `StoredBillingEvent`, for the same reasons.
     @Model
     final class StoredCancellationRecord {
+        var id: UUID?
         var subscriptionID: UUID?
         var markedCancelledAt: Date?
         /// yyyymmdd - required in the domain (spec §5.4, v1.1).
@@ -14,6 +15,8 @@ extension OttoSchemaV1 {
         var verificationState: String?
         var verifiedAt: Date?
         var evidenceNote: String?
+        var createdAt: Date?
+        var updatedAt: Date?
         var deletedAt: Date?
 
         var subscription: StoredSubscription?

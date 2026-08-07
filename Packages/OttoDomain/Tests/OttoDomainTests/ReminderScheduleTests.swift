@@ -27,7 +27,7 @@ struct ReminderScheduleTests {
     @Test("a trial gets the three-reminder ladder, all at P1")
     func trialLadder() throws {
         let start = try day(2026, 8, 6)
-        let trial = try #require(TrialTerm(startDate: start, lengthDays: 7, bufferDays: 2, convertsToAmountCents: 1100))
+        let trial = try makeTrialTerm(startDate: start, lengthDays: 7)
         let sub = try makeSubscription(
             status: .trial, cycle: .monthly, cycleStartDay: start, reminderLeadDays: 5, trial: trial
         )
@@ -50,7 +50,7 @@ struct ReminderScheduleTests {
     @Test("a trial whose cancel-by day has passed gets no reminders")
     func expiredTrial() throws {
         let start = try day(2026, 8, 6)
-        let trial = try #require(TrialTerm(startDate: start, lengthDays: 7, bufferDays: 2, convertsToAmountCents: 1100))
+        let trial = try makeTrialTerm(startDate: start, lengthDays: 7)
         let sub = try makeSubscription(
             status: .trial, cycle: .monthly, cycleStartDay: start, reminderLeadDays: 5, trial: trial
         )
@@ -90,10 +90,13 @@ struct ReminderScheduleTests {
         // The check date was computed once, at cancellation time, from the anchor
         // and the cycle (spec §5.4) - the planner fires on it as stored.
         let record = CancellationRecord(
+            id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
             nextChargeDateIfNotCancelled: try day(2026, 8, 20),
-            verificationState: .pending
+            verificationState: .pending,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
         )
         let today = try day(2026, 8, 6)
 
@@ -109,10 +112,13 @@ struct ReminderScheduleTests {
     func staleVerification() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
         let record = CancellationRecord(
+            id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
             nextChargeDateIfNotCancelled: try day(2026, 8, 20),
-            verificationState: .pending
+            verificationState: .pending,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
         )
         // The Aug 20 check came and went unanswered; verification is still the point,
         // so the plan moves to the first would-be charge date on or after today.
@@ -129,10 +135,13 @@ struct ReminderScheduleTests {
     func verifiedCancellation() throws {
         let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
         let record = CancellationRecord(
+            id: try fixtureUUID(600),
             subscriptionID: sub.id,
             markedCancelledAt: Date(timeIntervalSince1970: 0),
             nextChargeDateIfNotCancelled: try day(2026, 8, 20),
-            verificationState: .verifiedStopped
+            verificationState: .verifiedStopped,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
         )
         let today = try day(2026, 8, 6)
         #expect(reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90).isEmpty)

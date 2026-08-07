@@ -31,6 +31,30 @@ func fixtureUUID(
     return try #require(UUID(uuidString: uuidString), sourceLocation: sourceLocation)
 }
 
+/// A validated trial term with fixture audit fields, so tests state only the
+/// values they vary.
+func makeTrialTerm(
+    index: Int = 500,
+    startDate: CalendarDay,
+    lengthDays: Int,
+    bufferDays: Int = 2,
+    convertsToAmountCents: Int = 1100,
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws -> TrialTerm {
+    try #require(
+        TrialTerm(
+            id: try fixtureUUID(index),
+            startDate: startDate,
+            lengthDays: lengthDays,
+            bufferDays: bufferDays,
+            convertsToAmountCents: convertsToAmountCents,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        ),
+        sourceLocation: sourceLocation
+    )
+}
+
 /// A subscription fixture exposing only the fields the scheduling tests vary.
 func makeSubscription(
     index: Int = 0,

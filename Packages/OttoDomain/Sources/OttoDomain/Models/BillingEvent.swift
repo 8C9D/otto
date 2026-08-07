@@ -28,6 +28,13 @@ public struct BillingEvent: Identifiable, Hashable, Codable, Sendable {
     /// triggers a price-change prompt (spec §5.3).
     public var actualAmountCents: Int?
 
+    /// Audit instants (spec §5.0), injected by callers - the domain never reads a clock.
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    /// Soft-delete tombstone: a hard delete cannot be synced (spec §3.5).
+    public var deletedAt: Date?
+
     public init(
         id: UUID,
         subscriptionID: UUID,
@@ -35,7 +42,10 @@ public struct BillingEvent: Identifiable, Hashable, Codable, Sendable {
         expectedAmountCents: Int,
         state: State,
         userConfirmedAt: Date? = nil,
-        actualAmountCents: Int? = nil
+        actualAmountCents: Int? = nil,
+        createdAt: Date,
+        updatedAt: Date,
+        deletedAt: Date? = nil
     ) {
         self.id = id
         self.subscriptionID = subscriptionID
@@ -44,5 +54,8 @@ public struct BillingEvent: Identifiable, Hashable, Codable, Sendable {
         self.state = state
         self.userConfirmedAt = userConfirmedAt
         self.actualAmountCents = actualAmountCents
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }

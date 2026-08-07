@@ -13,7 +13,10 @@ extension OttoSchemaV1.StoredBillingEvent {
             expectedAmountCents: try require(expectedAmountCents, entity: entity, field: "expectedAmountCents"),
             state: try decodeRaw(state, entity: entity, field: "state"),
             userConfirmedAt: userConfirmedAt,
-            actualAmountCents: actualAmountCents
+            actualAmountCents: actualAmountCents,
+            createdAt: try require(createdAt, entity: entity, field: "createdAt"),
+            updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
+            deletedAt: deletedAt
         )
     }
 
@@ -25,5 +28,8 @@ extension OttoSchemaV1.StoredBillingEvent {
         state = domain.state.rawValue
         userConfirmedAt = domain.userConfirmedAt
         actualAmountCents = domain.actualAmountCents
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
     }
 }

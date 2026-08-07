@@ -78,8 +78,9 @@ extension OttoSchemaV1.StoredSubscription {
                 record = OttoSchemaV1.StoredTrialTerm()
                 trial = record
             }
+            // Written verbatim, tombstone included: a live domain trial carries a nil
+            // deletedAt, so reusing a tombstoned slot resurrects it.
             record.update(from: domainTrial)
-            record.deletedAt = nil
         } else if let existing = trial, existing.deletedAt == nil {
             existing.deletedAt = domain.updatedAt
         }
@@ -96,10 +97,14 @@ extension OttoSchemaV1.StoredTrialTerm {
         let bufferDays = try require(bufferDays, entity: entity, field: "bufferDays")
         let convertsTo = try require(convertsToAmountCents, entity: entity, field: "convertsToAmountCents")
         guard let term = TrialTerm(
+            id: try require(id, entity: entity, field: "id"),
             startDate: startDate,
             lengthDays: lengthDays,
             bufferDays: bufferDays,
-            convertsToAmountCents: convertsTo
+            convertsToAmountCents: convertsTo,
+            createdAt: try require(createdAt, entity: entity, field: "createdAt"),
+            updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
+            deletedAt: deletedAt
         ) else {
             throw MappingError.invalidValue(
                 entity: entity,
@@ -111,9 +116,13 @@ extension OttoSchemaV1.StoredTrialTerm {
     }
 
     func update(from domain: TrialTerm) {
+        id = domain.id
         startDate = domain.startDate.yyyymmdd
         lengthDays = domain.lengthDays
         bufferDays = domain.bufferDays
         convertsToAmountCents = domain.convertsToAmountCents
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
     }
 }

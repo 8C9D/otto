@@ -27,26 +27,15 @@ struct SoftDeleteTests {
     @Test("deleting a subscription cascades soft deletes to every child record")
     func cascade() async throws {
         let (store, container) = try makeStore()
-        let trial = try #require(TrialTerm(
-            startDate: try day(2026, 8, 1), lengthDays: 14, bufferDays: 2, convertsToAmountCents: 1599
-        ))
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
         let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
         try await store.save(subscription)
         try await store.save(try makeBillingEvent(subscriptionID: subscription.id, expectedDate: try day(2026, 9, 1)))
-        try await store.save(CancellationRecord(
-            subscriptionID: subscription.id,
-            markedCancelledAt: Date(timeIntervalSince1970: 4_000),
-            nextChargeDateIfNotCancelled: try day(2026, 9, 1),
-            verificationState: .pending
+        try await store.save(try makeCancellationRecord(
+            subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 9, 1)
         ))
-        try await store.append(PriceChange(
-            id: try fixtureUUID(200),
-            subscriptionID: subscription.id,
-            effectiveDate: try day(2026, 8, 20),
-            oldAmountCents: 1099,
-            newAmountCents: 1299,
-            recordedAt: Date(timeIntervalSince1970: 5_000),
-            source: .userEdit
+        try await store.append(try makePriceChange(
+            subscriptionID: subscription.id, effectiveDate: try day(2026, 8, 20)
         ))
         let instant = Date(timeIntervalSince1970: 9_000)
 
@@ -113,17 +102,16 @@ struct SoftDeleteTests {
     @Test("a deleted payment method is filtered and retrievable the same way")
     func paymentMethodTombstone() async throws {
         let (store, _) = try makeStore()
-        let method = PaymentMethod(
-            id: try fixtureUUID(300), label: "Visa ..1234", last4: "1234",
-            issuer: "TD", expiryMonth: 5, expiryYear: 2028, isDefault: false
-        )
+        let method = try makePaymentMethod(label: "Visa ..1234", isDefault: false)
         try await store.save(method)
 
         try await store.deletePaymentMethod(withID: method.id, at: Date(timeIntervalSince1970: 9_000))
 
         #expect(try await store.paymentMethods() == [])
         #expect(try await store.paymentMethod(withID: method.id) == nil)
-        #expect(try await store.paymentMethodsIncludingDeleted() == [method])
+        var tombstoned = method
+        tombstoned.deletedAt = Date(timeIntervalSince1970: 9_000)
+        #expect(try await store.paymentMethodsIncludingDeleted() == [tombstoned])
     }
 
     @Test("a saved cancellation record clears any tombstone - the slot is live again")
@@ -131,11 +119,8 @@ struct SoftDeleteTests {
         let (store, _) = try makeStore()
         let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 5, 20))
         try await store.save(subscription)
-        let record = CancellationRecord(
-            subscriptionID: subscription.id,
-            markedCancelledAt: Date(timeIntervalSince1970: 4_000),
-            nextChargeDateIfNotCancelled: try day(2026, 9, 20),
-            verificationState: .pending
+        let record = try makeCancellationRecord(
+            subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 9, 20)
         )
         try await store.save(record)
         try await store.deleteSubscription(withID: subscription.id, at: Date(timeIntervalSince1970: 9_000))

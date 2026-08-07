@@ -95,9 +95,7 @@ struct MappingFailureTests {
     @Test("a subscription whose trial record is unmappable is itself skipped, not half-loaded")
     func brokenTrialSkipsSubscription() async throws {
         let (store, container) = try makeStore()
-        let trial = try #require(TrialTerm(
-            startDate: try day(2026, 8, 1), lengthDays: 14, bufferDays: 2, convertsToAmountCents: 1599
-        ))
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
         try await store.save(try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial))
 
         let context = ModelContext(container)

@@ -11,9 +11,7 @@ struct RoundTripTests {
     @Test("a fully populated subscription with a trial survives unchanged")
     func subscriptionFull() async throws {
         let (store, _) = try makeStore()
-        let trial = try #require(TrialTerm(
-            startDate: try day(2026, 8, 1), lengthDays: 14, bufferDays: 2, convertsToAmountCents: 1599
-        ))
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
         let original = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
 
         try await store.save(original)
@@ -63,9 +61,7 @@ struct RoundTripTests {
     @Test("removing the trial on save soft-deletes its record, and a re-added trial reuses it")
     func trialLifecycle() async throws {
         let (store, container) = try makeStore()
-        let trial = try #require(TrialTerm(
-            startDate: try day(2026, 8, 1), lengthDays: 14, bufferDays: 2, convertsToAmountCents: 1599
-        ))
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
         var subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
         try await store.save(subscription)
 
@@ -113,12 +109,9 @@ struct RoundTripTests {
         let (store, _) = try makeStore()
         let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 5, 20))
         try await store.save(subscription)
-        let original = CancellationRecord(
+        let original = try makeCancellationRecord(
             subscriptionID: subscription.id,
-            markedCancelledAt: Date(timeIntervalSince1970: 4_000),
             nextChargeDateIfNotCancelled: try day(2026, 9, 20),
-            verificationState: .pending,
-            verifiedAt: nil,
             evidenceNote: "confirmation #12345"
         )
 
@@ -133,13 +126,9 @@ struct RoundTripTests {
         let (store, _) = try makeStore()
         let subscription = try makeSubscription(cycleStartDay: try day(2026, 8, 15))
         try await store.save(subscription)
-        let original = PriceChange(
-            id: try fixtureUUID(200),
+        let original = try makePriceChange(
             subscriptionID: subscription.id,
             effectiveDate: try day(2026, 10, 1),
-            oldAmountCents: 1099,
-            newAmountCents: 1299,
-            recordedAt: Date(timeIntervalSince1970: 6_000),
             source: .chargeMismatch,
             note: "vendor raised the price"
         )
@@ -153,15 +142,7 @@ struct RoundTripTests {
     @Test("a payment method survives unchanged")
     func paymentMethod() async throws {
         let (store, _) = try makeStore()
-        let original = PaymentMethod(
-            id: try fixtureUUID(300),
-            label: "Bank Mastercard ..4821",
-            last4: "4821",
-            issuer: "Bank",
-            expiryMonth: 11,
-            expiryYear: 2027,
-            isDefault: true
-        )
+        let original = try makePaymentMethod()
 
         try await store.save(original)
         let loaded = try await store.paymentMethod(withID: original.id)

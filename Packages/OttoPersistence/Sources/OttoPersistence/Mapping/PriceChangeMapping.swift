@@ -14,7 +14,10 @@ extension OttoSchemaV1.StoredPriceChange {
             newAmountCents: try require(newAmountCents, entity: entity, field: "newAmountCents"),
             recordedAt: try require(recordedAt, entity: entity, field: "recordedAt"),
             source: try decodeRaw(source, entity: entity, field: "source"),
-            note: note
+            note: note,
+            createdAt: try require(createdAt, entity: entity, field: "createdAt"),
+            updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
+            deletedAt: deletedAt
         )
     }
 
@@ -27,5 +30,8 @@ extension OttoSchemaV1.StoredPriceChange {
         recordedAt = domain.recordedAt
         source = domain.source.rawValue
         note = domain.note
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
     }
 }

@@ -17,6 +17,8 @@ extension OttoSchemaV1 {
         var state: String?
         var userConfirmedAt: Date?
         var actualAmountCents: Int?
+        var createdAt: Date?
+        var updatedAt: Date?
         var deletedAt: Date?
 
         var subscription: StoredSubscription?

@@ -9,8 +9,9 @@ extension OttoStore: CancellationRepository {
             throw RepositoryError.subscriptionNotFound(record.subscriptionID)
         }
         // The one-to-one slot holds at most one record, so a save reuses whatever is
-        // there - clearing any tombstone, because an explicit save means the record
-        // is live again (cancel → verify → later cancel again).
+        // there. The domain value is written verbatim, tombstone included: saving a
+        // live record over a tombstoned slot resurrects it (cancel → verify → later
+        // cancel again).
         let stored: StoredCancellationRecord
         if let existing = parent.cancellationRecord {
             stored = existing
@@ -20,7 +21,6 @@ extension OttoStore: CancellationRepository {
             parent.cancellationRecord = stored
         }
         stored.update(from: record)
-        stored.deletedAt = nil
         try modelContext.save()
     }
 

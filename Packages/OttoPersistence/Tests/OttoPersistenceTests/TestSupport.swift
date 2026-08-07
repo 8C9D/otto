@@ -72,6 +72,85 @@ func makeBillingEvent(index: Int = 100, subscriptionID: UUID, expectedDate: Cale
         expectedAmountCents: 1099,
         state: .confirmedCharged,
         userConfirmedAt: Date(timeIntervalSince1970: 3_000),
-        actualAmountCents: 1299
+        actualAmountCents: 1299,
+        createdAt: Date(timeIntervalSince1970: 1_000),
+        updatedAt: Date(timeIntervalSince1970: 2_000)
+    )
+}
+
+/// A validated, fully populated trial term.
+func makeTrialTerm(
+    index: Int = 500,
+    startDate: CalendarDay,
+    lengthDays: Int = 14,
+    bufferDays: Int = 2,
+    convertsToAmountCents: Int = 1599,
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws -> TrialTerm {
+    try #require(
+        TrialTerm(
+            id: try fixtureUUID(index),
+            startDate: startDate,
+            lengthDays: lengthDays,
+            bufferDays: bufferDays,
+            convertsToAmountCents: convertsToAmountCents,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 2_000)
+        ),
+        sourceLocation: sourceLocation
+    )
+}
+
+func makeCancellationRecord(
+    index: Int = 600,
+    subscriptionID: UUID,
+    nextChargeDateIfNotCancelled: CalendarDay,
+    verificationState: CancellationRecord.VerificationState = .pending,
+    evidenceNote: String? = nil
+) throws -> CancellationRecord {
+    CancellationRecord(
+        id: try fixtureUUID(index),
+        subscriptionID: subscriptionID,
+        markedCancelledAt: Date(timeIntervalSince1970: 4_000),
+        nextChargeDateIfNotCancelled: nextChargeDateIfNotCancelled,
+        verificationState: verificationState,
+        evidenceNote: evidenceNote,
+        createdAt: Date(timeIntervalSince1970: 1_000),
+        updatedAt: Date(timeIntervalSince1970: 2_000)
+    )
+}
+
+func makePriceChange(
+    index: Int = 200,
+    subscriptionID: UUID,
+    effectiveDate: CalendarDay,
+    source: PriceChange.Source = .userEdit,
+    note: String? = nil
+) throws -> PriceChange {
+    PriceChange(
+        id: try fixtureUUID(index),
+        subscriptionID: subscriptionID,
+        effectiveDate: effectiveDate,
+        oldAmountCents: 1099,
+        newAmountCents: 1299,
+        recordedAt: Date(timeIntervalSince1970: 5_000),
+        source: source,
+        note: note,
+        createdAt: Date(timeIntervalSince1970: 1_000),
+        updatedAt: Date(timeIntervalSince1970: 2_000)
+    )
+}
+
+func makePaymentMethod(index: Int = 300, label: String = "Bank Mastercard ..4821", isDefault: Bool = true) throws -> PaymentMethod {
+    PaymentMethod(
+        id: try fixtureUUID(index),
+        label: label,
+        last4: "4821",
+        issuer: "Bank",
+        expiryMonth: 11,
+        expiryYear: 2027,
+        isDefault: isDefault,
+        createdAt: Date(timeIntervalSince1970: 1_000),
+        updatedAt: Date(timeIntervalSince1970: 2_000)
     )
 }

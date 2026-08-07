@@ -21,6 +21,16 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
     public var source: Source
     public var note: String?
 
+    /// Audit instants (spec §5.0), injected by callers - the domain never reads a
+    /// clock. `recordedAt` stays separate: it is the domain fact "when the change
+    /// was noticed", while `createdAt` is the sync bookkeeping fact "when the row
+    /// was written", and an import can legitimately split the two.
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    /// Soft-delete tombstone: a hard delete cannot be synced (spec §3.5).
+    public var deletedAt: Date?
+
     public init(
         id: UUID,
         subscriptionID: UUID,
@@ -29,7 +39,10 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
         newAmountCents: Int,
         recordedAt: Date,
         source: Source,
-        note: String? = nil
+        note: String? = nil,
+        createdAt: Date,
+        updatedAt: Date,
+        deletedAt: Date? = nil
     ) {
         self.id = id
         self.subscriptionID = subscriptionID
@@ -39,5 +52,8 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
         self.recordedAt = recordedAt
         self.source = source
         self.note = note
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }

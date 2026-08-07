@@ -14,6 +14,8 @@ extension OttoSchemaV1 {
         var recordedAt: Date?
         var source: String?
         var note: String?
+        var createdAt: Date?
+        var updatedAt: Date?
         var deletedAt: Date?
 
         var subscription: StoredSubscription?

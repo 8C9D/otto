@@ -14,6 +14,13 @@ public struct PaymentMethod: Identifiable, Hashable, Codable, Sendable {
     public var expiryYear: Int
     public var isDefault: Bool
 
+    /// Audit instants (spec §5.0), injected by callers - the domain never reads a clock.
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    /// Soft-delete tombstone: a hard delete cannot be synced (spec §3.5).
+    public var deletedAt: Date?
+
     public init(
         id: UUID,
         label: String,
@@ -21,7 +28,10 @@ public struct PaymentMethod: Identifiable, Hashable, Codable, Sendable {
         issuer: String,
         expiryMonth: Int,
         expiryYear: Int,
-        isDefault: Bool
+        isDefault: Bool,
+        createdAt: Date,
+        updatedAt: Date,
+        deletedAt: Date? = nil
     ) {
         self.id = id
         self.label = label
@@ -30,5 +40,8 @@ public struct PaymentMethod: Identifiable, Hashable, Codable, Sendable {
         self.expiryMonth = expiryMonth
         self.expiryYear = expiryYear
         self.isDefault = isDefault
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }

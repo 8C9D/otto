@@ -14,7 +14,7 @@ struct SlotBudgetTests {
         var planned: [PlannedReminder] = []
         for index in 0..<15 {
             let start = today.adding(days: -(index % 3))
-            let trial = try #require(TrialTerm(startDate: start, lengthDays: 14, bufferDays: 2, convertsToAmountCents: 1099))
+            let trial = try makeTrialTerm(index: 400 + index, startDate: start, lengthDays: 14, convertsToAmountCents: 1099)
             let sub = try makeSubscription(
                 index: index, status: .trial, cycle: .monthly, cycleStartDay: start, reminderLeadDays: 5, trial: trial
             )

@@ -13,7 +13,10 @@ extension OttoSchemaV1.StoredPaymentMethod {
             issuer: try require(issuer, entity: entity, field: "issuer"),
             expiryMonth: try require(expiryMonth, entity: entity, field: "expiryMonth"),
             expiryYear: try require(expiryYear, entity: entity, field: "expiryYear"),
-            isDefault: isDefault
+            isDefault: isDefault,
+            createdAt: try require(createdAt, entity: entity, field: "createdAt"),
+            updatedAt: try require(updatedAt, entity: entity, field: "updatedAt"),
+            deletedAt: deletedAt
         )
     }
 
@@ -25,5 +28,8 @@ extension OttoSchemaV1.StoredPaymentMethod {
         expiryMonth = domain.expiryMonth
         expiryYear = domain.expiryYear
         isDefault = domain.isDefault
+        createdAt = domain.createdAt
+        updatedAt = domain.updatedAt
+        deletedAt = domain.deletedAt
     }
 }
