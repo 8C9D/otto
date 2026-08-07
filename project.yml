@@ -10,6 +10,8 @@ options:
 packages:
   OttoDomain:
     path: Packages/OttoDomain
+  OttoPersistence:
+    path: Packages/OttoPersistence
 
 settings:
   base:
@@ -28,6 +30,10 @@ targets:
           - "**/.gitkeep"
     dependencies:
       - package: OttoDomain
+      - package: OttoPersistence
+        product: OttoRepositories
+      - package: OttoPersistence
+        product: OttoPersistence
     settings:
       base:
         # PERMANENT - never change this identifier (spec §10, decision 1).
