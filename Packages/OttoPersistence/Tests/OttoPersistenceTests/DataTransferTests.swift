@@ -89,16 +89,19 @@ extension SerializedPersistenceTests {
             let original = try await source.completeSnapshot()
             let file = try exportData(from: original, exportedAt: Date(timeIntervalSince1970: 10_000))
 
-            // Wipe: restore an empty snapshot, prove it is empty, then import.
-            try await source.restore(OttoDataSnapshot())
-            #expect(try await source.completeSnapshot().isEmpty)
+            // Wipe: restore an empty snapshot. Since Wave 6B-Prep the wipe is
+            // expressed as TOMBSTONES, never hard deletes (spec §8) - nothing
+            // live remains, but the records are still there as history.
+            try await source.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 10_500))
+            #expect(try await source.subscriptions() == [])
+            #expect(try await source.completeSnapshot().subscriptions.allSatisfy { $0.deletedAt != nil })
 
             let resolved = try resolveImport(
                 current: try await source.completeSnapshot(),
                 incoming: try importedSnapshot(from: file),
                 strategy: .replace
             )
-            try await source.restore(resolved.snapshot)
+            try await source.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
 
             // Value-identical: the watermark is device state and lives outside
             // the snapshot entirely (spec §5.3, Wave 6B-Prep).
@@ -139,7 +142,7 @@ extension SerializedPersistenceTests {
                         incoming: incoming,
                         strategy: .replace
                     )
-                    try await store.restore(resolved.snapshot)
+                    try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
                 }
                 #expect(try await store.completeSnapshot() == before)
             }
@@ -158,7 +161,7 @@ extension SerializedPersistenceTests {
                 try makeBillingEvent(index: 999, subscriptionID: try fixtureUUID(999), expectedDate: try day(2026, 1, 1))
             ])
 
-            await #expect(throws: RepositoryError.self) { try await store.restore(poisoned) }
+            await #expect(throws: RepositoryError.self) { try await store.restore(poisoned, at: Date(timeIntervalSince1970: 11_000)) }
             #expect(try await store.completeSnapshot() == before)
         }
 
@@ -186,7 +189,7 @@ extension SerializedPersistenceTests {
                 incoming: try importedSnapshot(from: file),
                 strategy: .merge
             )
-            try await store.restore(resolved.snapshot)
+            try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
 
             let stored = try #require(try await store.subscription(withID: subscriptionID))
             #expect(stored.notes == "edited on the other device")

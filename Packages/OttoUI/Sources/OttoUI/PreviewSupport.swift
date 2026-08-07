@@ -368,7 +368,7 @@ actor PreviewRepository:
         )
     }
 
-    func restore(_ snapshot: OttoDataSnapshot) async throws {
+    func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {
         subscriptions = Dictionary(uniqueKeysWithValues: snapshot.subscriptions.map { ($0.id, $0) })
         paymentMethods = Dictionary(uniqueKeysWithValues: snapshot.paymentMethods.map { ($0.id, $0) })
         events = Dictionary(uniqueKeysWithValues: snapshot.billingEvents.map { ($0.id, $0) })

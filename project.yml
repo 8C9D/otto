@@ -66,6 +66,11 @@ targets:
         # Must match NotificationCoordinator.refreshTaskIdentifier.
         BGTaskSchedulerPermittedIdentifiers:
           - com.arthurzhang.otto.refresh
+        # The pre-sync backup snapshot (spec §8) lands in Documents; these two
+        # keys are what make it findable in the Files app - "stored where the
+        # user can find it" is a plist setting, not just a directory choice.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     # Entitlements are configured now even though unused until later waves,
     # per the Wave 0 gate. Time-sensitive notifications let trial deadline
     # reminders break through Focus modes (spec §6.3).

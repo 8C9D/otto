@@ -254,7 +254,7 @@ public final class AppModel {
     /// (which also materializes the imported subscriptions' ledgers) and
     /// refresh every published list.
     public func importData(from url: URL, strategy: ImportStrategy) async throws -> ImportSummary {
-        let summary = try await exports.performImport(from: url, strategy: strategy)
+        let summary = try await exports.performImport(from: url, strategy: strategy, now: dates.now())
         await flowFinished()
         await paymentMethodsStore.refresh()
         return summary

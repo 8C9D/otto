@@ -15,7 +15,7 @@ private actor MockTransfer: DataTransferRepository {
 
     func completeSnapshot() async throws -> OttoDataSnapshot { snapshot }
 
-    func restore(_ snapshot: OttoDataSnapshot) async throws {
+    func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {
         restoredSnapshots.append(snapshot)
         self.snapshot = snapshot
     }
@@ -103,7 +103,7 @@ struct ExportServiceTests {
             .appendingPathComponent("otto-merge-test.json")
         try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
 
-        let summary = try await service.performImport(from: file, strategy: .merge)
+        let summary = try await service.performImport(from: file, strategy: .merge, now: Date(timeIntervalSince1970: 11_000))
 
         #expect(summary.subscriptions == ImportCounts(added: 1))
         let stored = await transfer.snapshot
@@ -124,7 +124,7 @@ struct ExportServiceTests {
             .appendingPathComponent("otto-replace-test.json")
         try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
 
-        _ = try await service.performImport(from: file, strategy: .replace)
+        _ = try await service.performImport(from: file, strategy: .replace, now: Date(timeIntervalSince1970: 11_000))
 
         #expect(await transfer.watermarkResets == 1)
     }
@@ -138,7 +138,7 @@ struct ExportServiceTests {
         try Data("not an export".utf8).write(to: file)
 
         await #expect(throws: ExportFormatError.self) {
-            try await service.performImport(from: file, strategy: .replace)
+            try await service.performImport(from: file, strategy: .replace, now: Date(timeIntervalSince1970: 11_000))
         }
         #expect(await transfer.restoredSnapshots.isEmpty)
     }

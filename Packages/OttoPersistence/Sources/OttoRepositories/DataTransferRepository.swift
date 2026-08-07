@@ -11,10 +11,18 @@ public protocol DataTransferRepository: Sendable {
     /// is worse than a failed one.
     func completeSnapshot() async throws -> OttoDataSnapshot
 
-    /// Atomically replaces the store's contents with `snapshot` - all of it or
-    /// none of it. Callers resolve merges first (`resolveImport`); by the time
-    /// this runs the snapshot IS the desired database.
-    func restore(_ snapshot: OttoDataSnapshot) async throws
+    /// Atomically makes the store's LIVE contents exactly `snapshot` - all of
+    /// it or none of it. Callers resolve merges first (`resolveImport`); by
+    /// the time this runs the snapshot IS the desired database.
+    ///
+    /// Sync-aware by construction (spec §8, Wave 6B-Prep): every record is
+    /// UPSERTED by id and every stored record the snapshot does not carry is
+    /// TOMBSTONED at `instant` - never hard-deleted. Under mirroring the old
+    /// wipe-and-reinsert restore was a mass cloud deletion plus a resurrection
+    /// vector for offline devices; expressed as updates and tombstones, a
+    /// restore syncs as ordinary edits. The explicit whole-database diff here
+    /// is exactly the authority `save` deliberately no longer has (§4a).
+    func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws
 
     /// Clears every materialization watermark on this device - the
     /// replace-import reset (spec §5.3, Wave 6B-Prep): after the database
