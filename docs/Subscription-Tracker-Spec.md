@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.7** — revised Aug 7 against Claude Code's Wave 7 report. Waves 0–5.5 and 7 complete; HEAD `99c3050` **verified from a clean clone** (340 host + 7 simulator = **347 tests**). Remaining: Wave 8, then Wave 6.
+**Status:** **v1.8 — SCHEMA-FREEZE CANDIDATE.** Revised Aug 7 against Claude Code's Wave 8 report. Waves 0–5.5, 7 and 8 complete; HEAD `f38eec6` **verified from a clean clone** (395 host + 8 simulator = **403 tests**). Remaining: **Wave 8.5 (model lock)**, then Wave 6.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -111,6 +111,16 @@ Cheap now, expensive to retrofit. Non-negotiable on every persisted record:
 | Money as **integer cents**, never `Double` | Same rule as Kept. `0.1 + 0.2 != 0.3` |
 | Billing dates as **calendar days**, not `Date` | See §4.1 — this is a correctness issue, not a style one |
 | Export/import as a **first-class v1 feature** | It is simultaneously backup, user trust, and the Android migration path |
+
+**Export format version policy** *(added v1.8 — Wave 8 correctly noted the spec never stated one)*:
+
+> **Any field change bumps the format version, additive changes included.** Importing a *newer* version than the app understands **fails clearly**; importing an *older* one is supported, with documented defaults for fields that did not exist.
+
+Additive changes bump it because `Codable` **silently drops unknown keys** — which would mean a newer export restoring into an older app loses data with no error anywhere. That is this application's forbidden failure mode, stated in §1: silent loss is the thing Otto exists to prevent, and it must not be the thing Otto does.
+
+**Settings are device-local and excluded from the export.** They describe how this device behaves, not what the user owns — the same reasoning as the watermark (§5.3).
+
+**A dangling `paymentMethodID` is a valid state, not an error** — under CloudKit sync a subscription can legitimately arrive before its payment method. It renders as *"Unknown payment method"* and resolves silently when the record arrives. It must never block display or throw.
 
 ---
 
@@ -410,6 +420,12 @@ The charge window is therefore slightly wider than the reminder horizon, by the 
 
 Rows in any other state are **never** touched — a confirmed charge is history and history does not change because a schedule did.
 
+**Invalidation never touches past-dated rows either** *(added v1.8)*. Wave 8 found that a price edit tombstones **every** `.upcoming` row at the old amount — past-dated ones included — and nothing reaches back to recreate them. The result is that a charge date which passed without the user confirming it **silently disappears from the ledger** the moment they update the price.
+
+> **Only future-dated `.upcoming` rows are invalidated. A past-dated row is history, whether or not it was ever acknowledged.**
+
+The reasoning is that an unacknowledged past row is not a mistake to be cleaned up — it is a record of what was expected on a date that has already happened, and the new price applies going forward, not retroactively. Where a past row is genuinely wrong (a mis-entered start date), **the user deletes it from the ledger themselves.** Otto surfaces the discrepancy; it does not decide the history was wrong — the same boundary as everywhere else in this document.
+
 **Generalized in v1.4: status transitions invalidate too.** v1.3 scoped this to anchor, cycle, and amount edits, which left a hole — pausing or archiving a subscription leaves its future `.upcoming` rows sitting in the ledger, and the user sees phantom charges in Detail for a subscription that is not going to charge them.
 
 > Invalidation triggers on **any change that alters the expected sequence**, including transitions into `.paused`, `.cancellationPending`, `.cancelled`, and `.archived`. Resuming from `.paused` re-materializes.
@@ -424,6 +440,23 @@ Rows in any other state are **never** touched — a confirmed charge is history 
 **The one retrospective creation path.** When a verification reports `.stillCharging`, that charge **did** happen and needs a ledger row — created at that moment with state `.unexpectedCharge`. This is the **only** producer of that state; in v1.1 the enum case existed with nothing able to create it.
 
 The justification is that a row only earns storage once there is **user-facing state to attach to it** — a reminder that fired, a confirmation, an amount mismatch. Before that it is a calculation, not a record. This also caps the ledger's growth at roughly `subscriptions × cyclesPerQuarter` new rows per scheduling pass.
+
+### 5.3a Episode tables — **one-to-one where reality is one-to-many** *(added v1.8)*
+
+Wave 8 surfaced two findings that look unrelated and are the same modelling error:
+
+- **`§5.4` has no un-cancel.** Every exit from `.cancellationPending` leads to archived or still-charging, so an accidental *"I'm cancelling"* tap is **irreversible in-app** — and because storage holds exactly one cancellation, any un-cancel design added later would overwrite the first record's history.
+- **Resume erases pause history.** `pausedOn` and `pauseEndsOn` are cleared on resume, which is fine for §7.2's current-burn figure and makes *"what did this cost me last year"* permanently unanswerable.
+
+**Both are one-to-one relationships modelling something that recurs.** A subscription can be cancelled, resubscribed, and cancelled again; it can be paused every winter. That is ordinary life, not error correction — the one-to-one shape was always going to be wrong, and it happens to be the single change class that **cannot** be made cheaply after Wave 6, because relationship cardinality is a migration rather than a field addition.
+
+> **`CancellationEpisode` and `PauseEpisode` are one-to-many histories**, each carrying the §5.0 quartet plus its own start, end, and outcome. The *current* episode is the one with no end date. Un-cancel closes the open cancellation episode with an `.abandoned` outcome rather than deleting it.
+
+**Nothing is ever cleared on exit from a state.** Exiting writes an end date.
+
+*Worth recording as a review question rather than a one-off fix:* **two instances of this error appeared in a single report, in the last wave where fixing them was cheap.** Wave 8.5's schema-freeze pass exists to sweep for the rest — the question being *"which of these one-to-one relationships model something that can happen twice?"*
+
+---
 
 ### 5.4 `CancellationRecord` — the Failure-B fix
 
@@ -659,7 +692,8 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **5** ✅ | Trial, cancellation and verification flows, behind one `SubscriptionFlowService` actor so both entry points share a single state-change path | ✅ **Code done** — commits `30e2e99`–`cb3486f`; **252 tests**. ⛔ **Gate NOT met** — the compressed-timeline trial test on a real device is still outstanding |
 | **5.5** ✅ | Hardening: `scripts/verify.sh` (clean-clone build/test/lint), CI covering every package + simulator job, the two pre-CloudKit field additions, ordering guards, the phone-in-a-drawer harness, `docs/manual-verification.md` | ✅ **Done** — HEAD `5a2799e` **verified from a clean clone**: 270 host + 5 simulator = **275 tests**. ⚠ One `OttoPersistence` segfault on the first run, then 9 clean — deliberately left unmasked |
 | **7** ✅ | Insights, payment methods, zombie detection, plus the pause UI and the paused-cancellation defer-and-ask path | ✅ **Done** — HEAD `99c3050`, **347 tests**, all Insights figures tested against hand-computed fixtures written *before* implementation. Wave 5.5's segfault did not recur |
-| **8** ⬅ *moved ahead of 6 in v1.6* | Export/import (JSON + CSV), settings, accessibility, Dynamic Type, VoiceOver | Export → wipe → import restores exactly |
+| **8** ✅ | Export/import (JSON + CSV), settings, accessibility pass | ✅ **Done** — HEAD `f38eec6`, **403 tests**. Round-trip bit-exact incl. tombstones and fractional-second instants; corruption tested at seven offsets. A SwiftLint custom rule now makes any mention of `storedStatus` an **error** above layer 2 — which caught a live display bug ("Resumes Sep 1" shown forever after Sep 1) |
+| **8.5** | **Model lock**: episode tables, invalidation fix, export version policy, then a **schema-freeze sweep** of every §5 relationship | ⛔ Last wave in which any model change is cheap |
 | **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall. ⛔ **Blocked on §10 Decision 2** |
 | **9** | Real-data dogfood; then TestFlight to the second user | The owner runs it as his only tracker for two weeks |
 
@@ -690,6 +724,7 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 |---|---|
 | **`OttoPersistence` segfault (signal 11)** on the first-ever clean-clone verify run, then 9 consecutive clean runs. Suspected SwiftData under swift-testing's parallel suites | **Deliberately unmasked** — no retry wrapper, so CI can reproduce it and it stops being an anecdote. If CI does reproduce, serialize *that suite specifically* with a comment saying why; do **not** serialize broadly, which would hide the signal. Most likely a test-harness artifact (multiple in-memory `ModelContainer`s racing) rather than production behaviour, but that is a hypothesis, not a finding |
 | **§5.4 paused-cancellation is specified but not implemented** — the defer-and-ask path needs UI, which Wave 5.5 forbade | **The one place code and spec knowingly disagree.** Must be reconciled; now assigned to Wave 7, which has the UI budget |
+| **SwiftData's `rollback()` crashes** on a context with pending deletes | Discovered in Wave 8. Import atomicity is therefore structured with **no failure path between the first mutation and the single `save()`** — atomicity by construction rather than by rollback. Worth carrying to any other SwiftData work, Kept included |
 | **Test counting has no single command** — 5 Dynamic Type tests are `#if canImport(UIKit)` and compile to nothing under `swift test` on a Mac | Resolved by `verify.sh`, which prints what it can see and **explicitly names what it cannot.** The historical "252" was arithmetically honest; the counting method had simply never been written down |
 
 ---
@@ -720,6 +755,13 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.8 — SCHEMA-FREEZE CANDIDATE, revised against the Wave 8 report)** — Wave 8 shipped: **403 tests**, round-trip bit-exact including tombstones and fractional-second instants, corruption tested at seven offsets. The v1.7 stored-status rule was enforced with a **SwiftLint custom rule making any mention an error** above layer 2 — which immediately **caught a live display bug** (Detail showing "Resumes Sep 1" forever after Sep 1 had passed). A structural rule finding a real defect within one wave of being written is the strongest argument yet for preferring compiler and lint enforcement over review attention.
+  - **⭐⭐ Two findings that are the same modelling error, both caught in the last cheap wave.** §5.4 had **no un-cancel** — an accidental "I'm cancelling" tap is irreversible in-app — and **resume erases pause history**. Both are **one-to-one relationships modelling something that recurs**: a subscription can be cancelled, resubscribed and cancelled again; it can be paused every winter. **Relationship cardinality is the one change class that cannot be made cheaply after Wave 6.** Replaced with `CancellationEpisode` and `PauseEpisode` one-to-many histories; **nothing is ever cleared on exit from a state — exiting writes an end date.** Two instances in one report justifies a systematic sweep rather than two fixes, hence Wave 8.5.
+  - **⚠ Price edits silently deleted unacknowledged history.** Invalidation tombstoned *every* `.upcoming` row at the old amount, past-dated included, with nothing to recreate them — so a charge date that passed unconfirmed **vanished from the ledger** the moment the user updated the price. Now: **invalidation never touches past-dated rows.** An unacknowledged past row isn't a mistake to clean up, it's a record of what was expected on a date that already happened; where it's genuinely wrong, **the user deletes it**, because Otto surfaces discrepancies and does not decide history was wrong.
+  - **Export format version policy stated:** any field change bumps the version, **additive included**, because `Codable` silently drops unknown keys — a newer export restoring into an older app would lose data with no error anywhere. **Silent loss is the thing this app exists to prevent and must not be the thing it does.**
+  - **Also pinned:** settings are device-local and excluded from export; a dangling `paymentMethodID` is a **valid state** rendering as "Unknown payment method," not an error, since partial arrival is routine under CloudKit.
+  - **Known issue added:** SwiftData's `rollback()` crashes on a context with pending deletes, so import atomicity is structured with no failure path between first mutation and the single `save()` — atomicity by construction rather than by rollback. Carry to Kept.
 
 - **2026-08-07 (v1.7 — revised against the Wave 7 report)** — Wave 7 shipped: **347 tests**, every Insights figure tested against fixtures **hand-computed before implementation**, and the Wave 5.5 segfault did not recur in any run. **§10 Decision 2 resolved: proceed with CloudKit** — see §10 for why Wave 8 preceding Wave 6 is what made that lopsided rather than close.
   - **⭐ The sharpest finding was one that is *correct today*.** `caughtUpCancellationRecords` filters by **stored** status — flagged not as a bug but as "the stored-vs-effective read pattern that produced the Wave 4 bug." **A dangerous pattern that happens to be correct is a defect waiting for an unrelated change to activate it, silently** — this project's characteristic failure mode. Now a structural rule: **stored `status` is unreadable above layer 2; every status read goes through `effectiveStatus(asOf:)`**, enforced by lint or access control rather than reviewer attention. This is the report finding I'd most want reproduced on Kept.
