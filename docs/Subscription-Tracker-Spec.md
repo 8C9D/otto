@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.0 — SCHEMA FROZEN (V3).** Revised Aug 7 against Claude Code's Wave 6A report and its CloudKit readiness audit. Waves 0–6A complete; HEAD `bc5b86d` **verified twice from clean clones** (**420 tests**). ⚠ **The readiness audit found that enabling CloudKit as planned would cause silent data loss.** Remaining: **Wave 6B-Prep (sync safety)**, four manual gates, then **6B**.
+**Status:** **v2.1 — SCHEMA FROZEN (V3).** Revised Aug 7 against Claude Code's Wave 6B-Prep report. Waves 0–6B-Prep complete; HEAD `8e2ce53` **verified twice from clean clones** (**449 tests**). Remaining: **6B-Prep-2 (convergence polish)**, then **the four manual gates — which are now the only thing standing between this project and 6B**.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -251,7 +251,21 @@ The audit's central finding is that **several contracts that are true for a sing
 
 **1. Absence is not deletion.** The aggregate save path soft-deletes any stored child (pause episode, evidence note, trial) missing from the in-memory array, on the contract that *"absence is deliberate removal."* Under per-record sync **that contract is simply false**: device A saving a stale snapshot tombstones device B's just-synced episode, with no error anywhere. **Deletion must be an explicit operation on an identified record**, never inferred from a collection's contents. This is the single most severe item found before 6B.
 
+**2a. All convergence rules resolve to the *earliest* record, merging the losers** *(unified in v2.1)*. Wave 6B-Prep flagged that repair rules pointed in opposite directions — pause repair kept the **earliest** episode, cancellation reconciliation kept the **newest**. Both were defensible in isolation and the asymmetry was undocumented, which is how a future reader gets it wrong.
+
+> **One shape for all three:** keep the record with the earliest start, **merge the losers' child records and state into it**, then tombstone them.
+
+The ledger reconciliation rule already worked this way, so unifying makes all three consistent. The tie-break is *earliest* rather than newest because it matches the real-world fact in every case — the earliest pause is the one actually in effect, and the earliest cancellation is when the user actually acted. It is also the **safer direction for a verification product**: an earlier cancellation produces an earlier check date, so the error is watching sooner and possibly twice, never watching too late. Freshest parameters are not lost, because merging carries them.
+
+**⚠ Closure clamps; a closed episode may never end before it starts.** "Closed at the winner's start" can produce a negative duration when the loser started later. Harmless today — nothing reads closed-episode durations — and guaranteed to surface the moment any feature computes pause spans. **An episode closed at a point before its own start is closed at its start**, giving zero duration, which honestly records "recorded, never actually in effect."
+
 **2. Invariants are enforced at write and repaired at read — never thrown at read.** Two devices pausing independently produces two open pause episodes, and the at-most-one-open invariant then **throws in mapping, making the subscription unreadable on every device**, permanently, with no repair flow. Under sync, any invariant reachable from two devices *will* be violated eventually. **Reading must degrade and repair; it must not fail.** *(Same lesson as v1.9's backup bug, generalised: an invariant that throws at read time converts a sync artifact into a dead record.)*
+
+**2b. A write path must never borrow the read path's tolerance** *(added v2.1)*. `readingRepaired` is **permissive by design** — its entire job is to never fail. Wave 6B-Prep found the edit path constructing through it, for a real reason: editing a degraded record has to re-describe the degraded shape without trapping. But a write path inheriting read-path permissiveness means **a future change to the repair rules silently changes write validation**, and that is the same one-mechanism-two-authorities smell as the retired `anchorDay` and the domain-side watermark.
+
+> **A dedicated "describing" constructor**, whose tolerance is scoped to exactly the degraded shapes the edit form can legitimately hold, and which rejects everything else.
+
+*(This is the fourth time the "something feels wrong and I can't say why" instinct has been correct. It is now the most reliable single signal in this project's review loop.)*
 
 **3. A guard pinned to a version silently stops guarding.** The Wave 2 CloudKit-compatibility assertion **stayed green while asserting `OttoSchemaV2` after V3 became real** — checking nothing, reporting success. Guards must fail when the thing they guard changes: assert the current schema *and* count the models, so adding one without updating the guard breaks the build.
 
@@ -421,6 +435,12 @@ The reasoning is that last-write-wins is the wrong merge for it in a dangerous d
 **⚠ "The dedup makes the duplication invisible" was wrong** *(corrected in v2.0)*. The `(subscriptionID, expectedDate)` uniqueness check only **prevents** a duplicate at write time; it never **reconciles** one that arrives later. Two devices materializing the same charge date concurrently — which is the normal case once sync is on, since materialization is deliberately per-device — produce **permanently duplicated ledger rows**, each with its own independent acknowledgement and confirmation state.
 
 > **A post-sync reconciliation pass is required**: for each `(subscriptionID, expectedDate)` group, keep the row with the earliest `createdAt`, **merge** the acknowledgement and confirmation state from the rest (any acknowledgement counts, any confirmation counts), and tombstone the losers. Deterministic, so every device reaches the same result without coordination.
+
+**Watermarks after a replace-import** *(resolved in v2.1)*. Wave 6B-Prep flagged a genuine contradiction: v2.0 says a nil watermark is the founding hazard with **no safe fallback**, yet replace-import deliberately nils every watermark — so the next pass observes from today and skips the window. The export correctly carries no watermark, so there is nothing to restore from. **But there is:**
+
+> **Reconstruct each watermark from the imported ledger** — the latest `expectedDate` among that subscription's imported rows. That *is* what "materialized through" means. Where a subscription has no imported rows, fall back to its **anchor**, never to today.
+
+Both branches land on the safe side: re-materializing from the anchor is wasteful and harmless, while observing from today is the founding hazard. The contradiction was real and the fix removes it rather than documenting around it.
 
 Prevention alone is only sufficient in a single-writer world, which is exactly what enabling sync stops being.
 
@@ -740,15 +760,18 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **8** ✅ | Export/import (JSON + CSV), settings, accessibility pass | ✅ **Done** — HEAD `f38eec6`, **403 tests**. Round-trip bit-exact incl. tombstones and fractional-second instants; corruption tested at seven offsets. A SwiftLint custom rule now makes any mention of `storedStatus` an **error** above layer 2 — which caught a live display bug ("Resumes Sep 1" shown forever after Sep 1) |
 | **8.5** ✅ | **Model lock**: `CancellationEpisode` + `PauseEpisode`, schema V2 with a custom migration, un-cancel, invalidation fix, export format v2, and the schema-freeze sweep | ✅ **Done** — HEAD `3a69893`, **414 tests**, `verify.sh` green twice from clean clones. `docs/schema-freeze-review.md` written |
 | **6A** ✅ | Watermark relocated to a **separate local-only `ModelContainer`** (`OttoDeviceState.store`), plus the §5.4 folding and `evidenceNotes` child table. CloudKit untouched | ✅ **Done** — HEAD `bc5b86d`, **420 tests**, verified twice from clean clones. Schema V3. Migration **refuses rather than degrades** if watermarks can't be carried |
-| **6B-Prep** | **Sync safety.** §4a's three principles implemented; ledger reconciliation; remove the domain-side watermark; the four §6B prerequisites below | ⛔ **Required before 6B.** The readiness audit found enabling CloudKit without these causes silent data loss |
+| **6B-Prep** ✅ | §4a's principles, ledger reconciliation, domain watermark removed, the four prerequisites, guard rebuilt to walk the schema the app actually opens | ✅ **Done** — HEAD `8e2ce53`, **449 tests**, verified twice from clean clones. Wholesale collection replace is now **inexpressible**, not merely unused |
+| **6B-Prep-2** | Convergence polish: unify on earliest-wins, clamp closure, watermark reconstruction on import, the describing constructor, `restore()` gated on the kill switch | ⛔ Last code before 6B |
 | **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
 
 **⛔ Hard prerequisites for enabling CloudKit** *(added v2.0; the audit answered "what is the rollback story" with **"there is no rollback story — there is a backup story," which is not the same thing**)*. `restore()` hard-deletes and re-inserts, which under mirroring is a **mass cloud deletion plus a resurrection vector for offline devices**; sync cannot be switched off without shipping a build; and nothing can purge the zone. All four must exist first:
 
-1. **An automatic pre-enable export snapshot** — taken before the first sync, unprompted
-2. **A runtime kill switch** for sync, so disabling it never requires an App Store release
-3. **A zone-purge action**
-4. **A sync-aware `restore()`** that does not express a restore as a mass deletion
+1. **An automatic pre-enable export snapshot** — taken before the first sync, unprompted. **Boundary:** it is a *floor, not a mirror* — nothing created after it is covered, it lives on the same device as the data it protects, and the user can delete it from Files.
+2. **A runtime kill switch** for sync, so disabling it never requires an App Store release. **Boundary:** takes effect at next launch, **not mid-flight**; does nothing on other devices; removes no data anywhere. It stops the bleeding, nothing more.
+3. **A zone-purge action.** **Boundary:** a cloud purge **deletes nothing on any device**, and an offline device re-enabling later can **re-create the zone from its own data**. Its cloud half is a seam whose real implementation cannot exist until 6B — **⛔ 6B must test it against a real CloudKit container before any real data exists.**
+4. **A sync-aware `restore()`** that does not express a restore as a mass deletion — upsert by id plus an explicit tombstone diff. **Boundary:** it freezes nothing, so an offline device's post-snapshot edits still land on restored rows by last-writer-wins when it returns.
+
+**⭐ `restore()` must structurally require the kill switch** *(added v2.1)*. Wave 6B-Prep noted that "engage the kill switch before restoring during an incident" is **a documented rule, not a structure** — and observed, correctly, that *this project's history is documentation failing where structure holds*. **`restore()` refuses unless sync is disengaged.** A rule that must be remembered during an incident is a rule that will not be.
 | **9** | Real-data dogfood; then TestFlight to the second user | The owner runs it as his only tracker for two weeks |
 
 **Waves 7 and 8 now precede Wave 6** *(reordered in v1.6)*. Three reasons, in ascending order of importance:
@@ -809,6 +832,14 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 ---
 
 ## Update log
+
+- **2026-08-07 (v2.1 — revised against the Wave 6B-Prep report)** — **449 tests**, verified twice from clean clones. The three sync-safety principles are implemented **structurally**: delete-on-absence is *removed* rather than disabled, so **wholesale collection replace is inexpressible**; reads repair rather than throw, surfacing repairs into one aggregate needs-review card; the compatibility guard now walks `OttoContainerFactory.mainSchema` — **the schema the app actually opens** — so there is no version name left in it to forget. Four findings, all accepted:
+  - **⭐ Two convergence rules pointed in opposite directions** — pause repair kept the *earliest* episode, cancellation reconciliation the *newest*. Each defensible alone; the asymmetry undocumented. **Unified on earliest-wins-and-merge**, matching the ledger rule so all three share one shape. Earliest is also the safer direction for a verification product: an earlier cancellation yields an earlier check date, so the error is watching sooner, never too late.
+  - **⚠ Closure could produce an episode ending before it starts.** Harmless today because nothing reads closed-episode durations — and certain to surface the first time any feature computes pause spans. Now clamped to zero duration, which honestly records "recorded, never actually in effect." **Implementing the rule literally and flagging it, rather than silently improving it, is what made this visible.**
+  - **⚠ The replace-import watermark reset contradicted v2.0's own correction** — v2.0 said a nil watermark has no safe fallback; replace-import nils every one. Resolved by **reconstructing each watermark from the imported ledger** (the latest imported `expectedDate` *is* "materialized through"), falling back to the anchor and **never to today**. The contradiction is removed rather than documented around.
+  - **⭐ The "can't articulate it" instinct was right a fourth time.** The edit path constructs through `readingRepaired` — for a real reason, since editing a degraded record must re-describe it without trapping — but **a write path inheriting the read path's deliberate permissiveness means a future change to repair rules silently changes write validation.** Same one-mechanism-two-authorities smell as `anchorDay` and the domain watermark. A dedicated *describing* constructor, scoped to exactly the shapes the edit form can hold. **This is now the most reliable single signal in the review loop.**
+  - **⭐ `restore()` now structurally requires the kill switch.** "Engage the kill switch before restoring during an incident" was a documented rule, and the report's own observation was the decisive one: **this project's history is documentation failing where structure holds.** A rule that must be remembered *during an incident* will not be.
+  - **Honest boundaries recorded for all four prerequisites** — what each does *not* protect against, asked for deliberately. The snapshot is a floor not a mirror and sits on the same device; the kill switch acts at next launch, not mid-flight, and only locally; a zone purge deletes nothing on any device and an offline device can re-create the zone; a sync-aware restore freezes nothing. **⛔ The zone purge's cloud half cannot exist until 6B and must be tested against a real container before any real data exists.**
 
 - **2026-08-07 (v2.0 — revised against the Wave 6A report and its CloudKit readiness audit)** — Wave 6A done: **420 tests**, watermark relocated to a **separate `ModelContainer`** rather than a second configuration (that design was **probed empirically first** — SwiftData's staged migration refuses any container whose schema isn't exactly a plan version, so it could never sweep device state out of a synced configuration). Migration **asserts the carry-over while the old column still exists** and **refuses to migrate at all** if the destination is missing. **⚠ The readiness audit is the most consequential document produced in this project: enabling CloudKit as planned would have caused silent data loss.** New §4a states the three principles behind the findings:
   - **⚠⚠ Absence is not deletion.** The aggregate save path soft-deletes any stored child absent from the in-memory array, on the contract that absence means deliberate removal. **Under per-record sync that contract is false** — device A saving a stale snapshot **tombstones device B's just-synced episode, silently.** Now covers evidence notes and the trial too. **Ranked above everything else as the pre-6B change.**
