@@ -1,5 +1,11 @@
 name: CI
 
+# UNVERIFIED RUNNER LABEL: this workflow has never executed - the repo has no
+# GitHub remote yet (Wave 5.5). `macos-26` is pinned to match the local Xcode 26
+# toolchain; if GitHub's actual label differs (check
+# https://github.com/actions/runner-images), it appears once per job below and
+# nowhere else. Everything else in this file has been exercised locally.
+
 on:
   push:
   pull_request:
@@ -25,17 +31,63 @@ jobs:
       - name: Run persistence tests
         run: swift test --package-path Packages/OttoPersistence
 
-  app-build:
-    name: App build and lint
+  ui-package-tests:
+    # OttoStores, OttoServices, and OttoUI test targets on the mac host. The
+    # Dynamic Type suite is UIKit-hosted and compiles to nothing here; the
+    # simulator job below is what runs it.
+    name: OttoUI package tests (OttoStores, OttoServices, OttoUI)
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 26
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)/Contents/Developer"
-      - name: Install tools
-        run: brew install xcodegen swiftlint
+      - name: Run OttoUI package tests
+        run: swift test --package-path Packages/OttoUI
+
+  dynamic-type-simulator:
+    # The whole OttoUI package on an iOS simulator - the only place the Dynamic
+    # Type suite executes. The device is resolved from whatever iPhone simulator
+    # the runner image ships, so a device-name change in the image cannot
+    # silently skip the suite (no matching device fails the job instead).
+    name: Dynamic Type suite (simulator)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)/Contents/Developer"
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available --json | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin)['devices']
+          print(next(d['udid'] for devs in devices.values() for d in devs if d['name'].startswith('iPhone')))
+          ")
+          echo "Using simulator $UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+      - name: Run OttoUI package tests on the simulator
+        working-directory: Packages/OttoUI
+        run: xcodebuild test -scheme OttoUI-Package -destination "id=${{ steps.sim.outputs.udid }}"
+
+  lint:
+    name: SwiftLint (strict)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwiftLint
+        run: brew install swiftlint
       - name: Lint
         run: swiftlint --strict
+
+  app-build:
+    name: App build
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)/Contents/Developer"
+      - name: Install XcodeGen
+        run: brew install xcodegen
       - name: Generate project
         run: xcodegen generate
       - name: Build
@@ -45,3 +97,20 @@ jobs:
           -scheme Otto
           -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO
+
+  verify:
+    # The same gate a wave report must run locally: clone the committed HEAD
+    # into a temp dir and prove it builds, tests, and lints from scratch.
+    # Needs full history so verify.sh can clone from this checkout.
+    name: verify.sh (clean-clone gate)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)/Contents/Developer"
+      - name: Install tools
+        run: brew install xcodegen swiftlint
+      - name: Run verify.sh
+        run: scripts/verify.sh
