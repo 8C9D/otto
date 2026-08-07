@@ -62,6 +62,13 @@ struct WireFormatTests {
         #expect(CancellationEpisode.VerificationState.allCases.map(\.rawValue) == [
             "pending", "stillCharging", "needsManualReview", "awaitingResumeDate"
         ])
+        // The outcome enums were missing from this freeze until the Wave
+        // 6B-Prep-2 sweep - stored and exported episodes carry these forever,
+        // `.superseded` included even though v2.1 stopped writing it.
+        #expect(CancellationEpisode.Outcome.allCases.map(\.rawValue) == [
+            "verifiedStopped", "abandoned", "superseded"
+        ])
+        #expect(PauseEpisode.Outcome.allCases.map(\.rawValue) == ["resumed", "superseded"])
         #expect(PriceChange.Source.allCases.map(\.rawValue) == [
             "userEdit", "chargeMismatch", "trialConversion"
         ])

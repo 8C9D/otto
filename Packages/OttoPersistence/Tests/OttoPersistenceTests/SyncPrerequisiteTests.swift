@@ -111,6 +111,12 @@ extension SerializedPersistenceTests {
             // flag was deliberately untouched by the kill switch.
             SyncState.setKillSwitchEngaged(false, in: defaults)
             #expect(SyncState.load(from: defaults) == SyncState(isEnabled: true, killSwitchEngaged: false))
+
+            // The raw keys ARE the persisted format: renaming one silently
+            // resets that switch on every real device while a round-trip test
+            // stays green. Pinned by the Wave 6B-Prep-2 sweep.
+            #expect(defaults.object(forKey: "sync.enabled") as? Bool == true)
+            #expect(defaults.object(forKey: "sync.killSwitchEngaged") as? Bool == false)
         }
     }
 }

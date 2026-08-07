@@ -169,6 +169,11 @@ struct ExportLegacyImportTests {
         #expect(note.id == EvidenceNote.legacyNote(
             episodeID: pending.id, text: "", episodeUpdatedAt: pending.updatedAt
         ).id)
+        // The literal, not just the rule: the XOR mask is frozen wire format.
+        // A mask change would keep the rule-vs-rule check green while every
+        // re-import of an old file after an app update duplicated its notes.
+        // Pinned by the Wave 6B-Prep-2 sweep.
+        #expect(note.id == UUID(uuidString: "45766964-4E6F-7465-0000-000000000601"))
 
         let verified = try #require(snapshot.cancellationEpisodes.first { $0.id == (try fixtureUUID(602)) })
         #expect(!verified.isOpen)
