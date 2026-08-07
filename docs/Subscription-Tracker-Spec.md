@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.8 — SCHEMA-FREEZE CANDIDATE.** Revised Aug 7 against Claude Code's Wave 8 report. Waves 0–5.5, 7 and 8 complete; HEAD `f38eec6` **verified from a clean clone** (395 host + 8 simulator = **403 tests**). Remaining: **Wave 8.5 (model lock)**, then Wave 6.
+**Status:** **v1.9 — SCHEMA FROZEN** pending the Wave 6A relocation below. Revised Aug 7 against Claude Code's Wave 8.5 report. Waves 0–8.5 complete; HEAD `3a69893` **verified twice from a clean clone** (**414 tests**). Remaining: **Wave 6A (watermark relocation — CloudKit stays off)**, four manual gates, then **Wave 6B (CloudKit enablement)**.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -335,7 +335,9 @@ The derived-status design in §5.2a is correct and is not what failed. **What fa
 
 ### 5.2b Model invariants *(added v1.3)*
 
-Three states are representable in the types but meaningless in the domain. Each was silently no-op'd somewhere in Wave 3 — and **silent no-ops in separate switch arms are how two code paths eventually disagree.** Each is now a declared invariant, enforced at construction and surfaced loudly, never skipped quietly:
+Three states are representable in the types but meaningless in the domain. Each was silently no-op'd somewhere in Wave 3 — and **silent no-ops in separate switch arms are how two code paths eventually disagree.** Each is now a declared invariant, enforced at construction and surfaced loudly, never skipped quietly.
+
+**⚠ Status-coupled invariants apply to LIVE records only** *(added v1.9)*. Wave 8.5 caught its own newly-introduced bug in self-review: deleting a paused subscription tombstones its episodes, after which the *"a paused subscription must have an open pause episode"* check refused the row — making a **full backup fail because a deleted gym membership existed.** An invariant enforced against tombstones turns ordinary history into a permanent export failure. Tombstones are outside every status-coupled invariant, with a regression test on the export path.
 
 **⚠ "Loudly" needs a definition, added in v1.4.** The established read policy is skip-with-log, which is loud *in the console* and invisible *in the UI* — the opposite of how §7.1 treats the cancelled-without-record invariant, and it means an unmappable `.trial` record simply vanishes from the user's view. For a product whose whole promise is that nothing slips past unnoticed, a subscription disappearing silently is the worst available failure.
 
@@ -390,7 +392,11 @@ The watermark also bounds the work: a Mode B subscription entered today does not
 
 > **A second, local-only `ModelConfiguration` holds device-scoped bookkeeping.** The watermark is its first inhabitant and almost certainly not its last — anything that describes *this device's progress* rather than *the user's data* belongs there.
 
-Two consequences that must not be forgotten: **Wave 6's first schema act is moving it**, before any data exists in CloudKit; and **Wave 8's export must exclude it**, since exporting one device's progress marker into a file destined for another device is meaningless at best.
+**⚠ This relocation is a PRECONDITION for Wave 6, not its first step** *(escalated in v1.9)*. The Wave 8.5 sweep named it the thing it would most regret freezing, with an exact reading of the risk: *everything depends on "first schema act" actually being first, and if CloudKit ever turns on with the watermark still on `StoredSubscription`, the advanced-watermark hazard becomes real silent loss — the precise failure this app exists to prevent.*
+
+That is correct, and it is also the shape of failure this project has hit repeatedly: **a plan that depends on a future wave's discipline holding.** So the plan is retired. Wave 6 is split — **6A relocates the watermark with CloudKit still off and stops; 6B enables CloudKit** — so that "the watermark moved first" is a *verified committed state* rather than an intention.
+
+Wave 8's export already excludes it, since exporting one device's progress marker into a file destined for another device is meaningless at best.
 
 **Backwards edits rewind the watermark** *(added v1.7)*. A pause set to end Dec 1 that the user later corrects to Sep 1 leaves the Sep–Nov charges stranded behind an already-advanced watermark. Generalized, because this is the same shape as §5.3's invalidation rule rather than a pause-specific quirk:
 
@@ -467,10 +473,10 @@ Wave 8 surfaced two findings that look unrelated and are the same modelling erro
 | `nextChargeDateIfNotCancelled` | CalendarDay**?** | **Renamed and made required in v1.1; made conditionally optional in v1.7.** ⚠ The v1.1 reasoning still stands — an *unknown* date must never be papered over with a runtime fallback. But §5.4's indefinite-pause path creates a state where the date is **legitimately, knowably absent**, which is a different thing. **Invariant: `nil` if and only if `verificationState == .awaitingResumeDate`.** Enforced, not assumed — an optional without that constraint would reopen exactly the hole v1.1 closed |
 | `verificationState` | ... `.awaitingResumeDate` | **Added v1.7** — generates no notifications, refuses verification answers (there is no unverified assertion to confirm), and surfaces in Today's *Needs action* asking for the resume date. Supplying it starts the ordinary watch |
 | `expectedChargeAmountCents` | Int**?** | ⭐ **Added v1.5; corrected to optional in v1.6.** Wave 5.5 was right that there is no honest non-optional default for a record whose amount was never captured — **`nil` means "legacy record predating v1.5,"** and a fabricated zero would be worse than an absence in a document destined for a bank. The roll-forward backfills it where it can. The date is stored at cancellation because it is unrecoverable afterwards — **the amount has exactly the same property and was not stored**, leaving the dispute summary to infer it heuristically (by checking whether the anchor equals the conversion date). Correct for every flow-produced state, defeatable by a hand-edited price. **The dispute summary is the deliverable that ends at a bank; nothing in it should be a heuristic.** Computed once, at cancellation, like the date |
-| `verificationState` | `.pending` `.verifiedStopped` `.stillCharging` `.needsManualReview` |
+| `verificationState` | `.pending` `.stillCharging` `.needsManualReview` `.awaitingResumeDate` — **live states only; `.verifiedStopped` removed in v1.9** |
 | `unansweredCheckCount` | Int, default 0 | **Added v1.3** — §5.4's three-cycle cap needs somewhere to count. Wave 5 lands before CloudKit, so this is still a field addition rather than a migration |
 | `verifiedAt` | Date? |
-| `evidenceNote` | String? | confirmation number, screenshot reference, rep's name |
+| `evidenceNotes` | **[EvidenceNote]** | ⭐ **Made a list in v1.9.** Wave 8.5 noted this is *"one field where a long cancellation fight produces many artifacts"* — a call, then an email, then a chargeback filing, each with its own date. **That is the same one-to-one-for-something-recurring error §5.3a was written to eliminate**, and it is cheap now for exactly one more wave. Each note carries its own timestamp and text |
 
 **Why that field is now required, and renamed (v1.1).** As originally written it was optional, and the fallback was "the next billing date after today." That fallback is unimplementable in the domain layer: `markedCancelledAt` is a UTC instant, and §4.1 forbids converting an instant to a calendar day without a timezone — so the domain cannot derive the check date at all, and any runtime fallback drifts later every day the app goes unopened. **The date is fully computable at cancellation time** from the immutable anchor and the cycle, so it is computed once, then, and stored.
 
@@ -486,6 +492,25 @@ The rename matters too: *"expected final charge"* is ambiguous — some vendors 
 **When a verification check goes unanswered** *(specified in v1.2; v1.1 was silent, and §6.2's catch-up rule covers reminders-before-a-billing-date, not this)*. The user opens the app a week after the check date and the state is still `.pending`.
 
 **Rule: keep watching, and roll the check forward to the next date a charge would have landed — but cap it at three consecutive unanswered cycles.** A cancellation that silently failed will charge again next cycle, so one ignored notification must not end the watch. But past three, the signal is that notifications aren't reaching this item, and a fourth won't either: the subscription moves to a **persistent card in Today's *Needs action* section** and stops generating notifications. Escalating in the app rather than escalating the notifications is the correct response to being ignored.
+
+#### The `verificationState` / `outcome` folding *(resolved in v1.9)*
+
+Wave 8.5 flagged this as the thing it *couldn't fully articulate*: the two enums "together feel one field too wide," with every combination pinned by invariants and no concrete failure visible. **Saying it anyway was correct — there is a folding, and it is the overlap.**
+
+`.verifiedStopped` appeared in **both** enums, which is the whole smell. Once the distinction is stated the resolution is forced:
+
+| Field | Meaning | When it applies |
+|---|---|---|
+| `verificationState` | Where the watch **is now** | While the episode is open (`endedAt == nil`) |
+| `outcome` | **How the episode ended** | Once closed |
+
+> **`.verifiedStopped` is removed from `verificationState`.** Reaching that result does not *set a state* — it **closes the episode**, with `outcome = .verifiedStopped`.
+
+No overlap remains, "open" is exactly `endedAt == nil`, and no invariant is needed to forbid the nonsensical combinations because they are no longer representable. `.stillCharging` correctly stays live: a dispute in progress is an ongoing watch, and resolving it closes the episode the same way.
+
+*Worth keeping as a working instruction:* **"tell me what feels wrong even if you can't say why" produced a real structural simplification here.** It is a different and more valuable question than "what is broken."
+
+---
 
 ### 5.5 `PriceChange` and `PaymentMethod`
 
@@ -693,8 +718,9 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **5.5** ✅ | Hardening: `scripts/verify.sh` (clean-clone build/test/lint), CI covering every package + simulator job, the two pre-CloudKit field additions, ordering guards, the phone-in-a-drawer harness, `docs/manual-verification.md` | ✅ **Done** — HEAD `5a2799e` **verified from a clean clone**: 270 host + 5 simulator = **275 tests**. ⚠ One `OttoPersistence` segfault on the first run, then 9 clean — deliberately left unmasked |
 | **7** ✅ | Insights, payment methods, zombie detection, plus the pause UI and the paused-cancellation defer-and-ask path | ✅ **Done** — HEAD `99c3050`, **347 tests**, all Insights figures tested against hand-computed fixtures written *before* implementation. Wave 5.5's segfault did not recur |
 | **8** ✅ | Export/import (JSON + CSV), settings, accessibility pass | ✅ **Done** — HEAD `f38eec6`, **403 tests**. Round-trip bit-exact incl. tombstones and fractional-second instants; corruption tested at seven offsets. A SwiftLint custom rule now makes any mention of `storedStatus` an **error** above layer 2 — which caught a live display bug ("Resumes Sep 1" shown forever after Sep 1) |
-| **8.5** | **Model lock**: episode tables, invalidation fix, export version policy, then a **schema-freeze sweep** of every §5 relationship | ⛔ Last wave in which any model change is cheap |
-| **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall. ⛔ **Blocked on §10 Decision 2** |
+| **8.5** ✅ | **Model lock**: `CancellationEpisode` + `PauseEpisode`, schema V2 with a custom migration, un-cancel, invalidation fix, export format v2, and the schema-freeze sweep | ✅ **Done** — HEAD `3a69893`, **414 tests**, `verify.sh` green twice from clean clones. `docs/schema-freeze-review.md` written |
+| **6A** | **Watermark relocation to the local-only `ModelConfiguration` + v1.9 reconciliation. CloudKit stays OFF.** | ⛔ Committed and verified before 6B is written |
+| **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall. ⛔ **Blocked on all four manual gates and on 6A being green** |
 | **9** | Real-data dogfood; then TestFlight to the second user | The owner runs it as his only tracker for two weeks |
 
 **Waves 7 and 8 now precede Wave 6** *(reordered in v1.6)*. Three reasons, in ascending order of importance:
@@ -722,7 +748,7 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 
 | Issue | Status |
 |---|---|
-| **`OttoPersistence` segfault (signal 11)** on the first-ever clean-clone verify run, then 9 consecutive clean runs. Suspected SwiftData under swift-testing's parallel suites | **Deliberately unmasked** — no retry wrapper, so CI can reproduce it and it stops being an anecdote. If CI does reproduce, serialize *that suite specifically* with a comment saying why; do **not** serialize broadly, which would hide the signal. Most likely a test-harness artifact (multiple in-memory `ModelContainer`s racing) rather than production behaviour, but that is a hypothesis, not a finding |
+| **`OttoPersistence` segfault (signal 11)** on the first-ever clean-clone verify run — ✅ **probable cause identified in Wave 8.5** | **Resolved, most likely.** SwiftData keeps a **process-global, name-keyed model registry**, and schema V1/V2 deliberately share entity names — so parallel test suites racing across the two schemas die inside `ModelCoders`. Fixed by nesting every persistence suite under one `@Suite(.serialized)` root (sub-second suites, so the lost parallelism is noise). This also retro-explains the Wave 5.5 sighting, which predated V2 but had the same registry contention. **The app is unaffected — it only ever builds one container — but this is worth carrying to Kept if it ever holds two live schema versions.** Originally left unmasked rather than retried, which is why the cause was findable at all |
 | **§5.4 paused-cancellation is specified but not implemented** — the defer-and-ask path needs UI, which Wave 5.5 forbade | **The one place code and spec knowingly disagree.** Must be reconciled; now assigned to Wave 7, which has the UI budget |
 | **SwiftData's `rollback()` crashes** on a context with pending deletes | Discovered in Wave 8. Import atomicity is therefore structured with **no failure path between the first mutation and the single `save()`** — atomicity by construction rather than by rollback. Worth carrying to any other SwiftData work, Kept included |
 | **Test counting has no single command** — 5 Dynamic Type tests are `#if canImport(UIKit)` and compile to nothing under `swift test` on a Mac | Resolved by `verify.sh`, which prints what it can see and **explicitly names what it cannot.** The historical "252" was arithmetically honest; the counting method had simply never been written down |
@@ -755,6 +781,14 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.9 — SCHEMA FROZEN, revised against the Wave 8.5 report)** — **414 tests, `verify.sh` green twice from clean clones**, `docs/schema-freeze-review.md` written. The sweep did what it was for: it produced explicit verdicts including several deliberate *not*-fixes with stated reasons, and it caught **a bug it had introduced itself, in self-review**.
+  - **⚠ The watermark relocation is promoted from *Wave 6's first step* to a *precondition*, and Wave 6 is split into 6A and 6B.** The sweep named this the thing it would most regret freezing, and the reasoning is exact: everything depends on "first schema act" actually being first, and **if CloudKit turns on with the watermark still on `StoredSubscription`, the advanced-watermark hazard becomes real silent loss** — the precise failure this app exists to prevent. That is also the shape this project keeps hitting: **a plan depending on a future wave's discipline holding.** Now a verified committed state instead of an intention.
+  - **⭐ "The one I can't fully articulate" resolved into a real simplification.** `verificationState` and `outcome` both contained `.verifiedStopped` — the whole smell. Once stated (**state = where the watch is now, open only; outcome = how the episode ended, closed only**) the folding is forced: `.verifiedStopped` leaves `verificationState`, because reaching that result doesn't set a state, it **closes the episode**. Nonsensical combinations stop being representable rather than being forbidden by invariant. **"Tell me what feels wrong even if you can't say why" is a different and more valuable question than "what is broken"** — keep it in every prompt.
+  - **⚠ An invariant made backups fail.** Deleting a *paused* subscription tombstones its episodes; the "paused must have an open episode" check then refused the row, so `completeSnapshot()` threw — **a full backup failing because a deleted gym membership existed.** Status-coupled invariants now apply to **live records only**; tombstones sit outside them.
+  - **`evidenceNote` became a list**, applying §5.3a's freshly-written lesson to the field the sweep flagged: a long cancellation fight produces a call, an email, a chargeback filing, each with its own date. Same one-to-one-for-something-recurring error, caught while still cheap.
+  - **✅ The Wave 5.5 segfault has a probable cause.** SwiftData keeps a **process-global name-keyed model registry**, and V1/V2 deliberately share entity names, so parallel suites racing across schemas die in `ModelCoders`. Fixed by serializing the persistence suites. **It was findable only because it was left unmasked rather than retried** — the Wave 5.5 call to refuse a retry wrapper paid off three waves later.
+  - **Deliberate not-fixes, recorded with reasons:** payment-method and category history (additive later, existing meanings unchanged — explicitly noted as the one verdict that knowingly discards data); trial stays one-to-one (a re-offered trial is a new subscription lifetime); `SubscriptionStatus.cancelled` kept despite **no flow ever producing it**, on the grounds that removing a case the week the wire format freezes is worse than reserving it; archive leaves a mid-pause episode open, because billing never resumed and an end date would be fiction.
 
 - **2026-08-07 (v1.8 — SCHEMA-FREEZE CANDIDATE, revised against the Wave 8 report)** — Wave 8 shipped: **403 tests**, round-trip bit-exact including tombstones and fractional-second instants, corruption tested at seven offsets. The v1.7 stored-status rule was enforced with a **SwiftLint custom rule making any mention an error** above layer 2 — which immediately **caught a live display bug** (Detail showing "Resumes Sep 1" forever after Sep 1 had passed). A structural rule finding a real defect within one wave of being written is the strongest argument yet for preferring compiler and lint enforcement over review attention.
   - **⭐⭐ Two findings that are the same modelling error, both caught in the last cheap wave.** §5.4 had **no un-cancel** — an accidental "I'm cancelling" tap is irreversible in-app — and **resume erases pause history**. Both are **one-to-one relationships modelling something that recurs**: a subscription can be cancelled, resubscribed and cancelled again; it can be paused every winter. **Relationship cardinality is the one change class that cannot be made cheaply after Wave 6.** Replaced with `CancellationEpisode` and `PauseEpisode` one-to-many histories; **nothing is ever cleared on exit from a state — exiting writes an end date.** Two instances in one report justifies a systematic sweep rather than two fixes, hence Wave 8.5.
