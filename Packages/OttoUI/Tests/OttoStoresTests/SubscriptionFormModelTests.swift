@@ -252,6 +252,24 @@ struct SubscriptionFormModelTests {
         #expect(edited.trial == nil)
     }
 
+    @Test("editing a confirmed-converted subscription preserves its trial term - history is not a toggle")
+    func editingConvertedSubscriptionKeepsTrial() throws {
+        // The state Wave 5's confirm flow produces: .active, anchored at the
+        // conversion, trial term retained as the record of what happened.
+        let trial = try makeTrialTerm(startDate: try day(2026, 7, 1))
+        let converted = try makeSubscription(
+            index: 1, status: .active, cycleStartDay: trial.conversionDate, trial: trial
+        )
+        let form = SubscriptionFormModel(editing: converted, dates: try fixedDates())
+        #expect(!form.isTrial)
+
+        // An unrelated edit - the price changed - must not delete the term.
+        form.amount = 12.99
+        let edited = try #require(form.buildSubscription())
+        #expect(edited.trial == trial)
+        #expect(edited.status == .active)
+    }
+
     @Test("a lead of at least a whole cycle warns, and never blocks saving (spec §6.2, v1.4)")
     func leadCoveringCycleWarns() throws {
         let form = SubscriptionFormModel(dates: try fixedDates())

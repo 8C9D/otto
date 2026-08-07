@@ -289,7 +289,7 @@ public final class SubscriptionFormModel {
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
             pauseEndsOn: original?.pauseEndsOn,
-            trial: draftTrial,
+            trial: preservedTrial,
             paymentMethodID: paymentMethodID,
             cancellationURL: nonEmptyURL(from: cancellationURLText),
             cancellationNotes: nonEmpty(cancellationNotes),
@@ -299,6 +299,17 @@ public final class SubscriptionFormModel {
             updatedAt: now,
             deletedAt: original?.deletedAt
         )
+    }
+
+    /// The trial the built subscription carries. The toggle governs a live
+    /// trial; a NON-`.trial` subscription's term is history - a confirmed
+    /// conversion keeps its term deliberately (spec §5.2a: confirming records,
+    /// never deletes) - and the toggle the form shows as off must not silently
+    /// delete it on an unrelated edit.
+    private var preservedTrial: TrialTerm? {
+        if let draftTrial { return draftTrial }
+        if let original, original.status != .trial { return original.trial }
+        return nil
     }
 
     /// The status the form writes: the trial toggle decides between trial and

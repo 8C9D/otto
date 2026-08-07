@@ -28,7 +28,9 @@ Date: 2026-08-07
   No → `.stillCharging`, exactly one retrospective `.unexpectedCharge` row (this flow is the state's only producer), and a `DisputeSummary` - cancellation instant, evidence, charge date and amount - rendered readable-aloud with share and copy in Detail.
   Unanswered → `catchingUpOnUnansweredChecks` runs on every scheduling pass: each passed check date increments `unansweredCheckCount` and rolls the watch to the next would-be charge; at exactly 3 the record escalates to `.needsManualReview`, notifications stop, and the persistent Today card (already wired in Wave 4) is the escalation.
   One pass catches up an arbitrary absence, so nothing depends on when the app was opened.
-- 251 tests: 122 domain + 54 persistence + 70 host-side services/stores + 5 on the simulator (Dynamic Type, plus dispute-summary and cancellation-screen render checks).
+- **An Add/Edit preservation fix** (`e595452`): the form derives its trial toggle from the status, so editing a confirmed-converted subscription (`.active` with a retained term - a state this wave created) would have silently deleted the trial term on any unrelated edit.
+  `buildSubscription` now preserves a non-`.trial` original's term; turning the toggle off on a live trial still removes it.
+- 252 tests: 122 domain + 54 persistence + 71 host-side services/stores + 5 on the simulator (Dynamic Type, plus dispute-summary and cancellation-screen render checks).
 
 ## Design decisions worth recording
 
