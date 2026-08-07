@@ -11,6 +11,7 @@ struct AddEditSubscriptionView: View {
     @Environment(\.dismiss) private var dismiss
     @State var form: SubscriptionFormModel
     @State private var saveFailure: String?
+    @State private var isAddingPaymentMethod = false
 
     var body: some View {
         NavigationStack {
@@ -44,6 +45,11 @@ struct AddEditSubscriptionView: View {
                 }
         }
         .task { await model.paymentMethodsStore.refresh() }
+        .sheet(isPresented: $isAddingPaymentMethod) {
+            PaymentMethodFormView(form: model.paymentMethodFormModel()) { saved in
+                form.paymentMethodID = saved.id
+            }
+        }
     }
 
     private var formContent: some View {
@@ -239,16 +245,20 @@ struct AddEditSubscriptionView: View {
 
     @ViewBuilder
     private func paymentSection(_ form: Bindable<SubscriptionFormModel>) -> some View {
-        // Wave 7 owns managing payment methods; until then the picker only
-        // appears when some already exist.
-        if let methods = model.paymentMethodsStore.state.value, !methods.isEmpty {
-            Section(String(localized: "Payment method")) {
+        Section(String(localized: "Payment method")) {
+            if let methods = model.paymentMethodsStore.state.value, !methods.isEmpty {
                 Picker(String(localized: "Paid with"), selection: form.paymentMethodID) {
                     Text(String(localized: "None")).tag(UUID?.none)
                     ForEach(methods) { method in
                         Text(method.label).tag(UUID?.some(method.id))
                     }
                 }
+            }
+            // Inline creation (spec §5.5, Wave 7): a label plus last4 is cheap,
+            // and a picker that sends the user to another screen mid-entry is
+            // how entry gets abandoned. The saved card selects itself.
+            Button(String(localized: "Add a card…")) {
+                isAddingPaymentMethod = true
             }
         }
     }

@@ -99,6 +99,49 @@ struct DynamicTypeTests {
         assertGrows(Text(summary.spokenText()).font(.callout))
     }
 
+    @Test("the Insights zombie and converting-soon rows grow to the largest accessibility size")
+    func insightsRows() throws {
+        let subscription = try #require(fixtures.subscriptions.first)
+        let zombie = ZombieEntry(
+            subscription: subscription,
+            lastUsedDate: CalendarDay(year: 2026, month: 5, day: 9),
+            daysSinceUse: 90,
+            costSinceCents: 5697,
+            annualCostCents: 22788
+        )
+        assertGrows(ZombieRow(entry: zombie, currencyCode: "CAD"))
+
+        let converting = ConvertingTrial(
+            subscription: subscription,
+            conversionDate: try #require(CalendarDay(year: 2026, month: 8, day: 13)),
+            convertsToAmountCents: 950,
+            monthlyEquivalent: 950,
+            burnAfterCents: 2849
+        )
+        assertGrows(ConvertingTrialRow(entry: converting, currencyCode: "CAD"))
+    }
+
+    @Test("the payment-method row grows to the largest accessibility size")
+    func paymentMethodRow() throws {
+        let method = PaymentMethod(
+            id: UUID(),
+            label: "Bank Mastercard ••4821",
+            last4: "4821",
+            issuer: "Bank",
+            expiryMonth: 9,
+            expiryYear: 2026,
+            isDefault: true,
+            createdAt: PreviewData.now,
+            updatedAt: PreviewData.now
+        )
+        assertGrows(PaymentMethodRow(
+            method: method,
+            load: PaymentMethodLoad(subscriptionCount: 3, monthlyCents: 4521),
+            currencyCode: "CAD",
+            today: PreviewData.today
+        ))
+    }
+
     @Test("the cancellation flow screen renders against the preview fixtures")
     func cancellationFlowRenders() throws {
         let subscription = try #require(fixtures.subscriptions.first)

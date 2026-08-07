@@ -82,6 +82,16 @@ public actor NotificationActionHandler {
             )
             _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
             return .openDetail(subscriptionID: subscriptionID)
+        case .stillUsing:
+            // The §7.3 yes-path: record the use, background-safe, and let the
+            // reschedule move the next check-in a cadence out.
+            try await flows.recordUsage(subscriptionID: subscriptionID, on: today, now: now)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            return .none
+        case .notUsing:
+            // The other path opens the facts; deciding what to do with an
+            // unused subscription is the user's call, never Otto's.
+            return .openDetail(subscriptionID: subscriptionID)
         case .remindLater:
             try await snooze(
                 subscriptionID: subscriptionID,

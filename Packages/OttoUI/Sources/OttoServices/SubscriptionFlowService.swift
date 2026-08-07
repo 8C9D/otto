@@ -134,6 +134,21 @@ public actor SubscriptionFlowService {
         try await subscriptions.save(flipped)
     }
 
+    // MARK: - Recording use (spec §7.3)
+
+    /// The user said they used this - from the 90-day check-in notification or
+    /// the Detail screen. `lastUsedDate` is what zombie detection counts from;
+    /// recording it is a user statement, so `updatedAt` moves. Idempotent per
+    /// day: saying it twice on one day is one fact.
+    public func recordUsage(subscriptionID: UUID, on today: CalendarDay, now: Date) async throws {
+        guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
+              subscription.lastUsedDate != today
+        else { return }
+        subscription.lastUsedDate = today
+        subscription.updatedAt = now
+        try await subscriptions.save(subscription)
+    }
+
     // MARK: - Pausing and resuming
 
     /// Pauses billing (spec §5.1): status `.paused`, the freeze point recorded

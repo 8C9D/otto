@@ -36,6 +36,7 @@ public final class AppModel {
     }
 
     public let subscriptionsStore: SubscriptionsStore
+    public let insightsStore: InsightsStore
     public let paymentMethodsStore: PaymentMethodsStore
     /// Permission and coverage state (Wave 4). Nil in previews and store tests
     /// that construct the model without a notification engine.
@@ -72,7 +73,14 @@ public final class AppModel {
             cancellationRepository: repositories.cancellations,
             dates: dates
         )
-        self.paymentMethodsStore = PaymentMethodsStore(repository: repositories.paymentMethods)
+        self.insightsStore = InsightsStore(
+            subscriptionRepository: repositories.subscriptions,
+            priceChangeRepository: repositories.priceChanges,
+            dates: dates
+        )
+        self.paymentMethodsStore = PaymentMethodsStore(
+            repository: repositories.paymentMethods, dates: dates
+        )
         if let notifications {
             // Every create, edit, or delete is a reschedule trigger (spec §6.2).
             self.subscriptionsStore.onMutation = { [weak notifications] in
@@ -89,6 +97,7 @@ public final class AppModel {
     private func flowFinished() async {
         await notifications?.reschedule()
         await subscriptionsStore.refresh()
+        await insightsStore.refresh()
     }
 
     /// The user confirmed they know the trial converted (spec §5.2a): records,
@@ -124,6 +133,15 @@ public final class AppModel {
         )
         await flowFinished()
         return start
+    }
+
+    /// Records that the user used this subscription today (spec §7.3) - the
+    /// fact zombie detection counts from.
+    public func recordUsage(subscriptionID: UUID) async throws {
+        try await flows.recordUsage(
+            subscriptionID: subscriptionID, on: dates.today(), now: dates.now()
+        )
+        await flowFinished()
     }
 
     /// Pauses billing (spec §5.1), recording the freeze point and the resume
@@ -196,6 +214,15 @@ public final class AppModel {
             SubscriptionFormModel(editing: subscription, dates: dates)
         } else {
             SubscriptionFormModel(dates: dates)
+        }
+    }
+
+    /// A payment-method form model for adding (nil) or editing (spec §5.5).
+    public func paymentMethodFormModel(editing method: PaymentMethod? = nil) -> PaymentMethodFormModel {
+        if let method {
+            PaymentMethodFormModel(editing: method, dates: dates)
+        } else {
+            PaymentMethodFormModel(dates: dates)
         }
     }
 }

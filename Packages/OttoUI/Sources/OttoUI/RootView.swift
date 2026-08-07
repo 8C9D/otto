@@ -1,8 +1,8 @@
 import SwiftUI
 import OttoStores
 
-/// The app's top level: two tabs, Today and Subscriptions. Later waves add more;
-/// two is what Wave 3 has screens for.
+/// The app's top level: Today, Subscriptions, Insights (Wave 7), and Payment
+/// methods (Wave 7). Settings arrives with Wave 8.
 public struct RootView: View {
     @Environment(AppModel.self) private var model
 
@@ -16,6 +16,12 @@ public struct RootView: View {
             }
             Tab(String(localized: "Subscriptions"), systemImage: "creditcard") {
                 SubscriptionsView()
+            }
+            Tab(String(localized: "Insights"), systemImage: "chart.bar") {
+                InsightsView()
+            }
+            Tab(String(localized: "Payment"), systemImage: "wallet.pass") {
+                PaymentMethodsView()
             }
         }
         // A notification tap or action follow-up lands here: the detail opens

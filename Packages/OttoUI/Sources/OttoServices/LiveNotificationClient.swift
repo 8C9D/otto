@@ -55,7 +55,24 @@ public final class LiveNotificationClient: NotificationClient {
             ],
             intentIdentifiers: []
         )
-        center.setNotificationCategories([reminder, verification])
+        let usage = UNNotificationCategory(
+            identifier: NotificationCategory.usage,
+            actions: [
+                UNNotificationAction(
+                    identifier: NotificationAction.stillUsing.rawValue,
+                    title: String(localized: "Yes - still using it")
+                ),
+                UNNotificationAction(
+                    identifier: NotificationAction.notUsing.rawValue,
+                    title: String(localized: "Not really…"),
+                    // Foreground: what to do about an unused subscription is
+                    // the user's decision, so this opens the facts.
+                    options: [.foreground]
+                )
+            ],
+            intentIdentifiers: []
+        )
+        center.setNotificationCategories([reminder, verification, usage])
     }
 
     public func permission() async -> NotificationPermission {

@@ -261,7 +261,11 @@ public enum NotificationCategory {
     public static let actionable = "otto.category.reminder"
     /// Verification checks carry the yes/no answer buttons (spec §5.4, Wave 5).
     public static let verification = "otto.category.verification"
-    /// Everything else is informational; usage responses are a Wave 7 flow.
+    /// Usage check-ins carry the §7.3 responses (Wave 7): "still using it"
+    /// records the use in the background; "not really" opens the subscription
+    /// so the user can decide - Otto presents facts, never a recommendation.
+    public static let usage = "otto.category.usage"
+    /// Everything else is informational.
     public static let plain = ""
 
     public static func identifier(for kind: PlannedReminder.Kind) -> String {
@@ -271,7 +275,9 @@ public enum NotificationCategory {
             actionable
         case .verification:
             verification
-        case .conversionAnnouncement, .usageCheckIn, .pauseEnding:
+        case .usageCheckIn:
+            usage
+        case .conversionAnnouncement, .pauseEnding:
             plain
         }
     }
@@ -289,4 +295,11 @@ public enum NotificationAction: String, CaseIterable, Sendable {
     /// Verification no-path: a charge arrived - record it and bring the dispute
     /// summary to the screen (foreground-registered).
     case stillCharging = "otto.action.stillCharging"
+    /// Usage check-in yes-path (spec §7.3): records today as the last use, all
+    /// in the background - answering must work with the phone in a pocket.
+    case stillUsing = "otto.action.stillUsing"
+    /// Usage check-in other-path: opens the subscription. What to do about an
+    /// unused subscription is the user's decision, so the button leads to the
+    /// facts rather than performing anything.
+    case notUsing = "otto.action.notUsing"
 }

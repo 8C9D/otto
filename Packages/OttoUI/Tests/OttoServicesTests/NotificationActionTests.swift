@@ -208,3 +208,64 @@ struct NotificationActionTests {
         #expect(followUp == .openDetail(subscriptionID: subscription.id))
     }
 }
+
+// The §7.3 usage check-in responses (Wave 7): "still using it" is a background
+// fact-record; "not really" opens the facts and performs nothing - what to do
+// about an unused subscription is the user's decision, never Otto's.
+@Suite("Usage check-in actions (spec §7.3)")
+struct UsageCheckInActionTests {
+
+    @Test("'Yes - still using it' records today as the last use, idempotently")
+    func stillUsingRecordsUse() async throws {
+        let fixture = SchedulerFixture()
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        await fixture.subscriptions.seed([subscription])
+        let today = try day(2026, 8, 6)
+        let identifier = NotificationPlanIdentifier.planned(
+            PlannedReminder(subscriptionID: subscription.id, day: today, kind: .usageCheckIn)
+        )
+
+        let followUp = try await fixture.handler.handle(
+            actionIdentifier: NotificationAction.stillUsing.rawValue,
+            notificationIdentifier: identifier,
+            now: try fixtureNow(), today: today, timeZone: torontoZone
+        )
+
+        #expect(followUp == .none)
+        let stored = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        #expect(stored.lastUsedDate == today)
+
+        // Redelivery: same day, same fact, one write's worth of state.
+        _ = try await fixture.handler.handle(
+            actionIdentifier: NotificationAction.stillUsing.rawValue,
+            notificationIdentifier: identifier,
+            now: try fixtureNow(), today: today, timeZone: torontoZone
+        )
+        #expect(try await fixture.subscriptions.subscription(withID: subscription.id)?.lastUsedDate == today)
+    }
+
+    @Test("'Not really' opens the subscription and changes nothing")
+    func notUsingOpensDetail() async throws {
+        let fixture = SchedulerFixture()
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        await fixture.subscriptions.seed([subscription])
+        let identifier = NotificationPlanIdentifier.planned(
+            PlannedReminder(subscriptionID: subscription.id, day: try day(2026, 8, 6), kind: .usageCheckIn)
+        )
+
+        let followUp = try await fixture.handler.handle(
+            actionIdentifier: NotificationAction.notUsing.rawValue,
+            notificationIdentifier: identifier,
+            now: try fixtureNow(), today: try day(2026, 8, 6), timeZone: torontoZone
+        )
+
+        #expect(followUp == .openDetail(subscriptionID: subscription.id))
+        let stored = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        #expect(stored.lastUsedDate == nil)
+    }
+
+    @Test("usage check-ins carry the usage category so the buttons actually appear")
+    func usageCategoryAssigned() async throws {
+        #expect(NotificationCategory.identifier(for: .usageCheckIn) == NotificationCategory.usage)
+    }
+}

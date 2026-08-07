@@ -189,8 +189,9 @@ private func renewalReminders(
 
 /// The usage check-in cadence (spec §7.3) - the other half of the FoodApp failure.
 /// A tracker that warns a charge is coming but never asks "are you using this?" has
-/// solved half the problem.
-private let usageCheckInCadenceDays = 90
+/// solved half the problem. Public because the zombie report uses the same
+/// threshold: a subscription is a zombie at exactly the age its check-in fires.
+public let usageCheckInCadenceDays = 90
 
 private func usageCheckInReminders(
     for subscription: Subscription,
