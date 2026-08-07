@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.2** — revised Aug 6 late against Claude Code's Wave 2 report. Waves 0–2 complete and committed (`~/dev/otto`, 92 tests passing).
+**Status:** **v1.3** — revised Aug 7 against Claude Code's Wave 3 report. Waves 0–3 complete and committed (`~/dev/otto`, 156 tests passing).
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -224,7 +224,7 @@ Both write the same fields. Mode B is what most existing subscriptions will use,
 
 **⚠ Known limitation, with a UI mitigation (v1.1).** Mode B cannot recover an anchor that clamping has already destroyed. A user who enters "next charge: Feb 28" for a subscription the vendor actually anchors on the 31st gets a 28th-anchored sequence in Otto, and the two diverge from March onward. There is no way to derive the truth from that input — but Otto errs *early* (28 before 31), which is the safe direction for a reminder app.
 
-**Mitigation:** when the entered date is the last day of a month shorter than 31 days, the Add screen must ask one question — *"Is this the last day of the month, or specifically the 28th?"* — and set the anchor to 31 or 28 accordingly. One tap, and it removes the only systematic inaccuracy in the entry path.
+**Mitigation:** when the entered date is the last day of a month shorter than 31 days, the Add screen must ask one question — *"Is this the last day of the month, or specifically the 28th?"* — and set the anchor to 31 or 28 accordingly. **⚠ v1.2 oversold this and the claim is corrected here:** a two-option prompt cannot recover a 29- or 30-anchored subscription from a Feb 28 entry — those remain unrecoverable, as does any anchor clamping has erased. What the prompt fixes is the *common* case, 28 versus 31. Erring early still holds as the safe direction; the inaccuracy is reduced, not removed.
 
 **On `.paused`.** A paused subscription is one the vendor has suspended billing on but the user has not cancelled — a gym freeze, a seasonal hold, a plan on hiatus. It is a distinct state, not a flavour of cancelled, and it has three specific behaviours:
 
@@ -262,6 +262,47 @@ Per your instruction, the user enters the two things they actually know (when it
 
 The **cancel-by buffer** exists because cancelling on the conversion day is already too late at some vendors, and because a reminder that fires while you're in a lecture needs slack. Default 2 days, adjustable per trial.
 
+### 5.2a Trial conversion — **the founding failure, reproduced in the design** *(added v1.3)*
+
+**⚠ This is the most serious defect found in the spec so far, and it was found in Wave 3, three waves after the founding story was written down.**
+
+v1.2 said a `.trial` subscription materializes exactly one `BillingEvent`, at `conversionDate`. It never said **who moves the status from `.trial` to `.active`, or when.** Follow it literally: the user ignores the trial — *which is the founding failure mode* — the status stays `.trial` forever, the one conversion row sits there, and **no subsequent charge is ever materialized or reminded about**, because `.trial` materializes nothing else and `.active` was never set.
+
+That is the FoodApp case: months of silent charges, and Otto silent alongside them.
+
+**And the near-miss is worse than the bug.** The obvious fix is to have Wave 5's trial flow perform the transition when the user acts on a notification. **A transition that requires a tap recreates the original failure exactly**, because the founding scenario *is* the user not tapping. Any design where correct behaviour depends on the user's attention has misunderstood the product.
+
+#### The rule: conversion is **derived**, never awaited
+
+**`effectiveStatus(asOf:)` is a pure domain function, and it is what every consumer uses** — the materializer, the reminder planner, the Today classifier, Insights. The stored `status` records how the subscription *began*; the effective status is computed.
+
+> If stored status is `.trial` and `today >= trialTerm.conversionDate`, the effective status is `.active`.
+
+On conversion, the paid sequence takes over: **anchor becomes `conversionDate`, amount becomes `convertsToAmountCents`**, and the cycle runs from there. No flag, no job, no tap. A trial that converts while the phone is in a drawer for six weeks still materializes its charges and still generates reminders the moment anything asks.
+
+**Persistence is an optimisation, not the mechanism.** When the app next runs and observes a converted trial, it may write the status through and record the price transition — but **no behaviour may depend on that write having happened.** If it does, the six-weeks-in-a-drawer case fails again.
+
+#### Two consequences
+
+- **Otto must announce the conversion.** A notification on `conversionDate`: *"Your FoodApp trial converted today. You're now being charged $11/month."* Not a reminder to act — a statement of fact about money that started moving. Wave 4 owns it; it is P1.
+- **A converted-but-never-acknowledged trial is a Today *Needs action* item**, and stays one until the user confirms they know. This is the case the app exists for; it does not get to scroll away.
+
+---
+
+### 5.2b Model invariants *(added v1.3)*
+
+Three states are representable in the types but meaningless in the domain. Each was silently no-op'd somewhere in Wave 3 — and **silent no-ops in separate switch arms are how two code paths eventually disagree.** Each is now a declared invariant, enforced at construction and surfaced loudly, never skipped quietly:
+
+| Invariant | Why |
+|---|---|
+| A `.trial` subscription **must** have a `TrialTerm` | Without one there is no `conversionDate`, so §5.2a cannot compute anything. Wave 3 found three separate sites no-op'ing on this |
+| A `.cancelled` or `.cancellationPending` subscription **must** have a `CancellationRecord` | Otherwise it is unwatched, which is Failure B with extra steps |
+| `cycleStartDay` is **never mutated in place** | See below |
+
+**On `cycleStartDay` immutability — the reading Wave 3 asked for is the correct one.** The rule means *no in-place mutation, ever*: no traversal, computation, or clamp may write back to it. It does **not** forbid a user correcting a wrong entry on the Edit screen, which constructs a new value. A correction is not drift. The distinction that matters is *who* changes it — the user deliberately, never the code incidentally.
+
+---
+
 ### 5.3 `BillingEvent` — the ledger
 
 Every expected charge is a row. This is the backbone of both verification and reporting; without it the app has no memory.
@@ -296,6 +337,12 @@ The charge window is therefore slightly wider than the reminder horizon, by the 
 | `.cancellationPending` / `.cancelled` | ❌ Not prospectively | A `BillingEvent` asserts a charge is *expected*, which is the opposite of what the record claims. These are watched by §5.4 verification instead |
 | `.archived` | ❌ No | Terminal |
 
+**When a schedule change invalidates existing rows** *(added v1.3; v1.2 said when rows are created but never when they stop being valid)*. Editing a subscription's anchor, cycle, or amount changes the sequence — but `.upcoming` rows for the *old* sequence remain in the ledger, and date-based dedup will not remove them, so the user sees phantom charges on dates that will never happen.
+
+> **On save with a changed anchor, cycle, or amount: soft-delete every `.upcoming` row that no longer matches the new sequence, then re-materialize.**
+
+Rows in any other state are **never** touched — a confirmed charge is history and history does not change because a schedule did. This is consistent with the tombstone-never-resurrected rule: invalidated rows are tombstoned, and the new sequence's rows are new records rather than resurrections.
+
 **The one retrospective creation path.** When a verification reports `.stillCharging`, that charge **did** happen and needs a ledger row — created at that moment with state `.unexpectedCharge`. This is the **only** producer of that state; in v1.1 the enum case existed with nothing able to create it.
 
 The justification is that a row only earns storage once there is **user-facing state to attach to it** — a reminder that fired, a confirmation, an amount mismatch. Before that it is a calculation, not a record. This also caps the ledger's growth at roughly `subscriptions × cyclesPerQuarter` new rows per scheduling pass.
@@ -307,7 +354,8 @@ The justification is that a row only earns storage once there is **user-facing s
 | `subscriptionID` | UUID |
 | `markedCancelledAt` | Date | UTC instant — records *when the user acted*, and is **never** used for date arithmetic (see below) |
 | `nextChargeDateIfNotCancelled` | CalendarDay | **Non-optional. Renamed and made required in v1.1.** |
-| `verificationState` | `.pending` `.verifiedStopped` `.stillCharging` |
+| `verificationState` | `.pending` `.verifiedStopped` `.stillCharging` `.needsManualReview` |
+| `unansweredCheckCount` | Int, default 0 | **Added v1.3** — §5.4's three-cycle cap needs somewhere to count. Wave 5 lands before CloudKit, so this is still a field addition rather than a migration |
 | `verifiedAt` | Date? |
 | `evidenceNote` | String? | confirmation number, screenshot reference, rep's name |
 
@@ -323,7 +371,7 @@ The rename matters too: *"expected final charge"* is ambiguous — some vendors 
 
 ### 5.5 `PriceChange` and `PaymentMethod`
 
-`PriceChange`: `id`, `subscriptionID`, `effectiveDate`, `oldAmountCents`, `newAmountCents`, `recordedAt`, `source` (`.userEdit` / `.chargeMismatch`), `note`. Editing a price never overwrites history — it appends. This is what lets Insights show "Netflix has gone up 34% in three years."
+`PriceChange`: `id`, `subscriptionID`, `effectiveDate`, `oldAmountCents`, `newAmountCents`, `source` (`.userEdit` / `.chargeMismatch`), `note`, plus the §5.0 quartet. *(v1.3: `recordedAt` **dropped** — it duplicated §5.0's `createdAt`. Two fields meaning almost the same thing is how they drift apart.)* Editing a price never overwrites history — it appends. This is what lets Insights show "Netflix has gone up 34% in three years."
 
 `PaymentMethod`: `id`, `label` ("Bank Mastercard ••4821"), `last4`, `issuer`, `expiryMonth`, `expiryYear`, `isDefault`. Card-expiry warnings fall out of this for free, and the second user runs multiple cards so it earns its place in v1.
 
@@ -423,6 +471,17 @@ All three must work from the background without launching the UI, and must be sa
 8. **Payment methods** — list, card-expiry warnings, per-card subscription totals.
 9. **Settings** — default lead days, default trial buffer, notification time of day, export/import, iCloud sync status, notification permission state.
 
+#### Today classification — pinned in v1.3
+
+§7.1's descriptions were loose enough that Wave 3 had to legislate. Its three rulings are **adopted**, with one addition:
+
+| Case | Rule |
+|---|---|
+| Trial action window | `[cancelByDate − reminderLeadDays, conversionDate]` — *Needs action* throughout |
+| Pending verification | *Needs action* once its check date arrives; *upcoming* before that |
+| **Converted trial, unacknowledged** | *Needs action*, indefinitely, until confirmed — §5.2a. Added in v1.3 |
+| `.cancelled` with no `CancellationRecord` | Surfaces as due today rather than silently unwatched — **and is an invariant violation** (§5.2b), so it renders as *needs review*, not as an ordinary due item. Wave 3 was right that the spec didn't acknowledge this state; the answer is that it shouldn't exist, and when it does the user must see it rather than the app quietly deciding for them |
+
 ### 7.2 Insights
 
 - **Monthly burn** (all cycles normalised) and **annualised total**
@@ -430,6 +489,15 @@ All three must work from the background without launching the UI, and must be sa
 - **Next 12 months**, month by month — annual renewals cluster and this is where you see it
 - **Price-increase log** across all subscriptions
 - **Zombie flags** — see below
+
+**How a trial counts toward burn** *(pinned in v1.3 — §7.2 had a formula for paused spend but never answered this)*. Neither of the tempting answers is right: counting a trial at its converts-to price overstates what the user is paying **now**, and counting it at zero hides money that is about to start moving.
+
+| State | Contribution |
+|---|---|
+| Unconverted trial | **$0 to current burn**, listed separately under **"Converting soon"** with the amount and date |
+| Converted trial (§5.2a) | **Full monthly-equivalent** at `convertsToAmountCents` — it is effectively active, so it counts like anything else |
+
+The "Converting soon" line should state the consequence directly — *"Your monthly burn goes from \$84 to \$95 on 13 Aug"* — because that sentence is the entire product in one line, and it is available before the money moves rather than after.
 
 **Normalisation rule (must be stated in code):** monthly-equivalent = amount × (30.4375 / cycleLengthInDays). Round **only at display**; never round a stored value. Annual = monthly × 12.
 
@@ -464,8 +532,8 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **0** ✅ | XcodeGen (`project.yml` committed, `.xcodeproj` generated + gitignored), bundle ID, entitlements, SwiftLint, CI, folder structure per §3.4 | ✅ **Done** — commit `e844ccf`. ⚠ CI written but **unverified until a remote exists**; uses `runs-on: macos-26` |
 | **1** ✅ | Domain layer + date engine + tests, as a standalone SPM package (`Packages/OttoDomain`) so "Foundation only" is compiler-enforced | ✅ **Done** — commit `f36f584`; **50 tests / 11 suites passing**, incl. the 186-case property test |
 | **2** ✅ | SwiftData models, mapping layer, repository protocols + implementations, as a second SPM package (`Packages/OttoPersistence`) so the layer boundary is compiler-enforced. Local only — **CloudKit explicitly `.none`** | ✅ **Done** — commits `fcdcf2d` / `92879f9` / `634e209` / `4b9db37`; **92 tests passing** (51 domain + 41 persistence), incl. a mutation-tested CloudKit-compatibility assertion |
-| **3** | Core UI: Today, Subscriptions, Add/Edit (both entry modes), Detail | Can add a real subscription and see it |
-| **4** | Notification engine: scheduling, slot budgeting, actions, reschedule triggers | ⛔ 200-subscription fixture stays within 64 slots with correct priority |
+| **3** ✅ | Store layer (`Packages/OttoUI`, `@MainActor @Observable`, protocol-dependent) then Today / Subscriptions / Add-Edit / Detail. Native components only | ✅ **Done** — commits `9982746`–`909777e`; **156 tests**; layering verified by a failing `import OttoPersistence`. ⚠ Hands-on add-a-subscription pass still unsigned-off by the owner |
+| **4** | Notification engine: scheduling, slot budgeting, actions, reschedule triggers, §5.2a conversion announcement | ⛔ 200-subscription fixture stays within 64 slots with correct priority; ⛔ a trial converts and announces with the app never opened |
 | **5** | Trial flows, cancellation flow, verification flow | ⛔ End-to-end trial test on device with a compressed timeline |
 | **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall |
 | **7** | Insights, payment methods, zombie detection | Numbers reconcile against a hand-computed fixture |
@@ -504,6 +572,16 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.3 — revised against the Wave 3 report)** — Wave 3 shipped: **156 tests**, store layer built before any view, and the layering claim *verified rather than asserted* (adding `import OttoPersistence` to a UI file fails to build). Seven findings; one of them is the most serious defect in the project so far:
+  - **⚠⚠ §5.2a — Otto reproduced its own founding failure.** Nothing in the spec said who flips `.trial` → `.active`, or when. Followed literally, a user who **ignores a trial** — the exact founding scenario — leaves the status at `.trial` forever, so no charge after the conversion row is ever materialized or reminded about. **The FoodApp case, rebuilt.** Worse, the obvious fix (Wave 5's flow handles it when the user taps) recreates the failure precisely, because the scenario *is* the user not tapping. **Resolved by making conversion derived, not awaited:** `effectiveStatus(asOf:)` treats a past-conversion trial as active, so a trial that converts with the phone in a drawer for six weeks still materializes and still reminds. Persistence of the flip is an optimisation; **no behaviour may depend on it.** Otto also now announces the conversion — a statement that money started moving, not a request to act.
+  - **Three model invariants declared (§5.2b)** after Wave 3 found `.trial`-without-`TrialTerm` silently no-op'ing in **three separate places**. Silent no-ops in separate switch arms are how two code paths eventually disagree; each is now enforced at construction and surfaced loudly.
+  - **Schedule changes orphaned ledger rows (§5.3).** Editing an anchor or cycle left `.upcoming` rows from the old sequence in place, showing the user phantom charges on dates that will never arrive. Now: soft-delete non-matching `.upcoming` rows on save and re-materialize; never touch rows in any other state, because a confirmed charge is history.
+  - **`cycleStartDay` immutability clarified** in the direction Wave 3 read it — no in-place mutation *by code*, ever; a user correcting a mis-entered date is a correction, not drift.
+  - **Trial burn pinned (§7.2):** \$0 to current burn, shown separately as "Converting soon" with the date and the resulting figure. Counting it at the converts-to price overstates today; counting it at zero hides money about to move.
+  - **Today classification rules adopted** from Wave 3's rulings, plus the converted-unacknowledged-trial case, plus the ruling that a `.cancelled` subscription with no record is an *invariant violation surfaced as needs-review* rather than an ordinary due item.
+  - **`unansweredCheckCount` added** to `CancellationRecord` — §5.4's three-cycle cap had no field to count in. **`PriceChange.recordedAt` dropped** as a duplicate of §5.0's `createdAt`.
+  - **§5.1's Mode B claim corrected.** v1.2 said the disambiguation prompt "removes the only systematic inaccuracy"; it doesn't — 29- and 30-anchored subscriptions stay unrecoverable from a Feb 28 entry. Overclaim replaced with the accurate, narrower statement.
 
 - **2026-08-06 (late — v1.2, revised against the Wave 2 report)** — Wave 2 shipped: **92 tests passing**, persistence split into its own SPM package so the layer boundary is enforced by access control rather than convention, `@Model` classes `internal` to it, CloudKit set explicitly to `.none` rather than left `.automatic`. Four spec corrections, one of which was a gap **neither** side had noticed:
   - **⚠ §3.5 and the §5 tables contradicted each other on the audit fields.** §3.5 called `id`/`createdAt`/`updatedAt`/`deletedAt` non-negotiable on every record; the §5 tables gave them to `Subscription` alone, leaving `TrialTerm` and `CancellationRecord` with no `id` at all. **Resolved in §3.5's favour via a new §5.0**, because CloudKit syncs per record — a `BillingEvent` edited on two devices has nothing to resolve against without its own `updatedAt`, and a record with no `id` is unaddressable. **Fixing it before Wave 6 is a field addition; after, a migration on live data.**
