@@ -13,16 +13,7 @@ struct StatusBadge: View {
             .labelStyle(.titleAndIcon)
     }
 
-    private var text: String {
-        switch status {
-        case .trial: String(localized: "Trial")
-        case .active: String(localized: "Active")
-        case .paused: String(localized: "Paused")
-        case .cancellationPending: String(localized: "Cancelling")
-        case .cancelled: String(localized: "Cancelled")
-        case .archived: String(localized: "Archived")
-        }
-    }
+    private var text: String { statusText(status) }
 
     private var symbolName: String {
         switch status {
@@ -43,5 +34,19 @@ struct StatusBadge: View {
         case .cancellationPending, .cancelled: .blue
         case .archived: .gray
         }
+    }
+}
+
+/// The status as a plain word - shared by the badge and by rows that build a
+/// spoken accessibility label, so VoiceOver always hears the state the badge
+/// shows (Wave 8 accessibility pass).
+func statusText(_ status: SubscriptionStatus) -> String {
+    switch status {
+    case .trial: String(localized: "Trial")
+    case .active: String(localized: "Active")
+    case .paused: String(localized: "Paused")
+    case .cancellationPending: String(localized: "Cancelling")
+    case .cancelled: String(localized: "Cancelled")
+    case .archived: String(localized: "Archived")
     }
 }

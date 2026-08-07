@@ -142,6 +142,20 @@ struct DynamicTypeTests {
         ))
     }
 
+    @Test("the list row's spoken label carries the status the badge shows")
+    func listRowSpeaksStatus() throws {
+        // Wave 8's pass found the custom accessibility label - which REPLACES
+        // the combined children - omitted the status, silencing "Paused" and
+        // "Trial" for VoiceOver entirely. Pinned so it cannot regress.
+        let rows = SubscriptionListModel().rows(
+            subscriptions: fixtures.subscriptions, cancellations: [:], today: PreviewData.today
+        )
+        let paused = try #require(rows.first { $0.subscription.name == "GoodLife Fitness" })
+        #expect(SubscriptionRowView(row: paused).accessibilityText.contains(statusText(.paused)))
+        let trial = try #require(rows.first { $0.subscription.name == "FoodApp" })
+        #expect(SubscriptionRowView(row: trial).accessibilityText.contains(statusText(.trial)))
+    }
+
     @Test("the cancellation flow screen renders against the preview fixtures")
     func cancellationFlowRenders() throws {
         let subscription = try #require(fixtures.subscriptions.first)

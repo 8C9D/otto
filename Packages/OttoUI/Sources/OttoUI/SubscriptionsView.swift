@@ -176,12 +176,20 @@ struct SubscriptionRowView: View {
         return String(localized: "\(equivalent)/mo")
     }
 
-    /// Spoken form: the row's meaning without relying on visual layout.
-    private var accessibilityText: String {
+    /// Spoken form: the row's meaning without relying on visual layout. The
+    /// status is spoken too - the badge is the only visual carrier, and a
+    /// custom label REPLACES the combined children, so leaving it out silenced
+    /// "Trial" and "Paused" entirely (found and fixed in Wave 8's pass).
+    var accessibilityText: String {
         let price = currencyText(cents: row.subscription.amountCents, currencyCode: row.subscription.currencyCode)
         let cadence = cycleText(row.subscription.cycle)
         let monthly = currencyText(cents: row.monthlyEquivalentCents, currencyCode: row.subscription.currencyCode)
-        var parts = [row.subscription.name, "\(price) \(cadence)", String(localized: "\(monthly) a month")]
+        var parts = [
+            row.subscription.name,
+            statusText(row.effectiveStatus),
+            "\(price) \(cadence)",
+            String(localized: "\(monthly) a month")
+        ]
         if let nextDate = row.nextDate {
             parts.append(String(localized: "next date \(nextDate.displayText())"))
         }
