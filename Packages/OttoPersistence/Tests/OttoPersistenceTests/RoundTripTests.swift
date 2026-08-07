@@ -12,7 +12,12 @@ struct RoundTripTests {
     func subscriptionFull() async throws {
         let (store, _) = try makeStore()
         let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
-        let original = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
+        let original = try makeSubscription(
+            status: .trial,
+            cycleStartDay: try day(2026, 8, 1),
+            lastMaterializedThrough: try day(2026, 8, 20),
+            trial: trial
+        )
 
         try await store.save(original)
         let loaded = try await store.subscription(withID: original.id)

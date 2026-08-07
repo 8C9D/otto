@@ -44,6 +44,16 @@ public struct Subscription: Identifiable, Hashable, Sendable {
     /// Meaningful only while `status` is `.paused` (spec §5.1).
     public var pauseEndsOn: CalendarDay?
 
+    /// The materialization watermark (spec §5.3, v1.5): the last day through which
+    /// a ledger pass has observed this subscription's expected charges. The window
+    /// reaches BACKWARDS from today to this day, so a charge date that fell while
+    /// the app was closed - the founding scenario's conversion - still gets its
+    /// row, however long the gap. Initialised at entry to the later of the anchor
+    /// and the entry day (so Mode B never backfills history it had no rows for);
+    /// nil on records created before v1.5, which materialize from today once and
+    /// carry a watermark thereafter. Advanced only by a successful ledger pass.
+    public var lastMaterializedThrough: CalendarDay?
+
     /// The trial this subscription started as, when it started as one (spec §5.2).
     public var trial: TrialTerm?
 
@@ -80,6 +90,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         reminderLeadDays: Int,
         sameDayReminder: Bool = false,
         pauseEndsOn: CalendarDay? = nil,
+        lastMaterializedThrough: CalendarDay? = nil,
         trial: TrialTerm? = nil,
         paymentMethodID: UUID? = nil,
         cancellationURL: URL? = nil,
@@ -106,6 +117,7 @@ public struct Subscription: Identifiable, Hashable, Sendable {
         self.reminderLeadDays = reminderLeadDays
         self.sameDayReminder = sameDayReminder
         self.pauseEndsOn = pauseEndsOn
+        self.lastMaterializedThrough = lastMaterializedThrough
         self.trial = trial
         self.paymentMethodID = paymentMethodID
         self.cancellationURL = cancellationURL
@@ -192,6 +204,7 @@ extension Subscription {
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
             pauseEndsOn: pauseEndsOn,
+            lastMaterializedThrough: lastMaterializedThrough,
             trial: trial,
             paymentMethodID: paymentMethodID,
             cancellationURL: cancellationURL,
@@ -211,6 +224,7 @@ extension Subscription: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, vendorURL, category, status, amountCents, currencyCode
         case cycle, cycleStartDay, reminderLeadDays, sameDayReminder, pauseEndsOn
+        case lastMaterializedThrough
         case trial, paymentMethodID, cancellationURL, cancellationNotes
         case lastUsedDate, notes, createdAt, updatedAt, deletedAt
     }
@@ -240,6 +254,9 @@ extension Subscription: Codable {
             reminderLeadDays: try container.decode(Int.self, forKey: .reminderLeadDays),
             sameDayReminder: try container.decode(Bool.self, forKey: .sameDayReminder),
             pauseEndsOn: try container.decodeIfPresent(CalendarDay.self, forKey: .pauseEndsOn),
+            lastMaterializedThrough: try container.decodeIfPresent(
+                CalendarDay.self, forKey: .lastMaterializedThrough
+            ),
             trial: trial,
             paymentMethodID: try container.decodeIfPresent(UUID.self, forKey: .paymentMethodID),
             cancellationURL: try container.decodeIfPresent(URL.self, forKey: .cancellationURL),
@@ -266,6 +283,7 @@ extension Subscription: Codable {
         try container.encode(reminderLeadDays, forKey: .reminderLeadDays)
         try container.encode(sameDayReminder, forKey: .sameDayReminder)
         try container.encodeIfPresent(pauseEndsOn, forKey: .pauseEndsOn)
+        try container.encodeIfPresent(lastMaterializedThrough, forKey: .lastMaterializedThrough)
         try container.encodeIfPresent(trial, forKey: .trial)
         try container.encodeIfPresent(paymentMethodID, forKey: .paymentMethodID)
         try container.encodeIfPresent(cancellationURL, forKey: .cancellationURL)

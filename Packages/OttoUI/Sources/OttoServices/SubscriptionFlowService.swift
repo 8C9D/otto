@@ -168,11 +168,17 @@ public actor SubscriptionFlowService {
                 try await cancellations.save(record)
             }
         } else {
+            // Date and amount are both derived here, from the PRE-mutation
+            // subscription (§5.2a v1.5: derive before you mutate), because both
+            // are unrecoverable later - the amount's only other home is the
+            // price field a later edit overwrites (spec §5.4, v1.5).
+            let checkDate = verificationCheckDate(for: subscription, asOf: today)
             record = CancellationRecord(
                 id: UUID(),
                 subscriptionID: subscriptionID,
                 markedCancelledAt: now,
-                nextChargeDateIfNotCancelled: verificationCheckDate(for: subscription, asOf: today),
+                nextChargeDateIfNotCancelled: checkDate,
+                expectedChargeAmountCents: wouldBeChargeAmountCents(on: checkDate, for: subscription),
                 verificationState: .pending,
                 evidenceNote: evidenceNote,
                 createdAt: now,
@@ -252,7 +258,10 @@ public actor SubscriptionFlowService {
                 id: UUID(),
                 subscriptionID: subscriptionID,
                 expectedDate: chargeDay,
-                expectedAmountCents: wouldBeChargeAmountCents(on: chargeDay, for: subscription),
+                // The amount stored at cancellation, like the date (spec §5.4,
+                // v1.5); derivation only for pre-v1.5 records never backfilled.
+                expectedAmountCents: disputed.expectedChargeAmountCents
+                    ?? wouldBeChargeAmountCents(on: chargeDay, for: subscription),
                 state: .unexpectedCharge,
                 createdAt: now,
                 updatedAt: now

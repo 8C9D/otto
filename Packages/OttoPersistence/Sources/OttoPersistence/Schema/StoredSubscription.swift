@@ -23,6 +23,12 @@ extension OttoSchemaV1 {
         var sameDayReminder: Bool = false
         /// yyyymmdd
         var pauseEndsOn: Int?
+        /// yyyymmdd - the §5.3 materialization watermark (added v1.5). Optional
+        /// like every stored field, which doubles as the migration: pre-v1.5 rows
+        /// read nil, materialize from today once, and carry a watermark after
+        /// their first pass. An additive optional is lightweight-migratable, which
+        /// is why this lands before Wave 6 turns on CloudKit.
+        var lastMaterializedThrough: Int?
         var paymentMethodID: UUID?
         var cancellationURL: String?
         var cancellationNotes: String?

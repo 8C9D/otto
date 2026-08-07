@@ -55,6 +55,7 @@ func makeSubscription(
     reminderLeadDays: Int = 3,
     sameDayReminder: Bool = false,
     pauseEndsOn: CalendarDay? = nil,
+    lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     cancellationURL: URL? = nil,
     lastUsedDate: CalendarDay? = nil
@@ -71,6 +72,7 @@ func makeSubscription(
         reminderLeadDays: reminderLeadDays,
         sameDayReminder: sameDayReminder,
         pauseEndsOn: pauseEndsOn,
+        lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         cancellationURL: cancellationURL,
         lastUsedDate: lastUsedDate,
@@ -217,10 +219,14 @@ actor FakeBillingEventRepository: BillingEventRepository {
         guard subscription.deletedAt == nil, horizonDays >= 0, maxReminderLeadDays >= 0 else {
             return []
         }
+        // The window reaches back to the watermark, mirroring the store
+        // (spec §5.3, v1.5). The mock has no stored record of its own, so the
+        // passed value's watermark stands in for it.
         let charges = expectedCharges(
             for: subscription,
-            from: today,
-            through: today.adding(days: horizonDays + maxReminderLeadDays)
+            from: min(subscription.lastMaterializedThrough ?? today, today),
+            through: today.adding(days: horizonDays + maxReminderLeadDays),
+            asOf: today
         )
         // Dedup mirrors the store: live rows and non-.upcoming tombstones block;
         // tombstoned .upcoming rows are invalidation artifacts and do not.

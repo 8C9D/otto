@@ -39,17 +39,31 @@ extension OttoStore: BillingEventRepository {
             return []
         }
 
+        guard let parent = try storedSubscription(id: subscription.id, includingDeleted: false) else {
+            throw RepositoryError.subscriptionNotFound(subscription.id)
+        }
+
+        // The window reaches back to the stored watermark (spec §5.3, v1.5), so a
+        // charge date that fell between passes - the founding scenario's
+        // conversion - still gets its row. The STORED record's watermark governs,
+        // not the passed value's: the caller's snapshot may predate the last pass.
+        // A nil watermark is a pre-v1.5 row; it materializes from today once and
+        // carries a watermark from this pass on.
+        let storedWatermark = parent.lastMaterializedThrough.flatMap(CalendarDay.init(yyyymmdd:))
+        let windowStart = min(storedWatermark ?? today, today)
+        let windowEnd = today.adding(days: horizonDays + maxReminderLeadDays)
+
         // Which charges the effective status expects is a domain decision
         // (spec §5.2a, §5.3) - this store only creates the rows it names.
         let chargeDates = expectedCharges(
-            for: subscription,
-            from: today,
-            through: today.adding(days: horizonDays + maxReminderLeadDays)
+            for: subscription, from: windowStart, through: windowEnd, asOf: today
         )
-        if chargeDates.isEmpty { return [] }
-
-        guard let parent = try storedSubscription(id: subscription.id, includingDeleted: false) else {
-            throw RepositoryError.subscriptionNotFound(subscription.id)
+        if chargeDates.isEmpty {
+            // An empty window was still observed: nothing was expected in it, and
+            // the watermark records that so the next pass need not re-ask.
+            parent.lastMaterializedThrough = windowEnd.yyyymmdd
+            try modelContext.save()
+            return []
         }
 
         // Dedup against live rows and non-upcoming tombstones. A tombstoned
@@ -80,6 +94,12 @@ extension OttoStore: BillingEventRepository {
             record.update(from: event)
             created.append(event)
         }
+        // Advanced in the same save as the rows it vouches for: the watermark
+        // asserts "every expected charge through this day has a row", and must
+        // never persist without them (spec §5.3, v1.5). `updatedAt` is left
+        // alone - this is scheduler bookkeeping, not a user edit; Wave 6 must
+        // decide how the watermark merges under sync.
+        parent.lastMaterializedThrough = windowEnd.yyyymmdd
         try modelContext.save()
         return created
     }

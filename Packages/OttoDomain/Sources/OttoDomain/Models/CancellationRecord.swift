@@ -40,6 +40,14 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
     /// the app goes unopened.
     public var nextChargeDateIfNotCancelled: CalendarDay
 
+    /// What the watched charge would cost if it arrived (spec §5.4, added v1.5).
+    /// Stored at cancellation for the same reason the date is: the amount is
+    /// unrecoverable later - a hand-edited price overwrites the only other place
+    /// it lives - and the dispute summary must contain no heuristics. Rolls
+    /// forward with the date. Nil only on records written before v1.5; the §5.4
+    /// roll-forward backfills those on its next pass.
+    public var expectedChargeAmountCents: Int?
+
     public var verificationState: VerificationState
 
     /// How many consecutive checks have gone unanswered (spec §5.4, added v1.3).
@@ -65,6 +73,7 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         subscriptionID: UUID,
         markedCancelledAt: Date,
         nextChargeDateIfNotCancelled: CalendarDay,
+        expectedChargeAmountCents: Int? = nil,
         verificationState: VerificationState,
         unansweredCheckCount: Int = 0,
         verifiedAt: Date? = nil,
@@ -77,6 +86,7 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         self.subscriptionID = subscriptionID
         self.markedCancelledAt = markedCancelledAt
         self.nextChargeDateIfNotCancelled = nextChargeDateIfNotCancelled
+        self.expectedChargeAmountCents = expectedChargeAmountCents
         self.verificationState = verificationState
         self.unansweredCheckCount = unansweredCheckCount
         self.verifiedAt = verifiedAt

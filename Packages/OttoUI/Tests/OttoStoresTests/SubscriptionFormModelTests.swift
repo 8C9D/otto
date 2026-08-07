@@ -224,6 +224,40 @@ struct SubscriptionFormModelTests {
         #expect(edited.name == "FoodApp+")
     }
 
+    @Test("a new entry's watermark starts at the later of anchor and today (spec §5.3, v1.5)")
+    func newEntryWatermark() throws {
+        // Mode A, anchor in the past: the watermark starts at entry (today),
+        // so the ledger never backfills history the record had no rows for.
+        let backdated = try makeForm()
+        backdated.entryMode = .startDate
+        backdated.startDate = try day(2026, 1, 15)
+        #expect(try #require(backdated.buildSubscription()).lastMaterializedThrough == (try day(2026, 8, 6)))
+
+        // Anchor ahead of today: the watermark starts at the anchor.
+        let ahead = try makeForm()
+        ahead.entryMode = .startDate
+        ahead.startDate = try day(2026, 9, 1)
+        #expect(try #require(ahead.buildSubscription()).lastMaterializedThrough == (try day(2026, 9, 1)))
+    }
+
+    @Test("editing never touches the watermark - it is pass bookkeeping, not form state")
+    func editingPreservesWatermark() throws {
+        let watermarked = try makeSubscription(
+            index: 1, cycleStartDay: try day(2026, 1, 15),
+            lastMaterializedThrough: try day(2026, 7, 20)
+        )
+        let form = SubscriptionFormModel(editing: watermarked, dates: try fixedDates())
+        form.name = "Edited"
+        #expect(try #require(form.buildSubscription()).lastMaterializedThrough == (try day(2026, 7, 20)))
+
+        // A pre-v1.5 original stays nil - the first ledger pass owns installing
+        // it; the form inventing one would claim coverage that never happened.
+        let legacy = try makeSubscription(index: 2, cycleStartDay: try day(2026, 1, 15))
+        let legacyForm = SubscriptionFormModel(editing: legacy, dates: try fixedDates())
+        legacyForm.name = "Edited"
+        #expect(try #require(legacyForm.buildSubscription()).lastMaterializedThrough == nil)
+    }
+
     @Test("editing a paused subscription keeps its status - the form is not a lifecycle flow")
     func editingKeepsLifecycleStatus() throws {
         let paused = try makeSubscription(

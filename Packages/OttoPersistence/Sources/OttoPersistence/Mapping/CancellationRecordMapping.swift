@@ -13,6 +13,9 @@ extension OttoSchemaV1.StoredCancellationRecord {
             nextChargeDateIfNotCancelled: try CalendarDay.stored(
                 nextChargeDateIfNotCancelled, entity: entity, field: "nextChargeDateIfNotCancelled"
             ),
+            // Nil means written before v1.5 stored the amount; the domain
+            // backfills it on the next roll-forward rather than inventing one here.
+            expectedChargeAmountCents: expectedChargeAmountCents,
             verificationState: try decodeRaw(verificationState, entity: entity, field: "verificationState"),
             // Written before the field existed means never rolled forward: 0.
             unansweredCheckCount: unansweredCheckCount ?? 0,
@@ -29,6 +32,7 @@ extension OttoSchemaV1.StoredCancellationRecord {
         subscriptionID = domain.subscriptionID
         markedCancelledAt = domain.markedCancelledAt
         nextChargeDateIfNotCancelled = domain.nextChargeDateIfNotCancelled.yyyymmdd
+        expectedChargeAmountCents = domain.expectedChargeAmountCents
         verificationState = domain.verificationState.rawValue
         unansweredCheckCount = domain.unansweredCheckCount
         verifiedAt = domain.verifiedAt

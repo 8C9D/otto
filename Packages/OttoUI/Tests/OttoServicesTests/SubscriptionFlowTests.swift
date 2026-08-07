@@ -27,6 +27,7 @@ struct CancellationFlowTests {
                 subscriptionID: record.subscriptionID,
                 markedCancelledAt: record.markedCancelledAt,
                 nextChargeDateIfNotCancelled: record.nextChargeDateIfNotCancelled,
+                expectedChargeAmountCents: record.expectedChargeAmountCents,
                 verificationState: record.verificationState,
                 unansweredCheckCount: record.unansweredCheckCount,
                 verifiedAt: record.verifiedAt,
@@ -110,6 +111,29 @@ struct CancellationFlowTests {
         #expect(stateA.subscription?.status == .cancellationPending)
         #expect(stateA.record?.nextChargeDateIfNotCancelled == (try day(2027, 2, 28)))
         #expect(stateA.pendingIdentifiers.contains { NotificationPlanIdentifier.kind(of: $0) == .verification })
+    }
+
+    @Test("the check amount is stored at cancellation like the date, derived pre-mutation (spec §5.4, v1.5)")
+    func amountStoredAtCancellation() async throws {
+        // The Wave 4 bug's shape, pointed at the amount: trial Jul 1-31
+        // converting to 1599, cancelled Aug 5 - after conversion, before any
+        // flip persisted. The record must watch Aug 31 at the CONVERTED price,
+        // both derived from the subscription before the status mutates.
+        let fixture = SchedulerFixture()
+        let trial = try makeTrialTerm(
+            startDate: try day(2026, 7, 1), lengthDays: 30, convertsToAmountCents: 1599
+        )
+        let subscription = try makeSubscription(
+            index: 1, status: .trial, cycleStartDay: try day(2026, 7, 1), trial: trial
+        )
+        await fixture.subscriptions.seed([subscription])
+
+        let start = try await fixture.flows.startCancellation(
+            subscriptionID: subscription.id, now: try fixtureNow(), today: try day(2026, 8, 5)
+        )
+
+        #expect(start?.record.nextChargeDateIfNotCancelled == (try day(2026, 8, 31)))
+        #expect(start?.record.expectedChargeAmountCents == 1599)
     }
 
     @Test("the screen path captures evidence at the start; redelivery never overwrites it")

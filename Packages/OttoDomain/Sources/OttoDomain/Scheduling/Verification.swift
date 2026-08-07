@@ -95,11 +95,23 @@ extension CancellationRecord {
     ) -> CancellationRecord {
         guard verificationState == .pending else { return self }
         var updated = self
+        // Records written before v1.5 carry no amount; the roll-forward is the
+        // standing pass that touches every pending record, so it backfills here -
+        // computed by the same rule the flow uses, then stored like the date.
+        if updated.expectedChargeAmountCents == nil {
+            updated.expectedChargeAmountCents = wouldBeChargeAmountCents(
+                on: updated.nextChargeDateIfNotCancelled, for: subscription
+            )
+        }
         while updated.nextChargeDateIfNotCancelled < today
             && updated.unansweredCheckCount < unansweredCheckLimit {
             updated.unansweredCheckCount += 1
             updated.nextChargeDateIfNotCancelled = nextWouldBeChargeDate(
                 after: updated.nextChargeDateIfNotCancelled, for: subscription
+            )
+            // The watched amount moves with the watched date (spec §5.4, v1.5).
+            updated.expectedChargeAmountCents = wouldBeChargeAmountCents(
+                on: updated.nextChargeDateIfNotCancelled, for: subscription
             )
         }
         if updated.unansweredCheckCount >= unansweredCheckLimit {
@@ -159,7 +171,10 @@ public func disputeSummary(
         markedCancelledAt: record.markedCancelledAt,
         evidenceNote: record.evidenceNote,
         chargeDate: record.nextChargeDateIfNotCancelled,
-        chargeAmountCents: wouldBeChargeAmountCents(
+        // The amount stored at cancellation (spec §5.4, v1.5): the summary that
+        // ends at a bank contains no heuristics. The derivation is only the
+        // fallback for pre-v1.5 records the roll-forward has not yet backfilled.
+        chargeAmountCents: record.expectedChargeAmountCents ?? wouldBeChargeAmountCents(
             on: record.nextChargeDateIfNotCancelled, for: subscription
         ),
         currencyCode: subscription.currencyCode

@@ -205,6 +205,48 @@ struct VerificationTransitionTests {
         #expect(rolled.unansweredCheckCount == 1)
         #expect(rolled.nextChargeDateIfNotCancelled == (try day(2026, 8, 31)))
     }
+
+    @Test("the watched amount moves with the watched date (spec §5.4, v1.5)")
+    func rollUpdatesAmount() throws {
+        let trial = try makeTrialTerm(startDate: try day(2026, 7, 1), lengthDays: 30, convertsToAmountCents: 1599)
+        let subscription = try makeSubscription(
+            status: .cancellationPending, cycleStartDay: try day(2026, 7, 1), trial: trial
+        )
+        // The stored amount has gone stale relative to the date it watches; the
+        // roll to Aug 31 - a post-conversion date - re-derives it in step.
+        let record = try makeCancellationRecord(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: trial.conversionDate,
+            expectedChargeAmountCents: 1099
+        )
+        let rolled = record.catchingUpOnUnansweredChecks(
+            for: subscription, asOf: try day(2026, 8, 3), at: now
+        )
+        #expect(rolled.nextChargeDateIfNotCancelled == (try day(2026, 8, 31)))
+        #expect(rolled.expectedChargeAmountCents == 1599)
+    }
+
+    @Test("a pre-v1.5 record's missing amount is backfilled by the roll-forward, even when nothing rolls")
+    func backfillsMissingAmount() throws {
+        let subscription = try makeSubscription(status: .cancelled, cycleStartDay: try day(2026, 1, 15))
+        let record = try makeCancellationRecord(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 15),
+            expectedChargeAmountCents: nil
+        )
+
+        let backfilled = record.catchingUpOnUnansweredChecks(
+            for: subscription, asOf: try day(2026, 8, 15), at: now
+        )
+        #expect(backfilled.expectedChargeAmountCents == subscription.amountCents)
+        #expect(backfilled.nextChargeDateIfNotCancelled == record.nextChargeDateIfNotCancelled)
+        #expect(backfilled.unansweredCheckCount == 0)
+
+        // And the backfill is once: a second pass changes nothing.
+        #expect(backfilled.catchingUpOnUnansweredChecks(
+            for: subscription, asOf: try day(2026, 8, 15), at: later
+        ) == backfilled)
+    }
 }
 
 @Suite("The dispute summary (spec §5.4)")
@@ -217,7 +259,9 @@ struct DisputeSummaryTests {
             status: .cancellationPending, cycleStartDay: try day(2026, 7, 1), trial: trial
         )
         var record = try makeCancellationRecord(
-            subscriptionID: subscription.id, nextChargeDateIfNotCancelled: try day(2026, 8, 31)
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 31),
+            expectedChargeAmountCents: 1100
         )
         record.evidenceNote = "confirmation #4821, spoke to Dana"
         let answered = record.reportingStillCharging(at: Date(timeIntervalSince1970: 10_000))
@@ -229,6 +273,34 @@ struct DisputeSummaryTests {
         #expect(summary.chargeDate == (try day(2026, 8, 31)))
         #expect(summary.chargeAmountCents == 1100)
         #expect(summary.currencyCode == "CAD")
+    }
+
+    @Test("the summary reports the amount stored at cancellation, not one derived from the edited price (spec §5.4, v1.5)")
+    func storedAmountBeatsDerivation() throws {
+        // Cancelled while the price was 1399; the user then hand-edited the
+        // price to 1099. The derivation can only see the edited price - the
+        // stored amount is the record of what the vendor would actually charge,
+        // and the summary that ends at a bank must not infer.
+        let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 1, 15))
+        let record = try makeCancellationRecord(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 15),
+            expectedChargeAmountCents: 1399,
+            verificationState: .stillCharging
+        )
+        let summary = try #require(disputeSummary(for: record, subscription: subscription))
+        #expect(summary.chargeAmountCents == 1399)
+
+        // Only a pre-v1.5 record - amount never captured, never backfilled -
+        // falls back to the derivation.
+        let legacy = try makeCancellationRecord(
+            subscriptionID: subscription.id,
+            nextChargeDateIfNotCancelled: try day(2026, 8, 15),
+            expectedChargeAmountCents: nil,
+            verificationState: .stillCharging
+        )
+        let legacySummary = try #require(disputeSummary(for: legacy, subscription: subscription))
+        #expect(legacySummary.chargeAmountCents == subscription.amountCents)
     }
 
     @Test("no dispute exists before a charge was reported", arguments: [

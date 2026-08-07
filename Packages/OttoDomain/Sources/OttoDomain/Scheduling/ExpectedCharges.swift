@@ -12,9 +12,16 @@ public struct ExpectedCharge: Hashable, Sendable {
 }
 
 /// Every charge the subscription's EFFECTIVE status (spec §5.2a) expects inside
-/// `[today, windowEnd]` - the decision behind `BillingEvent` materialization
+/// `[windowStart, windowEnd]` - the decision behind `BillingEvent` materialization
 /// (spec §5.3), kept in the domain so the persistence layer creates rows without
 /// ever deciding which.
+///
+/// The window and the status are separate inputs since v1.5: the status is
+/// derived as of TODAY, but the window may start behind today (the
+/// `lastMaterializedThrough` watermark), so a conversion that fell while the app
+/// was closed is expected by the .active branch at its past date - the founding
+/// scenario at the ledger layer. Deriving status as of the window start instead
+/// would re-run the .trial branch and miss every paid cycle behind today.
 ///
 /// An active subscription - or a trial whose conversion date has passed, anchored
 /// at conversion for the converted amount - expects its cycle sequence; an
@@ -24,15 +31,17 @@ public struct ExpectedCharge: Hashable, Sendable {
 /// verification instead; archived is terminal.
 public func expectedCharges(
     for subscription: Subscription,
-    from today: CalendarDay,
-    through windowEnd: CalendarDay
+    from windowStart: CalendarDay,
+    through windowEnd: CalendarDay,
+    asOf today: CalendarDay
 ) -> [ExpectedCharge] {
+    guard windowStart <= windowEnd else { return [] }
     switch subscription.effectiveStatus(asOf: today) {
     case .active:
         let anchor = subscription.billingAnchor(asOf: today)
         let amount = subscription.billingAmountCents(asOf: today)
         var charges: [ExpectedCharge] = []
-        var cursor = today.adding(days: -1)
+        var cursor = windowStart.adding(days: -1)
         while true {
             // Each candidate is computed directly from the anchor - never by
             // adding an interval to a previous date (spec §4.2 rule 3). The
@@ -47,7 +56,7 @@ public func expectedCharges(
     case .trial:
         // §5.2b guarantees the term exists; the guard keeps this function total.
         guard let trial = subscription.trial,
-              (today...windowEnd).contains(trial.conversionDate)
+              (windowStart...windowEnd).contains(trial.conversionDate)
         else { return [] }
         return [ExpectedCharge(day: trial.conversionDate, amountCents: trial.convertsToAmountCents)]
     case .paused, .cancellationPending, .cancelled, .archived:

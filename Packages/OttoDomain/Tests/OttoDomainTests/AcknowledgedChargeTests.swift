@@ -121,7 +121,8 @@ struct ExpectedChargeTests {
     func activeSequence() throws {
         let subscription = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 31))
         let charges = expectedCharges(
-            for: subscription, from: try day(2026, 8, 31), through: try day(2026, 10, 31)
+            for: subscription, from: try day(2026, 8, 31), through: try day(2026, 10, 31),
+            asOf: try day(2026, 8, 31)
         )
         #expect(charges.map(\.day) == [try day(2026, 8, 31), try day(2026, 9, 30), try day(2026, 10, 31)])
         #expect(charges.allSatisfy { $0.amountCents == subscription.amountCents })
@@ -132,7 +133,8 @@ struct ExpectedChargeTests {
         let trial = try makeTrialTerm(startDate: try day(2026, 8, 1), lengthDays: 14, convertsToAmountCents: 1599)
         let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
         let charges = expectedCharges(
-            for: subscription, from: try day(2026, 8, 6), through: try day(2026, 11, 6)
+            for: subscription, from: try day(2026, 8, 6), through: try day(2026, 11, 6),
+            asOf: try day(2026, 8, 6)
         )
         #expect(charges == [ExpectedCharge(day: trial.conversionDate, amountCents: 1599)])
     }
@@ -142,7 +144,8 @@ struct ExpectedChargeTests {
         let trial = try makeTrialTerm(startDate: try day(2026, 8, 6), lengthDays: 7, convertsToAmountCents: 1100)
         let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 6), trial: trial)
         let charges = expectedCharges(
-            for: subscription, from: try day(2026, 9, 1), through: try day(2026, 11, 30)
+            for: subscription, from: try day(2026, 9, 1), through: try day(2026, 11, 30),
+            asOf: try day(2026, 9, 1)
         )
         #expect(charges.map(\.day) == [try day(2026, 9, 13), try day(2026, 10, 13), try day(2026, 11, 13)])
         #expect(charges.allSatisfy { $0.amountCents == 1100 })
@@ -155,13 +158,38 @@ struct ExpectedChargeTests {
     func nonExpectingStatuses(status: SubscriptionStatus) throws {
         let subscription = try makeSubscription(status: status, cycleStartDay: try day(2026, 1, 15))
         let today = try day(2026, 8, 6)
-        #expect(expectedCharges(for: subscription, from: today, through: today.adding(days: 90)).isEmpty)
+        #expect(expectedCharges(for: subscription, from: today, through: today.adding(days: 90), asOf: today).isEmpty)
         // Even a row that WOULD match the sequence is no longer expected: the
         // status transition invalidates it (spec §5.3, v1.4).
         #expect(!isExpectedCharge(
             day: try day(2026, 8, 15), amountCents: subscription.amountCents,
             for: subscription, asOf: today
         ))
+    }
+
+    @Test("the window reaches behind today: a conversion missed while the app was closed is still expected (v1.5)")
+    func backwardWindowExpectsMissedConversion() throws {
+        // Trial converts Aug 15 at 1599; the first pass runs Sep 20 with a
+        // window reaching back to Aug 1. Status derives as of TODAY (converted,
+        // so the .active branch anchored at conversion), while the window
+        // decides reach - the separation this signature exists for.
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1), lengthDays: 14, convertsToAmountCents: 1599)
+        let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
+        let charges = expectedCharges(
+            for: subscription, from: try day(2026, 8, 1), through: try day(2026, 10, 20),
+            asOf: try day(2026, 9, 20)
+        )
+        #expect(charges.map(\.day) == [try day(2026, 8, 15), try day(2026, 9, 15), try day(2026, 10, 15)])
+        #expect(charges.allSatisfy { $0.amountCents == 1599 })
+    }
+
+    @Test("a reversed window expects nothing rather than trapping")
+    func reversedWindowIsEmpty() throws {
+        let subscription = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 31))
+        #expect(expectedCharges(
+            for: subscription, from: try day(2026, 9, 1), through: try day(2026, 8, 1),
+            asOf: try day(2026, 9, 1)
+        ).isEmpty)
     }
 
     @Test("isExpectedCharge accepts exactly the sequence's (date, amount) pairs for an active subscription")

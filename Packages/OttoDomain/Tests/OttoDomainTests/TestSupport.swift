@@ -59,6 +59,7 @@ func makeCancellationRecord(
     index: Int = 600,
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
+    expectedChargeAmountCents: Int? = 1099,
     verificationState: CancellationRecord.VerificationState = .pending
 ) throws -> CancellationRecord {
     CancellationRecord(
@@ -66,6 +67,7 @@ func makeCancellationRecord(
         subscriptionID: subscriptionID,
         markedCancelledAt: Date(timeIntervalSince1970: 0),
         nextChargeDateIfNotCancelled: nextChargeDateIfNotCancelled,
+        expectedChargeAmountCents: expectedChargeAmountCents,
         verificationState: verificationState,
         createdAt: Date(timeIntervalSince1970: 0),
         updatedAt: Date(timeIntervalSince1970: 0)
@@ -81,6 +83,7 @@ func makeSubscription(
     reminderLeadDays: Int = 3,
     sameDayReminder: Bool = false,
     pauseEndsOn: CalendarDay? = nil,
+    lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     lastUsedDate: CalendarDay? = nil
 ) throws -> Subscription {
@@ -96,6 +99,7 @@ func makeSubscription(
         reminderLeadDays: reminderLeadDays,
         sameDayReminder: sameDayReminder,
         pauseEndsOn: pauseEndsOn,
+        lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         lastUsedDate: lastUsedDate,
         createdAt: Date(timeIntervalSince1970: 0),

@@ -236,3 +236,119 @@ struct MaterializationTests {
         #expect(created == [])
     }
 }
+
+// Spec §5.3 (v1.5): the window reaches back to the lastMaterializedThrough
+// watermark, so no charge date can pass unobserved between scheduler runs -
+// however long the phone sits in a drawer.
+@Suite("The materialization watermark (spec §5.3, v1.5)")
+struct MaterializationWatermarkTests {
+
+    private let instant = Date(timeIntervalSince1970: 8_000)
+
+    @Test("the founding scenario at the ledger layer: a conversion behind today on the FIRST pass still gets its row")
+    func foundingScenarioConversionBehindToday() async throws {
+        let (store, _) = try makeStore()
+        // Trial entered Aug 1 (watermark = entry day), converting Aug 15 for
+        // 1599. The phone then sits in a drawer; the first scheduler pass EVER
+        // runs Sep 20 - the conversion date is 36 days behind today, and v1.4
+        // materialized from today forward, so the single most important charge
+        // in the product got no row, no verification, no mismatch coverage.
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
+        let subscription = try makeSubscription(
+            status: .trial,
+            cycleStartDay: try day(2026, 8, 1),
+            lastMaterializedThrough: try day(2026, 8, 1),
+            trial: trial
+        )
+        try await store.save(subscription)
+
+        let created = try await store.materializeEvents(
+            for: subscription, from: try day(2026, 9, 20), horizonDays: 30, maxReminderLeadDays: 0, at: instant
+        )
+
+        // The conversion row exists, at the converted amount, plus the paid
+        // cycles the window reaches: Sep 15 (also behind today) and Oct 15.
+        #expect(created.map(\.expectedDate) == [try day(2026, 8, 15), try day(2026, 9, 15), try day(2026, 10, 15)])
+        #expect(created.allSatisfy { $0.expectedAmountCents == trial.convertsToAmountCents })
+        #expect(created.allSatisfy { $0.state == .upcoming })
+    }
+
+    @Test("a gap between passes loses nothing: the second pass reaches back to the first pass's watermark")
+    func gapBetweenPassesIsCovered() async throws {
+        let (store, _) = try makeStore()
+        let subscription = try makeSubscription(cycleStartDay: try day(2026, 1, 31))
+        try await store.save(subscription)
+
+        // Pass 1 on Aug 6 covers through Nov 4 (Aug 31, Sep 30, Oct 31). The app
+        // then goes unopened until Dec 20 - Nov 30's charge date falls entirely
+        // between the passes, which is exactly the hole v1.4's from-today window
+        // left open.
+        _ = try await store.materializeEvents(
+            for: subscription, from: try day(2026, 8, 6), horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+        let reloaded = try #require(try await store.subscription(withID: subscription.id))
+        #expect(reloaded.lastMaterializedThrough == (try day(2026, 11, 4)))
+
+        let second = try await store.materializeEvents(
+            for: reloaded, from: try day(2026, 12, 20), horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+
+        #expect(second.map(\.expectedDate).contains(try day(2026, 11, 30)))
+        #expect(second.map(\.expectedDate).contains(try day(2026, 12, 31)))
+    }
+
+    @Test("the stored watermark governs, not the caller's snapshot - a stale domain value cannot reopen the window")
+    func storedWatermarkGoverns() async throws {
+        let (store, _) = try makeStore()
+        let subscription = try makeSubscription(cycleStartDay: try day(2026, 1, 31))
+        try await store.save(subscription)
+        _ = try await store.materializeEvents(
+            for: subscription, from: try day(2026, 8, 6), horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+
+        // The caller re-runs with its ORIGINAL snapshot (watermark still nil):
+        // the stored watermark - not the stale value - decides the window, and
+        // dedup keeps the result empty either way.
+        let rerun = try await store.materializeEvents(
+            for: subscription, from: try day(2026, 8, 6), horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+        #expect(rerun == [])
+    }
+
+    @Test("a pre-v1.5 record (nil watermark) materializes from today once and carries a watermark thereafter")
+    func nilWatermarkStartsAtToday() async throws {
+        let (store, _) = try makeStore()
+        // Anchor months behind today, no watermark: the pass must NOT backfill
+        // Feb-Jul rows the record never had - it starts at today, the v1.4
+        // behavior, exactly once.
+        let subscription = try makeSubscription(cycleStartDay: try day(2026, 1, 31))
+        try await store.save(subscription)
+
+        let created = try await store.materializeEvents(
+            for: subscription, from: try day(2026, 8, 6), horizonDays: 30, maxReminderLeadDays: 0, at: instant
+        )
+
+        #expect(created.map(\.expectedDate) == [try day(2026, 8, 31)])
+        let reloaded = try #require(try await store.subscription(withID: subscription.id))
+        #expect(reloaded.lastMaterializedThrough == (try day(2026, 9, 5)))
+    }
+
+    @Test("an empty pass still advances the watermark: observing nothing is an observation")
+    func emptyPassAdvancesWatermark() async throws {
+        let (store, _) = try makeStore()
+        let subscription = try makeSubscription(
+            status: .paused,
+            cycleStartDay: try day(2026, 1, 31),
+            lastMaterializedThrough: try day(2026, 8, 1)
+        )
+        try await store.save(subscription)
+
+        let created = try await store.materializeEvents(
+            for: subscription, from: try day(2026, 8, 6), horizonDays: 30, maxReminderLeadDays: 0, at: instant
+        )
+
+        #expect(created == [])
+        let reloaded = try #require(try await store.subscription(withID: subscription.id))
+        #expect(reloaded.lastMaterializedThrough == (try day(2026, 9, 5)))
+    }
+}

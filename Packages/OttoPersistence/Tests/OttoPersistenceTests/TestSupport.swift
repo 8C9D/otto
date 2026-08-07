@@ -37,6 +37,7 @@ func makeSubscription(
     amountCents: Int = 1099,
     cycle: BillingCycle = .monthly,
     cycleStartDay: CalendarDay,
+    lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     deletedAt: Date? = nil
 ) throws -> Subscription {
@@ -53,6 +54,7 @@ func makeSubscription(
         reminderLeadDays: 3,
         sameDayReminder: true,
         pauseEndsOn: status == .paused ? cycleStartDay.adding(days: 60) : nil,
+        lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: try fixtureUUID(900),
         cancellationURL: URL(string: "https://example.com/cancel"),
@@ -107,6 +109,7 @@ func makeCancellationRecord(
     index: Int = 600,
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
+    expectedChargeAmountCents: Int? = 1099,
     verificationState: CancellationRecord.VerificationState = .pending,
     unansweredCheckCount: Int = 0,
     evidenceNote: String? = nil
@@ -116,6 +119,7 @@ func makeCancellationRecord(
         subscriptionID: subscriptionID,
         markedCancelledAt: Date(timeIntervalSince1970: 4_000),
         nextChargeDateIfNotCancelled: nextChargeDateIfNotCancelled,
+        expectedChargeAmountCents: expectedChargeAmountCents,
         verificationState: verificationState,
         unansweredCheckCount: unansweredCheckCount,
         evidenceNote: evidenceNote,

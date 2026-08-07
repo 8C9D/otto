@@ -106,6 +106,35 @@ struct VerificationFlowTests {
         #expect(await fixture.client.pendingRequests().isEmpty)
     }
 
+    @Test("a price edited after cancellation cannot corrupt the dispute (spec §5.4, v1.5)")
+    func editedPriceDoesNotCorruptDispute() async throws {
+        // Cancelled at 1100; the user then hand-edits the price to 1500 before
+        // the check comes due. The derivation can only see 1500 - the dispute
+        // and its ledger row must both carry the 1100 stored at cancellation,
+        // because that summary ends at a bank.
+        let fixture = SchedulerFixture()
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        await fixture.subscriptions.seed([subscription])
+        let flows = fixture.flows
+        _ = try await flows.startCancellation(
+            subscriptionID: subscription.id, now: try fixtureNow(), today: try day(2026, 8, 6)
+        )
+
+        var edited = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
+        edited.amountCents = 1500
+        try await fixture.subscriptions.save(edited)
+
+        let summary = try #require(try await flows.answerVerification(
+            subscriptionID: subscription.id, chargesStopped: false,
+            now: try fixtureNow(), today: try day(2026, 8, 15)
+        ))
+        #expect(summary.chargeAmountCents == 1100)
+
+        let unexpected = try await fixture.billingEvents.events(forSubscription: subscription.id)
+            .filter { $0.state == .unexpectedCharge }
+        #expect(unexpected.first?.expectedAmountCents == 1100)
+    }
+
     @Test("a cancelled trial's dispute carries the converted amount - the charge that would actually land")
     func trialDisputeUsesConvertedAmount() async throws {
         let fixture = SchedulerFixture()
