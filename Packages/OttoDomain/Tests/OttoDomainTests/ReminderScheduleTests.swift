@@ -365,9 +365,14 @@ struct NotificationPlanningTests {
     @Test("snooze identifiers live in their own namespace so reschedules can spare them")
     func snoozeIdentifiers() throws {
         let id = try fixtureUUID(7)
-        let identifier = NotificationPlanIdentifier.snooze(subscriptionID: id, day: try day(2026, 8, 12))
+        let identifier = NotificationPlanIdentifier.snooze(
+            subscriptionID: id, day: try day(2026, 8, 12), of: .trialDaily
+        )
         #expect(NotificationPlanIdentifier.isSnooze(identifier))
         #expect(NotificationPlanIdentifier.subscriptionID(of: identifier) == id)
+        // The snooze carries its origin kind, so a snoozed snooze still knows
+        // which deadline caps it.
+        #expect(NotificationPlanIdentifier.kind(of: identifier) == .trialDaily)
     }
 
     @Test("a snooze moves one day and is hard-capped at the deadline, under any number of invocations")
