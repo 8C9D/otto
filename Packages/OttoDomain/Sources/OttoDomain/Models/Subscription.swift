@@ -140,11 +140,12 @@ public struct Subscription: Identifiable, Hashable, Sendable {
     }
 
     /// The assignment path shared by the write-time `init` above (which
-    /// preconditions first) and the §4a read-repair factory (which repairs
-    /// first, and must be able to HOLD the two self-healing incomplete shapes:
-    /// `.paused` awaiting its episode record, `.trial` awaiting its term).
-    /// Internal, so nothing outside the module can bypass the write-time
-    /// invariants.
+    /// preconditions first), the `describing` constructor (identical except
+    /// for its one scoped tolerance), and the §4a read-repair factory (which
+    /// repairs first, and must be able to HOLD the two self-healing incomplete
+    /// shapes: `.paused` awaiting its episode record, `.trial` awaiting its
+    /// term). Internal, so nothing outside the module can bypass the
+    /// write-time invariants.
     init(
         unchecked: Void,
         id: UUID,

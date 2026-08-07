@@ -237,6 +237,34 @@ struct SubscriptionFormModelTests {
         #expect(edited.pauseEndsOn == (try day(2026, 9, 1)))
     }
 
+    @Test("editing a degraded .paused record - episode not yet arrived - still builds (spec §4a principle 2b)")
+    func editingDegradedPausedBuilds() throws {
+        // The parent synced in before its open episode (spec §4a): the read
+        // holds it as an indefinite pause, and editing it must re-describe
+        // that same shape through the describing constructor, not trap.
+        let (degraded, repairs) = Subscription.readingRepaired(
+            id: try fixtureUUID(1),
+            name: "Gym",
+            category: .other,
+            status: .paused,
+            amountCents: 4200,
+            currencyCode: "CAD",
+            cycle: .monthly,
+            cycleStartDay: try day(2026, 1, 15),
+            reminderLeadDays: 3,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 2_000)
+        )
+        #expect(repairs == [.pausedWithoutOpenEpisode])
+        let form = SubscriptionFormModel(editing: degraded, dates: try fixedDates())
+        form.name = "Gym renamed"
+
+        let edited = try #require(form.buildSubscription())
+        #expect(edited.name == "Gym renamed")
+        #expect(edited.storedStatus == .paused)
+        #expect(edited.currentPauseEpisode == nil)
+    }
+
     @Test("toggling the trial off builds an active subscription carrying the term's explicit tombstone")
     func trialToggleOff() throws {
         let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))

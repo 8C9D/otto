@@ -28,7 +28,25 @@ line_length:
 # transition/edit API on Subscription; only the domain model itself and the
 # persistence mapping may touch storedStatus. Tests are exempt (asserting what
 # a flow persisted is exactly a stored read).
+# Spec §4a principle 2b (v2.1): readingRepaired is the §4a READ construction,
+# permissive by design - a write path must never borrow its tolerance, or a
+# future change to the repair rules silently changes write validation. The UI
+# layer (all write flows), the repository protocols, and the app target may
+# not name it; reads route through the domain's Codable and the persistence
+# mapping, and the edit path describes with Subscription.describing.
 custom_rules:
+  reading_repaired_in_write_path:
+    name: "Read-path tolerance in a write path"
+    regex: '\breadingRepaired\b'
+    included:
+      - ".*/Packages/OttoUI/Sources/.*"
+      - ".*/Packages/OttoPersistence/Sources/OttoRepositories/.*"
+      - ".*/Otto/.*\\.swift"
+    message: >-
+      readingRepaired is the §4a READ construction, permissive by design
+      (spec §4a principle 2b, v2.1). Describe an editable degraded shape with
+      Subscription.describing, or construct through the preconditioned init.
+    severity: error
   stored_status_above_layer_2:
     name: "Stored status read above layer 2"
     regex: '\bstoredStatus\b'

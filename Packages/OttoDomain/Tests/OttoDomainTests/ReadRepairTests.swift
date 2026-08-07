@@ -155,6 +155,68 @@ struct ReadRepairTests {
         #expect(repaired.currentPauseEpisode?.id == episode.id)
     }
 
+    @Test("the describing constructor holds the one editable degraded shape: live .paused with no open episode")
+    func describingHoldsDegradedPaused() throws {
+        // Spec §4a principle 2b (v2.1): the edit path re-describes a degraded
+        // record through a WRITE constructor whose tolerance is scoped to
+        // exactly this shape - never through readingRepaired, whose blanket
+        // permissiveness would let repair-rule changes silently alter write
+        // validation.
+        let described = Subscription.describing(
+            id: try fixtureUUID(1),
+            name: "Gym",
+            category: .other,
+            status: .paused,
+            amountCents: 4200,
+            currencyCode: "CAD",
+            cycle: .monthly,
+            cycleStartDay: try day(2026, 1, 15),
+            reminderLeadDays: 3,
+            pauseEpisodes: [],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        // The same indefinite-pause reading the repaired read produces.
+        #expect(described.storedStatus == .paused)
+        #expect(described.currentPauseEpisode == nil)
+        #expect(described.effectiveStatus(asOf: try day(2027, 1, 1)) == .paused)
+    }
+
+    @Test("for a healthy shape the describing constructor is the plain init")
+    func describingEqualsInitForHealthyShapes() throws {
+        let episode = try openEpisode(index: 701, startedOn: try day(2026, 8, 1))
+        let described = Subscription.describing(
+            id: try fixtureUUID(1),
+            name: "Gym",
+            category: .other,
+            status: .paused,
+            amountCents: 4200,
+            currencyCode: "CAD",
+            cycle: .monthly,
+            cycleStartDay: try day(2026, 1, 15),
+            reminderLeadDays: 3,
+            pauseEpisodes: [episode],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let constructed = Subscription(
+            id: try fixtureUUID(1),
+            name: "Gym",
+            category: .other,
+            status: .paused,
+            amountCents: 4200,
+            currencyCode: "CAD",
+            cycle: .monthly,
+            cycleStartDay: try day(2026, 1, 15),
+            reminderLeadDays: 3,
+            pauseEpisodes: [episode],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        #expect(described == constructed)
+    }
+
     @Test("a tombstoned subscription's episodes are history, not violations - no status-coupled repair runs")
     func tombstonedWholeIsUntouched() throws {
         let episode = try openEpisode(index: 701, startedOn: try day(2026, 8, 1))

@@ -289,12 +289,14 @@ public final class SubscriptionFormModel {
         if isTrial && draftTrial == nil { return nil }
 
         let now = dates.now()
-        // Built through the §4a repairing constructor, not the preconditioned
-        // init: an edit of a subscription whose READ was repaired-degraded
-        // (.paused still awaiting its episode record) re-describes the same
-        // degraded shape, and trapping on it would make degraded records
-        // uneditable. For every healthy shape this is the plain init.
-        return Subscription.readingRepaired(
+        // Built through the §4a-2b DESCRIBING constructor (v2.1): an edit of
+        // a subscription whose read was repaired-degraded (.paused still
+        // awaiting its episode record) re-describes the same degraded shape,
+        // and trapping on it would make degraded records uneditable - but its
+        // tolerance is scoped to exactly that shape, so this write path can
+        // never inherit the read path's blanket permissiveness. For every
+        // healthy shape this is the plain init.
+        return Subscription.describing(
             id: newID,
             name: trimmedName,
             vendorURL: nonEmptyURL(from: vendorURLText),
@@ -321,7 +323,7 @@ public final class SubscriptionFormModel {
             createdAt: original?.createdAt ?? now,
             updatedAt: now,
             deletedAt: original?.deletedAt
-        ).subscription
+        )
     }
 
     /// The trial the built subscription carries - the preservation decision is
