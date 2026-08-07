@@ -86,13 +86,16 @@ extension SerializedPersistenceTests {
                 at: urls.main, deviceStateURL: urls.deviceState, seed: writeV2Store
             )
 
-            // The domain answers are identical to pre-relocation V2.
-            let first = try #require(await store.subscription(withID: try fixtureUUID(1)))
-            #expect(first.lastMaterializedThrough == (try day(2026, 9, 1)))
-            let second = try #require(await store.subscription(withID: try fixtureUUID(2)))
-            #expect(second.lastMaterializedThrough == (try day(2026, 11, 20)))
-            let third = try #require(await store.subscription(withID: try fixtureUUID(3)))
-            #expect(third.lastMaterializedThrough == nil)
+            // The device-store answers are identical to pre-relocation V2.
+            #expect(
+                try await store.materializationWatermark(forSubscription: try fixtureUUID(1))
+                    == (try day(2026, 9, 1))
+            )
+            #expect(
+                try await store.materializationWatermark(forSubscription: try fixtureUUID(2))
+                    == (try day(2026, 11, 20))
+            )
+            #expect(try await store.materializationWatermark(forSubscription: try fixtureUUID(3)) == nil)
 
             // The device-state store holds exactly the carried rows.
             let deviceContext = ModelContext(containers.deviceState)
@@ -168,8 +171,10 @@ extension SerializedPersistenceTests {
             #expect(refused)
             // ...and the refusal happened BEFORE the destructive stage: the same
             // store reopened through the factory migrates completely.
-            let first = try #require(await store.subscription(withID: try fixtureUUID(1)))
-            #expect(first.lastMaterializedThrough == (try day(2026, 9, 1)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: try fixtureUUID(1))
+                    == (try day(2026, 9, 1))
+            )
         }
 
         /// Synchronous so holding the creation lock is legal (see TestSupport).

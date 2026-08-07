@@ -239,9 +239,6 @@ public struct ExportedSubscription: Hashable, Sendable {
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
             pauseEpisodes: episodes,
-            // Absent from the file by design; the importing device's ledger
-            // starts observing from its own today (spec §5.3).
-            lastMaterializedThrough: nil,
             trial: trial,
             paymentMethodID: paymentMethodID,
             cancellationURL: try wireURL(cancellationURL, entity: entity, field: "cancellationURL"),

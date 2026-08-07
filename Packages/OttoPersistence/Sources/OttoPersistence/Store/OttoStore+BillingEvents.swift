@@ -185,6 +185,26 @@ extension OttoStore: BillingEventRepository {
         return invalidated.sorted { ($0.expectedDate, $0.id.uuidString) < ($1.expectedDate, $1.id.uuidString) }
     }
 
+    // MARK: - The device watermark (spec §5.3, Wave 6B-Prep)
+
+    public func materializationWatermark(forSubscription subscriptionID: UUID) async throws -> CalendarDay? {
+        try deviceWatermark(for: subscriptionID)
+    }
+
+    public func initializeMaterializationWatermark(
+        forSubscription subscriptionID: UUID, at day: CalendarDay
+    ) async throws {
+        guard try deviceWatermark(for: subscriptionID) == nil else { return }
+        try setDeviceWatermark(day, for: subscriptionID)
+    }
+
+    public func rewindMaterializationWatermark(
+        forSubscription subscriptionID: UUID, to day: CalendarDay
+    ) async throws {
+        guard let stored = try deviceWatermark(for: subscriptionID), day < stored else { return }
+        try setDeviceWatermark(day, for: subscriptionID)
+    }
+
     private func storedEvent(id: UUID) throws -> StoredBillingEvent? {
         var descriptor = FetchDescriptor<StoredBillingEvent>(predicate: #Predicate { $0.id == id })
         descriptor.fetchLimit = 1

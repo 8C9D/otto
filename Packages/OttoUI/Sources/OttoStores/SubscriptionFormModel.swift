@@ -302,16 +302,11 @@ public final class SubscriptionFormModel {
             reminderLeadDays: reminderLeadDays,
             sameDayReminder: sameDayReminder,
             // The form DESCRIBES the subscription (spec §7.1); pause history is
-            // the pause flow's and carries through an edit untouched.
+            // the pause flow's and carries through an edit untouched. The
+            // watermark is device state the domain no longer carries (spec §5.3,
+            // Wave 6B-Prep): the save path (SubscriptionsStore) initialises a
+            // new entry's and applies §5.3's (v1.7) rewind rule to an edit's.
             pauseEpisodes: original?.pauseEpisodes ?? [],
-            // Spec §5.3 (v1.5): a new entry's watermark starts at the later of
-            // the anchor and today, so Mode B never backfills history it had no
-            // rows for. An edit carries the watermark through; the save path
-            // (SubscriptionsStore) applies §5.3's (v1.7) rewind rule when the
-            // edit moved the billing sequence earlier, and §5.3 invalidation
-            // owns the rows the old schedule left behind.
-            lastMaterializedThrough: original.map(\.lastMaterializedThrough)
-                ?? max(anchor, dates.today()),
             trial: preservedTrial,
             paymentMethodID: paymentMethodID,
             cancellationURL: nonEmptyURL(from: cancellationURLText),

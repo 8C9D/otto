@@ -46,4 +46,33 @@ public protocol BillingEventRepository: Sendable {
         asOf today: CalendarDay,
         at instant: Date
     ) async throws -> [BillingEvent]
+
+    // MARK: - The device watermark (spec §5.3, Wave 6B-Prep)
+
+    // The materialization watermark is device state the domain value no longer
+    // carries - one authority, the device store. These are the ONLY mutations a
+    // flow can express: initialise-once and rewind. Neither can advance an
+    // existing watermark, because a watermark vouches that every expected
+    // charge through it has a row, and only a ledger pass may claim that.
+
+    /// This device's watermark for one subscription: the last day through which
+    /// a ledger pass here has observed its expected charges. Nil when no pass
+    /// has ever observed it on this device.
+    func materializationWatermark(forSubscription subscriptionID: UUID) async throws -> CalendarDay?
+
+    /// Writes the watermark only when none exists - the entry initialisation
+    /// (spec §5.3, v1.5: the later of the anchor and the entry day, so Mode B
+    /// never backfills history it had no rows for). A subscription that already
+    /// has a watermark is left exactly as it was, in both directions.
+    func initializeMaterializationWatermark(
+        forSubscription subscriptionID: UUID, at day: CalendarDay
+    ) async throws
+
+    /// Moves the watermark to `min(stored, day)`: a watermark at or behind `day`,
+    /// or absent, is untouched. Rewinding is safe by construction - a regressed
+    /// watermark re-observes idempotently, while an advanced one vouches for
+    /// rows that may not exist (spec §5.3).
+    func rewindMaterializationWatermark(
+        forSubscription subscriptionID: UUID, to day: CalendarDay
+    ) async throws
 }

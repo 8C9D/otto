@@ -17,10 +17,12 @@ extension SerializedPersistenceTests {
             let active = try makeSubscription(
                 index: 1,
                 cycleStartDay: try day(2026, 1, 15),
-                lastMaterializedThrough: try day(2026, 9, 1),
                 trial: try makeTrialTerm(index: 501, startDate: try day(2026, 1, 1))
             )
             try await store.save(active)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: active.id, at: try day(2026, 9, 1)
+            )
             let trial = try makeSubscription(
                 index: 2, status: .trial, cycleStartDay: try day(2026, 8, 1),
                 trial: try makeTrialTerm(index: 502, startDate: try day(2026, 8, 1))
@@ -98,15 +100,9 @@ extension SerializedPersistenceTests {
             )
             try await source.restore(resolved.snapshot)
 
-            var expected = original
-            // The one designed difference: the watermark is device state and does
-            // not travel (spec §5.3). Everything else is value-identical.
-            expected.subscriptions = original.subscriptions.map { subscription in
-                var copy = subscription
-                copy.lastMaterializedThrough = nil
-                return copy
-            }
-            #expect(try await source.completeSnapshot() == expected)
+            // Value-identical: the watermark is device state and lives outside
+            // the snapshot entirely (spec §5.3, Wave 6B-Prep).
+            #expect(try await source.completeSnapshot() == original)
         }
 
         @Test("the snapshot includes tombstones - a backup without them is not a backup")
@@ -194,7 +190,10 @@ extension SerializedPersistenceTests {
 
             let stored = try #require(try await store.subscription(withID: subscriptionID))
             #expect(stored.notes == "edited on the other device")
-            #expect(stored.lastMaterializedThrough == (try day(2026, 9, 1)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscriptionID)
+                    == (try day(2026, 9, 1))
+            )
         }
 
         @Test("an unreadable record fails the export loudly - a backup with a silent hole is worse than none")

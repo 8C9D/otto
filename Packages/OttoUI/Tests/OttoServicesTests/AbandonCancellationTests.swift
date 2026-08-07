@@ -144,10 +144,10 @@ struct AbandonCancellationTests {
         // vouch for them unobserved.
         let fixture = SchedulerFixture()
         let subscription = try makeSubscription(
-            index: 1, status: .cancellationPending, cycleStartDay: try day(2026, 1, 15),
-            lastMaterializedThrough: try day(2026, 11, 20)
+            index: 1, status: .cancellationPending, cycleStartDay: try day(2026, 1, 15)
         )
         await fixture.subscriptions.seed([subscription])
+        await fixture.billingEvents.seedWatermark(try day(2026, 11, 20), forSubscription: subscription.id)
         await fixture.cancellations.seed([CancellationEpisode(
             id: try fixtureUUID(601),
             subscriptionID: subscription.id,
@@ -162,7 +162,9 @@ struct AbandonCancellationTests {
             subscriptionID: subscription.id, now: try fixtureNow(), today: try day(2026, 11, 25)
         )
 
-        let restored = try #require(try await fixture.subscriptions.subscription(withID: subscription.id))
-        #expect(restored.lastMaterializedThrough == (try day(2026, 8, 31)))
+        #expect(
+            try await fixture.billingEvents.materializationWatermark(forSubscription: subscription.id)
+                == (try day(2026, 8, 31))
+        )
     }
 }

@@ -268,6 +268,25 @@ actor PreviewRepository:
         []
     }
 
+    // Previews never materialize, so the watermark operations hold a token map.
+    private var watermarks: [UUID: CalendarDay] = [:]
+
+    func materializationWatermark(forSubscription subscriptionID: UUID) async throws -> CalendarDay? {
+        watermarks[subscriptionID]
+    }
+
+    func initializeMaterializationWatermark(
+        forSubscription subscriptionID: UUID, at day: CalendarDay
+    ) async throws {
+        if watermarks[subscriptionID] == nil { watermarks[subscriptionID] = day }
+    }
+
+    func rewindMaterializationWatermark(
+        forSubscription subscriptionID: UUID, to day: CalendarDay
+    ) async throws {
+        if let stored = watermarks[subscriptionID], day < stored { watermarks[subscriptionID] = day }
+    }
+
     // MARK: CancellationRepository
 
     func save(_ episode: CancellationEpisode) async throws {
@@ -355,6 +374,10 @@ actor PreviewRepository:
             uniqueKeysWithValues: snapshot.cancellationEpisodes.map { ($0.subscriptionID, $0) }
         )
         priceChanges = Dictionary(uniqueKeysWithValues: snapshot.priceChanges.map { ($0.id, $0) })
+    }
+
+    func resetMaterializationWatermarks() async throws {
+        watermarks = [:]
     }
 }
 #endif

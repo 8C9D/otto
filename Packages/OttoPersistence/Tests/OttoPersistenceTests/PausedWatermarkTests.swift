@@ -59,10 +59,12 @@ extension SerializedPersistenceTests {
             let subscription = try makeSubscription(
                 status: .paused,
                 cycleStartDay: try day(2026, 6, 1),
-                pauseEndsOn: try day(2026, 9, 1),
-                lastMaterializedThrough: try day(2026, 8, 20)
+                pauseEndsOn: try day(2026, 9, 1)
             )
             try await store.save(subscription)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: subscription.id, at: try day(2026, 8, 20)
+            )
 
             let created = try await store.materializeEvents(
                 for: subscription, from: try day(2026, 10, 15), horizonDays: 30, maxReminderLeadDays: 0, at: instant
@@ -83,10 +85,12 @@ extension SerializedPersistenceTests {
             let subscription = try makeSubscription(
                 status: .paused,
                 cycleStartDay: try day(2026, 1, 31),
-                pauseEndsOn: .some(nil),
-                lastMaterializedThrough: frozen
+                pauseEndsOn: .some(nil)
             )
             try await store.save(subscription)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: subscription.id, at: frozen
+            )
 
             let created = try await store.materializeEvents(
                 for: subscription, from: try day(2026, 10, 15), horizonDays: 90, maxReminderLeadDays: 0, at: instant
@@ -94,7 +98,7 @@ extension SerializedPersistenceTests {
 
             #expect(created == [])
             let reloaded = try #require(try await store.subscription(withID: subscription.id))
-            #expect(reloaded.lastMaterializedThrough == frozen)
+            #expect(try await store.materializationWatermark(forSubscription: subscription.id) == frozen)
             #expect(reloaded.updatedAt == subscription.updatedAt)
         }
 
@@ -106,18 +110,17 @@ extension SerializedPersistenceTests {
             let paused = try makeSubscription(
                 status: .paused,
                 cycleStartDay: try day(2026, 1, 31),
-                pauseEndsOn: .some(nil),
-                lastMaterializedThrough: try day(2026, 8, 1)
+                pauseEndsOn: .some(nil)
             )
             try await store.save(paused)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: paused.id, at: try day(2026, 8, 1)
+            )
             _ = try await store.materializeEvents(
                 for: paused, from: try day(2026, 9, 1), horizonDays: 90, maxReminderLeadDays: 0, at: instant
             )
 
-            let resumed = try makeSubscription(
-                cycleStartDay: try day(2026, 1, 31),
-                lastMaterializedThrough: try day(2026, 8, 1)
-            )
+            let resumed = try makeSubscription(cycleStartDay: try day(2026, 1, 31))
             try await store.save(resumed)
             let created = try await store.materializeEvents(
                 for: resumed, from: try day(2026, 10, 15), horizonDays: 30, maxReminderLeadDays: 0, at: instant
@@ -136,10 +139,12 @@ extension SerializedPersistenceTests {
             let subscription = try makeSubscription(
                 status: .paused,
                 cycleStartDay: try day(2026, 6, 1),
-                pauseEndsOn: try day(2026, 9, 1),
-                lastMaterializedThrough: try day(2026, 8, 1)
+                pauseEndsOn: try day(2026, 9, 1)
             )
             try await store.save(subscription)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: subscription.id, at: try day(2026, 8, 1)
+            )
 
             let created = try await store.materializeEvents(
                 for: subscription, from: try day(2026, 8, 6), horizonDays: 30, maxReminderLeadDays: 0, at: instant
@@ -147,7 +152,10 @@ extension SerializedPersistenceTests {
 
             #expect(created.map(\.expectedDate) == [try day(2026, 9, 1)])
             let reloaded = try #require(try await store.subscription(withID: subscription.id))
-            #expect(reloaded.lastMaterializedThrough == (try day(2026, 9, 5)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscription.id)
+                    == (try day(2026, 9, 5))
+            )
             #expect(reloaded.updatedAt == subscription.updatedAt)
         }
     }

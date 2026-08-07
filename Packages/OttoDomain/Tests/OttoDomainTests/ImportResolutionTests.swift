@@ -10,8 +10,7 @@ struct ImportResolutionTests {
     private let older = Date(timeIntervalSinceReferenceDate: 100)
     private let newer = Date(timeIntervalSinceReferenceDate: 200)
 
-    private func subscription(_ index: Int, updatedAt: Date, name: String = "Sub",
-                              watermark: CalendarDay? = nil) throws -> Subscription {
+    private func subscription(_ index: Int, updatedAt: Date, name: String = "Sub") throws -> Subscription {
         Subscription(
             id: try fixtureUUID(index),
             name: name,
@@ -22,7 +21,6 @@ struct ImportResolutionTests {
             cycle: .monthly,
             cycleStartDay: try day(2026, 1, 15),
             reminderLeadDays: 3,
-            lastMaterializedThrough: watermark,
             createdAt: older,
             updatedAt: updatedAt
         )
@@ -64,21 +62,6 @@ struct ImportResolutionTests {
         #expect(resolved.snapshot == current)
         #expect(resolved.summary.subscriptions.added == 0)
         #expect(resolved.summary.subscriptions.updated == 0)
-    }
-
-    @Test("a merged update never touches the stored watermark (spec §5.3)")
-    func mergePreservesWatermark() throws {
-        let current = OttoDataSnapshot(subscriptions: [
-            try subscription(1, updatedAt: older, name: "local", watermark: try day(2026, 9, 1))
-        ])
-        let incoming = OttoDataSnapshot(subscriptions: [
-            try subscription(1, updatedAt: newer, name: "imported")
-        ])
-
-        let resolved = try resolveImport(current: current, incoming: incoming, strategy: .merge)
-
-        #expect(resolved.snapshot.subscriptions.first?.name == "imported")
-        #expect(resolved.snapshot.subscriptions.first?.lastMaterializedThrough == (try day(2026, 9, 1)))
     }
 
     @Test("replace becomes exactly the file, and counts what it removed")

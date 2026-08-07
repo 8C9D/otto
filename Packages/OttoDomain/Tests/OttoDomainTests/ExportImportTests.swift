@@ -14,7 +14,7 @@ struct ExportRoundTripTests {
 
         let imported = try importedSnapshot(from: data)
 
-        #expect(imported == strippingWatermarks(original))
+        #expect(imported == original)
     }
 
     @Test("an empty database exports and imports without special-casing")

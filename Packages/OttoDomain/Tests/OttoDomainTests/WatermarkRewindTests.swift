@@ -27,13 +27,13 @@ struct WatermarkRewindTests {
         let old = try makeSubscription(
             status: .paused,
             cycleStartDay: try day(2026, 1, 1),
-            pauseEndsOn: try day(2026, 12, 1),
-            lastMaterializedThrough: try day(2026, 12, 15)
+            pauseEndsOn: try day(2026, 12, 1)
         )
         let new = try reschedulingPauseEnd(old, to: try day(2026, 9, 1))
 
         let rewound = watermarkAfterEdit(
-            from: old, to: new, trackedSince: try day(2026, 1, 1), asOf: try today
+            from: old, to: new, stored: try day(2026, 12, 15),
+            trackedSince: try day(2026, 1, 1), asOf: try today
         )
 
         // Sep 1 is the first charge the new sequence expects that the old one
@@ -43,17 +43,14 @@ struct WatermarkRewindTests {
 
     @Test("an edit that does not touch the sequence keeps the watermark")
     func unrelatedEdit() throws {
-        let old = try makeSubscription(
-            status: .active,
-            cycleStartDay: try day(2026, 1, 1),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
+        let old = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 1))
         var new = old
         new.notes = "renegotiated"
         new.amountCents = 1499
 
         let kept = watermarkAfterEdit(
-            from: old, to: new, trackedSince: try day(2026, 1, 1), asOf: try today
+            from: old, to: new, stored: try day(2026, 9, 10),
+            trackedSince: try day(2026, 1, 1), asOf: try today
         )
 
         #expect(kept == (try day(2026, 9, 10)))
@@ -64,13 +61,13 @@ struct WatermarkRewindTests {
         let old = try makeSubscription(
             status: .paused,
             cycleStartDay: try day(2026, 1, 1),
-            pauseEndsOn: try day(2026, 9, 1),
-            lastMaterializedThrough: try day(2026, 12, 15)
+            pauseEndsOn: try day(2026, 9, 1)
         )
         let new = try reschedulingPauseEnd(old, to: try day(2026, 12, 1))
 
         let kept = watermarkAfterEdit(
-            from: old, to: new, trackedSince: try day(2026, 1, 1), asOf: try today
+            from: old, to: new, stored: try day(2026, 12, 15),
+            trackedSince: try day(2026, 1, 1), asOf: try today
         )
 
         #expect(kept == (try day(2026, 12, 15)))
@@ -84,16 +81,13 @@ struct WatermarkRewindTests {
         // from that freeze (spec §5.3, v1.6). A naive sequence diff would read
         // the pause's deliberate silence as stranded charges and rewind to the
         // anchor - resurrecting the tombstoned in-pause rows.
-        let old = try makeSubscription(
-            status: .paused,
-            cycleStartDay: try day(2026, 1, 1),
-            lastMaterializedThrough: try day(2026, 8, 20)
-        )
+        let old = try makeSubscription(status: .paused, cycleStartDay: try day(2026, 1, 1))
         var new = old
         new.storedStatus = .active
 
         let kept = watermarkAfterEdit(
-            from: old, to: new, trackedSince: try day(2026, 1, 1), asOf: try today
+            from: old, to: new, stored: try day(2026, 8, 20),
+            trackedSince: try day(2026, 1, 1), asOf: try today
         )
 
         #expect(kept == (try day(2026, 8, 20)))
@@ -103,19 +97,12 @@ struct WatermarkRewindTests {
 
     @Test("an anchor corrected backwards rewinds only to the first tracked day")
     func anchorEditFlooredAtFirstRow() throws {
-        let old = try makeSubscription(
-            status: .active,
-            cycleStartDay: try day(2026, 1, 25),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
-        let new = try makeSubscription(
-            status: .active,
-            cycleStartDay: try day(2026, 1, 5),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
+        let old = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 25))
+        let new = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 5))
 
         let rewound = watermarkAfterEdit(
-            from: old, to: new, trackedSince: try day(2026, 7, 25), asOf: try today
+            from: old, to: new, stored: try day(2026, 9, 10),
+            trackedSince: try day(2026, 7, 25), asOf: try today
         )
 
         // Aug 5 is the first newly expected charge at or after the first row
@@ -125,18 +112,12 @@ struct WatermarkRewindTests {
 
     @Test("with no ledger rows nothing before today was ever observed, so nothing rewinds behind it")
     func noRowsFloorsAtToday() throws {
-        let old = try makeSubscription(
-            status: .active,
-            cycleStartDay: try day(2026, 1, 25),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
-        let new = try makeSubscription(
-            status: .active,
-            cycleStartDay: try day(2026, 1, 5),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
+        let old = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 25))
+        let new = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 5))
 
-        let rewound = watermarkAfterEdit(from: old, to: new, trackedSince: nil, asOf: try today)
+        let rewound = watermarkAfterEdit(
+            from: old, to: new, stored: try day(2026, 9, 10), trackedSince: nil, asOf: try today
+        )
 
         // The first newly expected charge on or after today is Sep 5; the
         // rewind stops just before it rather than inventing pre-entry history.
@@ -145,23 +126,19 @@ struct WatermarkRewindTests {
 
     // MARK: - A save never advances the watermark
 
-    @Test("the result never exceeds either record's watermark - only a ledger pass advances it")
+    @Test("the stored watermark is the ceiling - the result only ever holds or rewinds")
     func neverAdvances() throws {
-        let old = try makeSubscription(
-            status: .active,
-            cycleStartDay: try day(2026, 1, 1),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
-        var stale = old
-        stale.lastMaterializedThrough = try day(2026, 9, 1)
+        let old = try makeSubscription(status: .active, cycleStartDay: try day(2026, 1, 1))
+        var new = old
+        new.notes = "edited"
 
+        // The STORED watermark governs (Wave 6B-Prep: the domain value no
+        // longer carries one, so a stale in-memory snapshot has nothing to
+        // advance with); an unrelated edit returns it exactly.
         #expect(
-            watermarkAfterEdit(from: old, to: stale, trackedSince: nil, asOf: try today)
-                == (try day(2026, 9, 1))
-        )
-        #expect(
-            watermarkAfterEdit(from: stale, to: old, trackedSince: nil, asOf: try today)
-                == (try day(2026, 9, 1))
+            watermarkAfterEdit(
+                from: old, to: new, stored: try day(2026, 9, 1), trackedSince: nil, asOf: try today
+            ) == (try day(2026, 9, 1))
         )
     }
 
@@ -171,6 +148,8 @@ struct WatermarkRewindTests {
         var new = old
         new.notes = "edited"
 
-        #expect(watermarkAfterEdit(from: old, to: new, trackedSince: nil, asOf: try today) == nil)
+        #expect(
+            watermarkAfterEdit(from: old, to: new, stored: nil, trackedSince: nil, asOf: try today) == nil
+        )
     }
 }

@@ -112,7 +112,6 @@ func makeSubscription(
     pauseEndsOn: CalendarDay? = nil,
     pausedOn: CalendarDay? = nil,
     pauseEpisodes: [PauseEpisode]? = nil,
-    lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     lastUsedDate: CalendarDay? = nil
 ) throws -> Subscription {
@@ -138,7 +137,6 @@ func makeSubscription(
         reminderLeadDays: reminderLeadDays,
         sameDayReminder: sameDayReminder,
         pauseEpisodes: episodes,
-        lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         lastUsedDate: lastUsedDate,
         createdAt: Date(timeIntervalSince1970: 0),

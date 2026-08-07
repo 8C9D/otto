@@ -15,4 +15,11 @@ public protocol DataTransferRepository: Sendable {
     /// none of it. Callers resolve merges first (`resolveImport`); by the time
     /// this runs the snapshot IS the desired database.
     func restore(_ snapshot: OttoDataSnapshot) async throws
+
+    /// Clears every materialization watermark on this device - the
+    /// replace-import reset (spec §5.3, Wave 6B-Prep): after the database
+    /// becomes exactly what the file describes, this device's past observation
+    /// vouches for ledger rows the file may not carry, so every subscription
+    /// re-observes from its next pass. A merge never calls this.
+    func resetMaterializationWatermarks() async throws
 }

@@ -13,20 +13,16 @@ extension OttoStore: SubscriptionRepository {
             modelContext.insert(record)
         }
         record.update(from: subscription)
-        // The watermark lives in the device-state store (spec §5.3, Wave 6A),
-        // written BEFORE the main save: no flow ever advances a watermark
-        // through save() (edits rewind it, imports preserve it, and only
-        // materialization advances it), so a crash between the two saves can
-        // only leave a REGRESSED watermark - the harmless direction.
-        try setDeviceWatermark(subscription.lastMaterializedThrough, for: subscription.id)
+        // The watermark is untouched here (spec §5.3, Wave 6B-Prep): the domain
+        // value no longer carries it, and a save can neither advance nor lose
+        // this device's ledger progress. Entry initialisation and edit rewinds
+        // go through the explicit watermark operations.
         try modelContext.save()
     }
 
     public func subscription(withID id: UUID) async throws -> Subscription? {
         guard let record = try storedSubscription(id: id, includingDeleted: false) else { return nil }
-        guard var value = mapSkippingFailures([record], { try $0.toDomain() }).first else { return nil }
-        value.lastMaterializedThrough = try deviceWatermark(for: id)
-        return value
+        return mapSkippingFailures([record], { try $0.toDomain() }).first
     }
 
     public func subscriptions() async throws -> [Subscription] {
@@ -67,9 +63,7 @@ extension OttoStore: SubscriptionRepository {
 
     private func fetchSubscriptions(_ predicate: Predicate<StoredSubscription>?) throws -> [Subscription] {
         let records = try modelContext.fetch(FetchDescriptor<StoredSubscription>(predicate: predicate))
-        return try joiningDeviceWatermarks(
-            mapSkippingFailures(records) { try $0.toDomain() }
-                .sorted { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
-        )
+        return mapSkippingFailures(records) { try $0.toDomain() }
+            .sorted { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
     }
 }

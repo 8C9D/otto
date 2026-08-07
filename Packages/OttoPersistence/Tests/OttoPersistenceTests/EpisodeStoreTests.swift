@@ -201,10 +201,12 @@ extension SerializedPersistenceTests {
             let (store, _) = try makeStore()
             let pending = try makeSubscription(
                 status: .cancellationPending,
-                cycleStartDay: try day(2026, 1, 15),
-                lastMaterializedThrough: try day(2026, 8, 1)
+                cycleStartDay: try day(2026, 1, 15)
             )
             try await store.save(pending)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: pending.id, at: try day(2026, 8, 1)
+            )
 
             let created = try await store.materializeEvents(
                 for: pending, from: try day(2026, 10, 20), horizonDays: 90,
@@ -215,8 +217,10 @@ extension SerializedPersistenceTests {
             // NOT advanced to the window's end: an un-cancel re-expects these
             // dates retroactively, and a vouched-for-but-unobserved window is the
             // founding scenario's shape.
-            let reloaded = try #require(await store.subscription(withID: pending.id))
-            #expect(reloaded.lastMaterializedThrough == (try day(2026, 8, 1)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: pending.id)
+                    == (try day(2026, 8, 1))
+            )
         }
 
         @Test("un-cancel then next pass: every charge date the watch covered gets its row")
@@ -224,10 +228,12 @@ extension SerializedPersistenceTests {
             let (store, _) = try makeStore()
             let pending = try makeSubscription(
                 status: .cancellationPending,
-                cycleStartDay: try day(2026, 1, 15),
-                lastMaterializedThrough: try day(2026, 8, 1)
+                cycleStartDay: try day(2026, 1, 15)
             )
             try await store.save(pending)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: pending.id, at: try day(2026, 8, 1)
+            )
             // Three passes during the watch: nothing materializes, nothing advances.
             for passDay in [try day(2026, 9, 1), try day(2026, 10, 1), try day(2026, 11, 5)] {
                 _ = try await store.materializeEvents(

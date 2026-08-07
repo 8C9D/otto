@@ -260,10 +260,12 @@ extension SerializedPersistenceTests {
             let subscription = try makeSubscription(
                 status: .trial,
                 cycleStartDay: try day(2026, 8, 1),
-                lastMaterializedThrough: try day(2026, 8, 1),
                 trial: trial
             )
             try await store.save(subscription)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: subscription.id, at: try day(2026, 8, 1)
+            )
 
             let created = try await store.materializeEvents(
                 for: subscription, from: try day(2026, 9, 20), horizonDays: 30, maxReminderLeadDays: 0, at: instant
@@ -290,7 +292,10 @@ extension SerializedPersistenceTests {
                 for: subscription, from: try day(2026, 8, 6), horizonDays: 90, maxReminderLeadDays: 0, at: instant
             )
             let reloaded = try #require(try await store.subscription(withID: subscription.id))
-            #expect(reloaded.lastMaterializedThrough == (try day(2026, 11, 4)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscription.id)
+                    == (try day(2026, 11, 4))
+            )
 
             let second = try await store.materializeEvents(
                 for: reloaded, from: try day(2026, 12, 20), horizonDays: 90, maxReminderLeadDays: 0, at: instant
@@ -332,8 +337,10 @@ extension SerializedPersistenceTests {
             )
 
             #expect(created.map(\.expectedDate) == [try day(2026, 8, 31)])
-            let reloaded = try #require(try await store.subscription(withID: subscription.id))
-            #expect(reloaded.lastMaterializedThrough == (try day(2026, 9, 5)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscription.id)
+                    == (try day(2026, 9, 5))
+            )
         }
 
         @Test("an empty pass still advances the watermark: observing nothing is an observation")
@@ -341,19 +348,21 @@ extension SerializedPersistenceTests {
             let (store, _) = try makeStore()
             // An active subscription whose first charge is beyond the window: the
             // pass creates nothing, but it observed the window and records that.
-            let subscription = try makeSubscription(
-                cycleStartDay: try day(2027, 3, 1),
-                lastMaterializedThrough: try day(2026, 8, 1)
-            )
+            let subscription = try makeSubscription(cycleStartDay: try day(2027, 3, 1))
             try await store.save(subscription)
+            try await store.initializeMaterializationWatermark(
+                forSubscription: subscription.id, at: try day(2026, 8, 1)
+            )
 
             let created = try await store.materializeEvents(
                 for: subscription, from: try day(2026, 8, 6), horizonDays: 30, maxReminderLeadDays: 0, at: instant
             )
 
             #expect(created == [])
-            let reloaded = try #require(try await store.subscription(withID: subscription.id))
-            #expect(reloaded.lastMaterializedThrough == (try day(2026, 9, 5)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscription.id)
+                    == (try day(2026, 9, 5))
+            )
         }
 
         @Test("watermark writes never bump updatedAt - bookkeeping is not a user edit (spec §5.3, v1.6)")
@@ -367,7 +376,10 @@ extension SerializedPersistenceTests {
             )
 
             let reloaded = try #require(try await store.subscription(withID: subscription.id))
-            #expect(reloaded.lastMaterializedThrough == (try day(2026, 11, 4)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscription.id)
+                    == (try day(2026, 11, 4))
+            )
             #expect(reloaded.updatedAt == subscription.updatedAt)
         }
     }

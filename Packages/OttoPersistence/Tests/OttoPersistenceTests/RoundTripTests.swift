@@ -16,7 +16,6 @@ extension SerializedPersistenceTests {
             let original = try makeSubscription(
                 status: .trial,
                 cycleStartDay: try day(2026, 8, 1),
-                lastMaterializedThrough: try day(2026, 8, 20),
                 trial: trial
             )
 

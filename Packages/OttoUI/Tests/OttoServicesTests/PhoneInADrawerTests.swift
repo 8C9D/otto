@@ -48,10 +48,10 @@ struct PhoneInADrawerTests {
             startDate: try day(2026, 8, 1), lengthDays: 14, convertsToAmountCents: 1599
         )
         let subscription = try makeSubscription(
-            index: 1, status: .trial, cycleStartDay: try day(2026, 8, 1),
-            lastMaterializedThrough: try day(2026, 8, 1), trial: trial
+            index: 1, status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial
         )
         await fixture.subscriptions.seed([subscription])
+        await fixture.billingEvents.seedWatermark(try day(2026, 8, 1), forSubscription: subscription.id)
         return TrialWorld(fixture: fixture, subscription: subscription, trial: trial)
     }
 
@@ -97,11 +97,9 @@ struct PhoneInADrawerTests {
         let fixture = SchedulerFixture()
         // A plain subscription billing the 15th, seeded in August, drawer until
         // Dec 20: four charge dates pass unreminded and unmaterialized.
-        let subscription = try makeSubscription(
-            index: 1, cycleStartDay: try day(2026, 1, 15),
-            lastMaterializedThrough: try day(2026, 8, 6)
-        )
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
         await fixture.subscriptions.seed([subscription])
+        await fixture.billingEvents.seedWatermark(try day(2026, 8, 6), forSubscription: subscription.id)
         let wakeDay = try day(2026, 12, 20)
         _ = try await wake(fixture, on: wakeDay)
 
@@ -130,10 +128,10 @@ struct PhoneInADrawerTests {
         // escape route.
         let subscription = try makeSubscription(
             index: 1, status: .paused, cycleStartDay: try day(2026, 6, 1),
-            pauseEndsOn: try day(2026, 9, 1),
-            lastMaterializedThrough: try day(2026, 8, 20)
+            pauseEndsOn: try day(2026, 9, 1)
         )
         await fixture.subscriptions.seed([subscription])
+        await fixture.billingEvents.seedWatermark(try day(2026, 8, 20), forSubscription: subscription.id)
         let wakeDay = try day(2026, 10, 15)
         _ = try await wake(fixture, on: wakeDay)
 

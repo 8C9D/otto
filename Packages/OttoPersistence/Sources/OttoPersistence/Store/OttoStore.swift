@@ -53,23 +53,6 @@ public actor OttoStore {
 
     // MARK: - The materialization watermark (spec §5.3, device state)
 
-    /// All device watermarks, keyed by subscription id. Reads use this to
-    /// rejoin the watermark onto mapped domain values - the field the synced
-    /// schema no longer carries.
-    func deviceWatermarks() throws -> [UUID: CalendarDay] {
-        let rows = try deviceStateContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
-        return Dictionary(
-            rows.compactMap { row -> (UUID, CalendarDay)? in
-                guard let id = row.subscriptionID,
-                      let stored = row.lastMaterializedThrough,
-                      let day = CalendarDay(yyyymmdd: stored)
-                else { return nil }
-                return (id, day)
-            },
-            uniquingKeysWith: { first, _ in first }
-        )
-    }
-
     func deviceWatermark(for subscriptionID: UUID) throws -> CalendarDay? {
         let rows = try deviceStateContext.fetch(
             FetchDescriptor<StoredMaterializationWatermark>(
@@ -103,17 +86,6 @@ public actor OttoStore {
         }
         if deviceStateContext.hasChanges {
             try deviceStateContext.save()
-        }
-    }
-
-    /// Rejoins device watermarks onto freshly mapped subscriptions.
-    func joiningDeviceWatermarks(_ subscriptions: [Subscription]) throws -> [Subscription] {
-        guard !subscriptions.isEmpty else { return subscriptions }
-        let watermarks = try deviceWatermarks()
-        return subscriptions.map { subscription in
-            var joined = subscription
-            joined.lastMaterializedThrough = watermarks[subscription.id]
-            return joined
         }
     }
 

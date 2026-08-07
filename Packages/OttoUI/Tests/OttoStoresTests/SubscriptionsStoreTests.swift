@@ -166,10 +166,10 @@ struct SubscriptionsStoreTests {
             index: 1,
             status: .paused,
             cycleStartDay: try day(2026, 1, 1),
-            pauseEndsOn: try day(2026, 12, 1),
-            lastMaterializedThrough: try day(2026, 12, 15)
+            pauseEndsOn: try day(2026, 12, 1)
         )
         await fixture.subscriptions.seed([old])
+        await fixture.billingEvents.seedWatermark(try day(2026, 12, 15), forSubscription: old.id)
         await fixture.billingEvents.seed([
             try makeBillingEvent(subscriptionID: old.id, expectedDate: try day(2026, 1, 1))
         ])
@@ -179,26 +179,30 @@ struct SubscriptionsStoreTests {
         edited.pauseEpisodes[openIndex].scheduledResumeOn = try day(2026, 9, 1)
         try await fixture.store.save(edited)
 
-        let saved = try #require(await fixture.subscriptions.savedValues.last)
-        #expect(saved.lastMaterializedThrough == (try day(2026, 8, 31)))
+        #expect(
+            try await fixture.billingEvents.materializationWatermark(forSubscription: old.id)
+                == (try day(2026, 8, 31))
+        )
     }
 
-    @Test("a save never advances the stored watermark - only a ledger pass does")
+    @Test("a save leaves the stored watermark untouched - only a ledger pass advances it")
     func saveNeverAdvancesWatermark() async throws {
+        // The domain value carries no watermark (Wave 6B-Prep), so a stale
+        // snapshot has nothing to advance with; an unrelated edit must also
+        // leave the device store exactly as it was.
         let fixture = try makeStore()
-        let stored = try makeSubscription(
-            index: 1,
-            cycleStartDay: try day(2026, 1, 1),
-            lastMaterializedThrough: try day(2026, 9, 10)
-        )
+        let stored = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 1))
         await fixture.subscriptions.seed([stored])
+        await fixture.billingEvents.seedWatermark(try day(2026, 9, 10), forSubscription: stored.id)
 
         var incoming = stored
-        incoming.lastMaterializedThrough = try day(2026, 12, 1)
+        incoming.notes = "edited"
         try await fixture.store.save(incoming)
 
-        let saved = try #require(await fixture.subscriptions.savedValues.last)
-        #expect(saved.lastMaterializedThrough == (try day(2026, 9, 10)))
+        #expect(
+            try await fixture.billingEvents.materializationWatermark(forSubscription: stored.id)
+                == (try day(2026, 9, 10))
+        )
     }
 
     @Test("a status transition through save keeps the flows' watermark semantics")
@@ -209,10 +213,10 @@ struct SubscriptionsStoreTests {
         let paused = try makeSubscription(
             index: 1,
             status: .paused,
-            cycleStartDay: try day(2026, 1, 1),
-            lastMaterializedThrough: try day(2026, 8, 20)
+            cycleStartDay: try day(2026, 1, 1)
         )
         await fixture.subscriptions.seed([paused])
+        await fixture.billingEvents.seedWatermark(try day(2026, 8, 20), forSubscription: paused.id)
         await fixture.billingEvents.seed([
             try makeBillingEvent(subscriptionID: paused.id, expectedDate: try day(2026, 1, 1))
         ])
@@ -221,8 +225,33 @@ struct SubscriptionsStoreTests {
         resumed.storedStatus = .active
         try await fixture.store.save(resumed)
 
-        let saved = try #require(await fixture.subscriptions.savedValues.last)
-        #expect(saved.lastMaterializedThrough == (try day(2026, 8, 20)))
+        #expect(
+            try await fixture.billingEvents.materializationWatermark(forSubscription: paused.id)
+                == (try day(2026, 8, 20))
+        )
+    }
+
+    @Test("a new entry's watermark initialises at the later of the anchor and today (spec §5.3, v1.5)")
+    func createInitialisesWatermark() async throws {
+        let fixture = try makeStore()
+
+        // Anchor behind today: today floors it, so Mode B never backfills
+        // history the record had no rows for.
+        let backdated = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        try await fixture.store.save(backdated)
+        #expect(
+            try await fixture.billingEvents.materializationWatermark(forSubscription: backdated.id)
+                == (try day(2026, 8, 6))
+        )
+
+        // Anchor ahead of today: the anchor wins - the first charge is not
+        // behind any window yet.
+        let ahead = try makeSubscription(index: 2, cycleStartDay: try day(2026, 9, 1))
+        try await fixture.store.save(ahead)
+        #expect(
+            try await fixture.billingEvents.materializationWatermark(forSubscription: ahead.id)
+                == (try day(2026, 9, 1))
+        )
     }
 
     @Test("save and delete fire the mutation hook - the store is the §6.2 reschedule trigger")

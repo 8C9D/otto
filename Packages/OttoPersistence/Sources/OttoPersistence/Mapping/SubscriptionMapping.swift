@@ -52,9 +52,6 @@ extension OttoSchemaV3.StoredSubscription {
             reminderLeadDays: try require(reminderLeadDays, entity: entity, field: "reminderLeadDays"),
             sameDayReminder: sameDayReminder,
             pauseEpisodes: episodes,
-            // Not stored here since Wave 6A (spec §5.3): the watermark lives in
-            // the device-state store, and `OttoStore` rejoins it after mapping.
-            lastMaterializedThrough: nil,
             trial: domainTrial,
             paymentMethodID: paymentMethodID,
             cancellationURL: try URL.storedOptional(cancellationURL, entity: entity, field: "cancellationURL"),

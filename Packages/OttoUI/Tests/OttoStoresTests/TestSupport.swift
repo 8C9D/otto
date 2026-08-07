@@ -35,7 +35,6 @@ func makeSubscription(
     cycle: BillingCycle = .monthly,
     cycleStartDay: CalendarDay,
     pauseEndsOn: CalendarDay? = nil,
-    lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     paymentMethodID: UUID? = nil
 ) throws -> Subscription {
@@ -61,7 +60,6 @@ func makeSubscription(
         cycleStartDay: cycleStartDay,
         reminderLeadDays: 3,
         pauseEpisodes: episodes,
-        lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: paymentMethodID,
         createdAt: Date(timeIntervalSince1970: 1_000),

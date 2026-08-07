@@ -157,6 +157,33 @@ actor MockBillingEventRepository: BillingEventRepository {
         try throwPrimedFailure()
         return []
     }
+
+    private var watermarks: [UUID: CalendarDay] = [:]
+
+    /// Test seeding: the direct write the production protocol deliberately
+    /// does not offer (only initialise-once and rewind exist there).
+    func seedWatermark(_ day: CalendarDay?, forSubscription subscriptionID: UUID) {
+        watermarks[subscriptionID] = day
+    }
+
+    func materializationWatermark(forSubscription subscriptionID: UUID) async throws -> CalendarDay? {
+        try throwPrimedFailure()
+        return watermarks[subscriptionID]
+    }
+
+    func initializeMaterializationWatermark(
+        forSubscription subscriptionID: UUID, at day: CalendarDay
+    ) async throws {
+        try throwPrimedFailure()
+        if watermarks[subscriptionID] == nil { watermarks[subscriptionID] = day }
+    }
+
+    func rewindMaterializationWatermark(
+        forSubscription subscriptionID: UUID, to day: CalendarDay
+    ) async throws {
+        try throwPrimedFailure()
+        if let current = watermarks[subscriptionID], day < current { watermarks[subscriptionID] = day }
+    }
 }
 
 actor MockPriceChangeRepository: PriceChangeRepository {

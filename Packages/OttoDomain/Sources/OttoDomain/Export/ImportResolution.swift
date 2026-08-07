@@ -57,10 +57,12 @@ public struct ResolvedImport: Hashable, Sendable {
 /// state to persist. Pure - every decision is here and testable; the store only
 /// applies the result.
 ///
-/// Watermarks: the file never carries one (spec §5.3). A record that survives
-/// from the database keeps its stored watermark; a record the file adds or
-/// updates starts at nil and the next ledger pass observes from today - import
-/// neither advances nor rewinds any device's ledger progress.
+/// Watermarks: neither the file nor the snapshot carries one (spec §5.3, Wave
+/// 6B-Prep: the watermark lives only in the device store). A merge leaves this
+/// device's ledger progress untouched; a replace resets it (the import flow
+/// calls the device-store reset), because after the database becomes exactly
+/// what the file describes, past observation vouches for rows the file may not
+/// carry.
 public func resolveImport(
     current: OttoDataSnapshot,
     incoming: OttoDataSnapshot,
@@ -83,13 +85,7 @@ public func resolveImport(
         resolved.subscriptions = merge(
             current: current.subscriptions, incoming: incoming.subscriptions,
             counts: &summary.subscriptions
-        ) { existing, incoming in
-            // The watermark is device state, not user data: whichever copy wins,
-            // the stored ledger progress survives the import untouched.
-            var winner = incoming
-            winner.lastMaterializedThrough = existing.lastMaterializedThrough
-            return winner
-        }
+        )
         resolved.paymentMethods = merge(
             current: current.paymentMethods, incoming: incoming.paymentMethods,
             counts: &summary.paymentMethods

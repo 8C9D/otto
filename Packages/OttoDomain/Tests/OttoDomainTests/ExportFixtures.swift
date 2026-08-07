@@ -26,10 +26,9 @@ func fullSnapshot() throws -> OttoDataSnapshot {
 
 private func exportSubscriptions() throws -> [Subscription] {
     [
-        // Confirmed conversion: active, retained term, watermark set.
+        // Confirmed conversion: active, retained term.
         try exportSubscription(
             1, status: .active, cycle: .monthly, category: .foodAndDelivery,
-            watermark: try day(2026, 9, 1),
             trial: try exportTrialTerm(501, startDate: try day(2024, 1, 17))
         ),
         try exportSubscription(
@@ -119,18 +118,6 @@ private func exportCancellations() throws -> [CancellationEpisode] {
     ]
 }
 
-/// The snapshot as an import must reproduce it: identical except the
-/// device-local watermark, which the file never carries (spec §5.3).
-func strippingWatermarks(_ snapshot: OttoDataSnapshot) -> OttoDataSnapshot {
-    var stripped = snapshot
-    stripped.subscriptions = snapshot.subscriptions.map { subscription in
-        var copy = subscription
-        copy.lastMaterializedThrough = nil
-        return copy
-    }
-    return stripped
-}
-
 // MARK: - Builders
 
 private func exportSubscription(
@@ -139,7 +126,6 @@ private func exportSubscription(
     cycle: BillingCycle,
     category: OttoDomain.Category = .streamingAndVideo,
     pauseEpisodes: [PauseEpisode] = [],
-    watermark: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     deletedAt: Date? = nil
 ) throws -> Subscription {
@@ -156,7 +142,6 @@ private func exportSubscription(
         reminderLeadDays: 3,
         sameDayReminder: index.isMultiple(of: 2),
         pauseEpisodes: pauseEpisodes,
-        lastMaterializedThrough: watermark,
         trial: trial,
         paymentMethodID: try fixtureUUID(300),
         cancellationURL: URL(string: "https://example.com/cancel/\(index)"),

@@ -73,7 +73,6 @@ func makeSubscription(
     cycleStartDay: CalendarDay,
     pauseEndsOn: CalendarDay?? = nil,
     pauseEpisodes: [PauseEpisode]? = nil,
-    lastMaterializedThrough: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     deletedAt: Date? = nil
 ) throws -> Subscription {
@@ -107,7 +106,6 @@ func makeSubscription(
         reminderLeadDays: 3,
         sameDayReminder: true,
         pauseEpisodes: episodes,
-        lastMaterializedThrough: lastMaterializedThrough,
         trial: trial,
         paymentMethodID: try fixtureUUID(900),
         cancellationURL: URL(string: "https://example.com/cancel"),

@@ -19,6 +19,12 @@ private actor MockTransfer: DataTransferRepository {
         restoredSnapshots.append(snapshot)
         self.snapshot = snapshot
     }
+
+    private(set) var watermarkResets = 0
+
+    func resetMaterializationWatermarks() async throws {
+        watermarkResets += 1
+    }
 }
 
 @MainActor
@@ -103,6 +109,24 @@ struct ExportServiceTests {
         let stored = await transfer.snapshot
         #expect(stored.subscriptions.count == 2)
         #expect(stored.billingEvents.count == 1)
+        // A merge leaves this device's ledger progress untouched (spec §5.3).
+        #expect(await transfer.watermarkResets == 0)
+    }
+
+    @Test("a replace import resets the device watermarks after the restore (spec §5.3)")
+    func replaceImportResetsWatermarks() async throws {
+        let transfer = MockTransfer(snapshot: try seededSnapshot())
+        let service = ExportService(transfer: transfer)
+        let incoming = OttoDataSnapshot(subscriptions: [
+            try makeSubscription(index: 2, cycleStartDay: try day(2026, 2, 1))
+        ])
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("otto-replace-test.json")
+        try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
+
+        _ = try await service.performImport(from: file, strategy: .replace)
+
+        #expect(await transfer.watermarkResets == 1)
     }
 
     @Test("a corrupt file fails the import and nothing is restored")

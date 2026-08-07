@@ -296,14 +296,19 @@ public actor SubscriptionFlowService {
                 .first { $0.outcome == .abandoned }
         }
         guard let reference,
-              var restored = subscription.abandoningCancellation(
+              let restored = subscription.abandoningCancellation(
                   restoringTo: reference.statusAtStart, at: now
               )
         else { return }
-        if let watched = reference.nextChargeDateIfNotCancelled,
-           let watermark = restored.lastMaterializedThrough,
-           watched <= watermark {
-            restored.lastMaterializedThrough = watched.adding(days: -1)
+        // The rewind is the explicit device-store operation (spec §5.3, Wave
+        // 6B-Prep) and runs BEFORE the status restore: a crash between the two
+        // leaves only a regressed watermark, the harmless direction. Rewinding
+        // is a min(), so a watermark already behind the watched date - or
+        // absent - is untouched.
+        if let watched = reference.nextChargeDateIfNotCancelled {
+            try await billingEvents.rewindMaterializationWatermark(
+                forSubscription: subscriptionID, to: watched.adding(days: -1)
+            )
         }
         try await subscriptions.save(restored)
     }

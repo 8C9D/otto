@@ -174,8 +174,10 @@ extension SerializedPersistenceTests {
             #expect(watch.statusAtStart == nil)
             #expect(watch.updatedAt == Date(timeIntervalSince1970: 4_500))
             // The watermark the un-cancel rewind guards against survived as data.
-            let pendingSub = try #require(await store.subscription(withID: try fixtureUUID(4)))
-            #expect(pendingSub.lastMaterializedThrough == (try day(2026, 11, 20)))
+            #expect(
+                try await store.materializationWatermark(forSubscription: try fixtureUUID(4))
+                    == (try day(2026, 11, 20))
+            )
 
             // The finished cancellation CLOSED at its verification instant - one
             // rule with the v1 export import - and the died-paused subscription

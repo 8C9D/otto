@@ -86,27 +86,45 @@ public final class SubscriptionsStore {
     /// so the caller can present the failure; the published state is untouched by
     /// a failed write.
     ///
-    /// This is the Add/Edit choke point, so §5.3's (v1.7) rewind rule is applied
-    /// here: an edit that moves the billing sequence earlier rewinds the
-    /// watermark to the earliest affected date, floored at the earliest ledger
-    /// row ever created (tombstones included - tracking began there, and an
-    /// edit must not manufacture pre-entry history). The same call keeps a save
-    /// from ever ADVANCING the watermark - only a ledger pass does that.
+    /// This is the Add/Edit choke point, so the §5.3 watermark rules are applied
+    /// here through the explicit device-store operations (Wave 6B-Prep: the
+    /// domain value no longer carries the watermark). An edit that moves the
+    /// billing sequence earlier REWINDS to the earliest affected date, floored
+    /// at the earliest ledger row ever created (tombstones included - tracking
+    /// began there, and an edit must not manufacture pre-entry history); the
+    /// rewind runs BEFORE the save so a crash between the two lands on the
+    /// harmless side, a regressed watermark. A new entry INITIALISES at the
+    /// later of the anchor and today, after its record exists (a crash between
+    /// leaves a nil watermark, whose first pass observes from today - the same
+    /// window the initialisation would have granted a same-day entry). Neither
+    /// operation can advance a watermark; only a ledger pass does that.
     public func save(_ subscription: Subscription) async throws {
-        var adjusted = subscription
         if let current = try await subscriptionRepository.subscription(withID: subscription.id) {
             let earliestTracked = try await billingEventRepository
                 .eventsIncludingDeleted(forSubscription: subscription.id)
                 .map(\.expectedDate)
                 .min()
-            adjusted.lastMaterializedThrough = watermarkAfterEdit(
+            let stored = try await billingEventRepository
+                .materializationWatermark(forSubscription: subscription.id)
+            if let target = watermarkAfterEdit(
                 from: current,
                 to: subscription,
+                stored: stored,
                 trackedSince: earliestTracked,
                 asOf: dates.today()
+            ) {
+                try await billingEventRepository.rewindMaterializationWatermark(
+                    forSubscription: subscription.id, to: target
+                )
+            }
+            try await subscriptionRepository.save(subscription)
+        } else {
+            try await subscriptionRepository.save(subscription)
+            try await billingEventRepository.initializeMaterializationWatermark(
+                forSubscription: subscription.id,
+                at: max(subscription.cycleStartDay, dates.today())
             )
         }
-        try await subscriptionRepository.save(adjusted)
         await refresh()
         await onMutation?()
     }

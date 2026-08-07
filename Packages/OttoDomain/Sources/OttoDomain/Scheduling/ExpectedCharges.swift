@@ -167,22 +167,18 @@ public func isExpectedCharge(
 ///   `today` floors it instead: dates from today forward are inside every
 ///   pass window and need no rewind to be seen.
 /// - **A save never advances the watermark.** Only a ledger pass does
-///   (spec §5.3, v1.5) - so a stale snapshot carrying yesterday's watermark
-///   re-observes a window instead of silently vouching for one, and a re-saved
-///   edit cannot undo its own rewind. The result is the minimum of both
-///   records' watermarks and the rewind point.
+///   (spec §5.3, v1.5). Since Wave 6B-Prep the domain value no longer carries
+///   the watermark at all - the STORED device watermark is passed in, and the
+///   result is the minimum of it and the rewind point, so an edit can only
+///   hold or rewind, never advance.
 public func watermarkAfterEdit(
     from old: Subscription,
     to new: Subscription,
+    stored watermark: CalendarDay?,
     trackedSince earliestTrackedDay: CalendarDay?,
     asOf today: CalendarDay
 ) -> CalendarDay? {
-    let base: CalendarDay? = switch (old.lastMaterializedThrough, new.lastMaterializedThrough) {
-    case (nil, nil): nil
-    case (let watermark?, nil), (nil, let watermark?): watermark
-    case (let stored?, let incoming?): min(stored, incoming)
-    }
-    guard let watermark = base, old.storedStatus == new.storedStatus else { return base }
+    guard let watermark, old.storedStatus == new.storedStatus else { return watermark }
     let floor = earliestTrackedDay ?? today
     guard floor <= watermark else { return watermark }
     let previouslyExpected = Set(
