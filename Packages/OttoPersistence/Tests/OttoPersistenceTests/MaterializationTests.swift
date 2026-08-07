@@ -106,7 +106,7 @@ struct MaterializationTests {
         #expect(second.map(\.expectedDate) == [try day(2026, 9, 30), try day(2026, 10, 31)])
     }
 
-    @Test("a soft-deleted row is never resurrected by re-materialization")
+    @Test("a soft-deleted history row is never resurrected by re-materialization")
     func tombstoneNotResurrected() async throws {
         let (store, container) = try makeStore()
         let subscription = try makeSubscription(cycleStartDay: try day(2026, 1, 31))
@@ -116,9 +116,13 @@ struct MaterializationTests {
             for: subscription, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
         )
 
+        // A resolved row deliberately removed from history. (A tombstoned .upcoming
+        // row behaves differently by design: it is a §5.3 invalidation artifact and
+        // does not block its date - see the schedule-change invalidation suite.)
         let context = ModelContext(container)
         let events = try context.fetch(FetchDescriptor<StoredBillingEvent>())
         let target = try #require(events.first { $0.expectedDate == 20260930 })
+        target.state = BillingEvent.State.skipped.rawValue
         target.deletedAt = Date(timeIntervalSince1970: 9_000)
         try context.save()
 
@@ -171,31 +175,24 @@ struct MaterializationTests {
         #expect(created == [])
     }
 
-    @Test("a trial whose conversion date has already passed materializes nothing - the window starts today")
-    func trialConversionInThePast() async throws {
+    @Test("a converted trial materializes the paid sequence from its conversion anchor (spec §5.2a)")
+    func convertedTrialMaterializesPaidSequence() async throws {
         let (store, _) = try makeStore()
-        let trial = try makeTrialTerm(startDate: try day(2026, 8, 1), lengthDays: 14)
-        let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
+        // Converted Aug 13 to $11.00 monthly; today is Sep 1 and no flow ever
+        // persisted a status flip - the status still says .trial.
+        let trial = try makeTrialTerm(startDate: try day(2026, 8, 6), lengthDays: 7, convertsToAmountCents: 1100)
+        let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 6), trial: trial)
         try await store.save(subscription)
 
         let created = try await store.materializeEvents(
             for: subscription, from: try day(2026, 9, 1), horizonDays: 90, maxReminderLeadDays: 5, at: instant
         )
 
-        #expect(created == [])
-    }
-
-    @Test("a trial-status subscription with no trial term materializes nothing")
-    func trialWithoutTerm() async throws {
-        let (store, _) = try makeStore()
-        let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1))
-        try await store.save(subscription)
-
-        let created = try await store.materializeEvents(
-            for: subscription, from: try day(2026, 8, 6), horizonDays: 90, maxReminderLeadDays: 5, at: instant
-        )
-
-        #expect(created == [])
+        // Window runs through Dec 5: the paid charges land Sep 13, Oct 13, Nov 13,
+        // each at the converted amount.
+        #expect(created.map(\.expectedDate) == [try day(2026, 9, 13), try day(2026, 10, 13), try day(2026, 11, 13)])
+        #expect(created.allSatisfy { $0.expectedAmountCents == 1100 })
+        #expect(created.allSatisfy { $0.state == .upcoming })
     }
 
     @Test("paused, cancellation, and archived statuses materialize nothing", arguments: [
@@ -237,5 +234,143 @@ struct MaterializationTests {
         )
 
         #expect(created == [])
+    }
+}
+
+// Spec §5.3 (v1.3): editing an anchor, cycle, or amount changes the sequence, and
+// .upcoming rows for the old sequence are phantom charges. Invalidation tombstones
+// them; re-materialization writes the new sequence as new records.
+@Suite("Schedule-change invalidation (spec §5.3)")
+struct ScheduleChangeInvalidationTests {
+
+    private let instant = Date(timeIntervalSince1970: 8_000)
+    private let editInstant = Date(timeIntervalSince1970: 9_000)
+
+    @Test("a price edit invalidates the old-amount rows, and re-materialization writes the new ones")
+    func priceEditInvalidatesAndRematerializes() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let original = try makeSubscription(cycleStartDay: try day(2026, 1, 15))
+        try await store.save(original)
+        let created = try await store.materializeEvents(
+            for: original, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+        #expect(created.count == 3)
+
+        // The user corrects the price: same anchor, same cycle, new amount.
+        let edited = try makeSubscription(amountCents: 1299, cycleStartDay: try day(2026, 1, 15))
+        try await store.save(edited)
+
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: edited, asOf: today, at: editInstant
+        )
+        #expect(invalidated.count == 3)
+        #expect(invalidated.allSatisfy { $0.deletedAt == editInstant })
+
+        // The old rows are gone from live reads; the new sequence lands on the same
+        // dates as NEW records at the new amount, not resurrections.
+        let rematerialized = try await store.materializeEvents(
+            for: edited, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: editInstant
+        )
+        #expect(rematerialized.map(\.expectedDate) == created.map(\.expectedDate))
+        #expect(rematerialized.allSatisfy { $0.expectedAmountCents == 1299 })
+        #expect(Set(rematerialized.map(\.id)).isDisjoint(with: Set(created.map(\.id))))
+
+        let live = try await store.events(forSubscription: edited.id)
+        #expect(live.allSatisfy { $0.expectedAmountCents == 1299 })
+        #expect(live.count == 3)
+    }
+
+    @Test("an anchor edit tombstones every old-sequence row and only those")
+    func anchorEditInvalidatesOldDates() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let original = try makeSubscription(cycleStartDay: try day(2026, 1, 15))
+        try await store.save(original)
+        _ = try await store.materializeEvents(
+            for: original, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+
+        // The 15th was wrong; the vendor bills the 20th.
+        let edited = try makeSubscription(cycleStartDay: try day(2026, 1, 20))
+        try await store.save(edited)
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: edited, asOf: today, at: editInstant
+        )
+        #expect(invalidated.map(\.expectedDate) == [try day(2026, 8, 15), try day(2026, 9, 15), try day(2026, 10, 15)])
+
+        let rematerialized = try await store.materializeEvents(
+            for: edited, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: editInstant
+        )
+        #expect(rematerialized.map(\.expectedDate) == [try day(2026, 8, 20), try day(2026, 9, 20), try day(2026, 10, 20)])
+    }
+
+    @Test("rows in any state but .upcoming are never touched - a confirmed charge is history")
+    func confirmedRowsAreHistory() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let original = try makeSubscription(cycleStartDay: try day(2026, 1, 15))
+        try await store.save(original)
+        // A confirmed charge from the old sequence - not on the new sequence's dates.
+        try await store.save(
+            try makeBillingEvent(index: 100, subscriptionID: original.id, expectedDate: try day(2026, 7, 15))
+        )
+
+        let edited = try makeSubscription(cycleStartDay: try day(2026, 1, 20))
+        try await store.save(edited)
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: edited, asOf: today, at: editInstant
+        )
+
+        #expect(invalidated.isEmpty)
+        let events = try await store.events(forSubscription: edited.id)
+        #expect(events.map(\.expectedDate) == [try day(2026, 7, 15)])
+        #expect(events.first?.deletedAt == nil)
+    }
+
+    @Test("an unchanged schedule invalidates nothing - the operation is idempotent")
+    func unchangedScheduleIsUntouched() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let subscription = try makeSubscription(cycleStartDay: try day(2026, 1, 15))
+        try await store.save(subscription)
+        _ = try await store.materializeEvents(
+            for: subscription, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: subscription, asOf: today, at: editInstant
+        )
+        #expect(invalidated.isEmpty)
+        #expect(try await store.events(forSubscription: subscription.id).count == 3)
+    }
+
+    @Test("an unconverted trial's conversion row survives only while it matches the term")
+    func trialConversionRowInvalidation() async throws {
+        let (store, _) = try makeStore()
+        let today = try day(2026, 8, 6)
+        let trial = try makeTrialTerm(startDate: today, lengthDays: 14, convertsToAmountCents: 1100)
+        let subscription = try makeSubscription(status: .trial, cycleStartDay: today, trial: trial)
+        try await store.save(subscription)
+        let created = try await store.materializeEvents(
+            for: subscription, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
+        )
+        #expect(created.map(\.expectedDate) == [trial.conversionDate])
+
+        // The user corrects the trial length: the conversion moves, the old row is
+        // a phantom.
+        let editedTrial = try makeTrialTerm(startDate: today, lengthDays: 30, convertsToAmountCents: 1100)
+        let edited = try makeSubscription(status: .trial, cycleStartDay: today, trial: editedTrial)
+        try await store.save(edited)
+
+        let invalidated = try await store.invalidateOutdatedUpcomingEvents(
+            for: edited, asOf: today, at: editInstant
+        )
+        #expect(invalidated.map(\.expectedDate) == [trial.conversionDate])
+
+        let rematerialized = try await store.materializeEvents(
+            for: edited, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: editInstant
+        )
+        #expect(rematerialized.map(\.expectedDate) == [editedTrial.conversionDate])
     }
 }

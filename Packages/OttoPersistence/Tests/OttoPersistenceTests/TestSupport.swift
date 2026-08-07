@@ -34,6 +34,7 @@ func makeStore() throws -> (store: OttoStore, container: ModelContainer) {
 func makeSubscription(
     index: Int = 0,
     status: SubscriptionStatus = .active,
+    amountCents: Int = 1099,
     cycle: BillingCycle = .monthly,
     cycleStartDay: CalendarDay,
     trial: TrialTerm? = nil,
@@ -45,7 +46,7 @@ func makeSubscription(
         vendorURL: URL(string: "https://example.com/account"),
         category: .foodAndDelivery,
         status: status,
-        amountCents: 1099,
+        amountCents: amountCents,
         currencyCode: "CAD",
         cycle: cycle,
         cycleStartDay: cycleStartDay,
@@ -106,6 +107,7 @@ func makeCancellationRecord(
     subscriptionID: UUID,
     nextChargeDateIfNotCancelled: CalendarDay,
     verificationState: CancellationRecord.VerificationState = .pending,
+    unansweredCheckCount: Int = 0,
     evidenceNote: String? = nil
 ) throws -> CancellationRecord {
     CancellationRecord(
@@ -114,6 +116,7 @@ func makeCancellationRecord(
         markedCancelledAt: Date(timeIntervalSince1970: 4_000),
         nextChargeDateIfNotCancelled: nextChargeDateIfNotCancelled,
         verificationState: verificationState,
+        unansweredCheckCount: unansweredCheckCount,
         evidenceNote: evidenceNote,
         createdAt: Date(timeIntervalSince1970: 1_000),
         updatedAt: Date(timeIntervalSince1970: 2_000)
@@ -133,7 +136,6 @@ func makePriceChange(
         effectiveDate: effectiveDate,
         oldAmountCents: 1099,
         newAmountCents: 1299,
-        recordedAt: Date(timeIntervalSince1970: 5_000),
         source: source,
         note: note,
         createdAt: Date(timeIntervalSince1970: 1_000),

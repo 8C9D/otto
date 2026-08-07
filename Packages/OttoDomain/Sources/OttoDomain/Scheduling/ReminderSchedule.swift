@@ -21,7 +21,11 @@ public func reminderSchedule(
     guard horizonDays >= 0 else { return [] }
     let window = today...today.adding(days: horizonDays)
 
-    let planned: [PlannedReminder] = switch subscription.status {
+    // The planner acts on the EFFECTIVE status (spec §5.2a): a trial whose
+    // conversion date has passed plans like the active subscription it now is,
+    // with the paid sequence anchored at the conversion date - whether or not
+    // any flow ever persisted the flip.
+    let planned: [PlannedReminder] = switch subscription.effectiveStatus(asOf: today) {
     case .trial:
         trialReminders(for: subscription, in: window)
     case .active:
@@ -71,16 +75,19 @@ private func renewalReminders(
     from today: CalendarDay,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
+    // The effective anchor (spec §5.2a): the conversion date once a trial has
+    // converted, the stored anchor otherwise.
+    let anchor = subscription.billingAnchor(asOf: today)
     var reminders: [PlannedReminder] = []
     var occurrence = firstOccurrenceIndex(
-        after: today, anchor: subscription.cycleStartDay, cycle: subscription.cycle
+        after: today, anchor: anchor, cycle: subscription.cycle
     )
     while true {
         // Iterating the occurrence INDEX is fine - every candidate is still computed
         // directly from the anchor. Iterating by adding intervals to computed dates
         // is what drifts (spec §4.2 rule 3).
         let billing = billingDate(
-            occurrence: occurrence, anchor: subscription.cycleStartDay, cycle: subscription.cycle
+            occurrence: occurrence, anchor: anchor, cycle: subscription.cycle
         )
         let reminderDay = billing.adding(days: -subscription.reminderLeadDays)
         guard reminderDay <= window.upperBound else { break }
@@ -102,9 +109,10 @@ private func usageCheckInReminders(
     from today: CalendarDay,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
-    // Counted from the last recorded use, or from the anchor date when use was never
-    // recorded - the anchor is the only day the subscription certainly mattered.
-    let reference = subscription.lastUsedDate ?? subscription.cycleStartDay
+    // Counted from the last recorded use, or from the effective anchor when use was
+    // never recorded - the anchor is the only day the subscription certainly mattered,
+    // and for a converted trial that day is the conversion (spec §5.2a).
+    let reference = subscription.lastUsedDate ?? subscription.billingAnchor(asOf: today)
     let daysSinceReference = reference.days(until: today)
 
     // First multiple of the cadence landing on or after today, computed directly.
@@ -147,8 +155,11 @@ private func verificationReminders(
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
     // A resolved record needs no reminder: verified-stopped archives, still-charging
-    // moves to the dispute flow.
+    // moves to the dispute flow, and needs-manual-review has already escalated to a
+    // persistent Today card - three ignored checks mean notifications are not
+    // reaching this item, and a fourth won't either (spec §5.4).
     if let cancellation, cancellation.verificationState != .pending { return [] }
+    if let cancellation, cancellation.unansweredCheckCount >= 3 { return [] }
 
     // The check fires on the stored next-would-be charge date, computed once at
     // cancellation time (spec §5.4). Once that date has passed unverified - or when

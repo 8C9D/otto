@@ -17,6 +17,10 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         case verifiedStopped
         /// A charge arrived after cancellation - surface the dispute summary.
         case stillCharging
+        /// Three consecutive checks went unanswered (spec §5.4): notifications are
+        /// not reaching this item and a fourth won't either, so it stops generating
+        /// them and escalates to a persistent card in Today instead.
+        case needsManualReview
     }
 
     /// Client-generated (spec §5.0): a record with no id of its own cannot be
@@ -37,6 +41,13 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
     public var nextChargeDateIfNotCancelled: CalendarDay
 
     public var verificationState: VerificationState
+
+    /// How many consecutive checks have gone unanswered (spec §5.4, added v1.3).
+    /// The roll-forward keeps watching until this reaches three; past that the
+    /// record escalates to `needsManualReview`. Wave 5's verification flow owns
+    /// incrementing and resetting it.
+    public var unansweredCheckCount: Int
+
     public var verifiedAt: Date?
 
     /// Confirmation number, screenshot reference, rep's name - the dispute evidence.
@@ -55,6 +66,7 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         markedCancelledAt: Date,
         nextChargeDateIfNotCancelled: CalendarDay,
         verificationState: VerificationState,
+        unansweredCheckCount: Int = 0,
         verifiedAt: Date? = nil,
         evidenceNote: String? = nil,
         createdAt: Date,
@@ -66,6 +78,7 @@ public struct CancellationRecord: Identifiable, Hashable, Codable, Sendable {
         self.markedCancelledAt = markedCancelledAt
         self.nextChargeDateIfNotCancelled = nextChargeDateIfNotCancelled
         self.verificationState = verificationState
+        self.unansweredCheckCount = unansweredCheckCount
         self.verifiedAt = verifiedAt
         self.evidenceNote = evidenceNote
         self.createdAt = createdAt

@@ -46,7 +46,7 @@ struct SubscriptionDetailStoreTests {
         let change = PriceChange(
             id: try fixtureUUID(200), subscriptionID: subscription.id,
             effectiveDate: try day(2026, 6, 1), oldAmountCents: 999, newAmountCents: 1099,
-            recordedAt: Date(timeIntervalSince1970: 5_000), source: .userEdit,
+            source: .userEdit,
             createdAt: Date(timeIntervalSince1970: 1_000), updatedAt: Date(timeIntervalSince1970: 2_000)
         )
         let record = try makeCancellationRecord(

@@ -117,8 +117,10 @@ struct SubscriptionDetailView: View {
         switch entry.reason {
         case .upcomingCharge: String(localized: "Next charge")
         case .trialConverts, .trialActionNeeded: String(localized: "Trial converts")
+        case .trialConverted: String(localized: "Trial converted")
         case .pauseResumes: String(localized: "Resumes")
         case .verificationDue, .verificationFailed, .verificationCheck: String(localized: "Verification check")
+        case .needsReview: String(localized: "Needs review")
         }
     }
 
@@ -197,6 +199,8 @@ struct SubscriptionDetailView: View {
             BadgeSpec(text: String(localized: "Charges stopped"), symbolName: "checkmark.circle", color: .green)
         case .stillCharging:
             BadgeSpec(text: String(localized: "Still charging"), symbolName: "exclamationmark.triangle", color: .red)
+        case .needsManualReview:
+            BadgeSpec(text: String(localized: "Needs review"), symbolName: "exclamationmark.triangle", color: .red)
         }
         return badge.label
     }

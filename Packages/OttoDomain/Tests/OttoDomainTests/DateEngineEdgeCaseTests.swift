@@ -65,3 +65,35 @@ struct DateEngineEdgeCaseTests {
         #expect(billingDate(occurrence: 2, anchor: anchorDate, cycle: .biweekly) == jan18)
     }
 }
+
+// The membership test behind spec §5.3's schedule-change invalidation: an .upcoming
+// ledger row whose date this rejects belongs to a sequence that no longer exists.
+@Suite("Billing occurrence membership (spec §5.3)")
+struct BillingOccurrenceTests {
+
+    @Test("occurrences of the sequence are members; days between them are not")
+    func monthlyMembership() throws {
+        let anchor = try day(2026, 1, 31)
+        #expect(isBillingOccurrence(anchor, anchor: anchor, cycle: .monthly))
+        #expect(isBillingOccurrence(try day(2026, 2, 28), anchor: anchor, cycle: .monthly))
+        #expect(isBillingOccurrence(try day(2026, 3, 31), anchor: anchor, cycle: .monthly))
+        #expect(!isBillingOccurrence(try day(2026, 3, 30), anchor: anchor, cycle: .monthly))
+        // The clamp never leaks: Mar 28 is not an occurrence just because Feb 28 was.
+        #expect(!isBillingOccurrence(try day(2026, 3, 28), anchor: anchor, cycle: .monthly))
+    }
+
+    @Test("days before the anchor are never occurrences")
+    func beforeAnchor() throws {
+        let anchor = try day(2026, 8, 15)
+        #expect(!isBillingOccurrence(try day(2026, 7, 15), anchor: anchor, cycle: .monthly))
+        #expect(!isBillingOccurrence(try day(2026, 8, 14), anchor: anchor, cycle: .monthly))
+    }
+
+    @Test("day cycles are plain arithmetic membership")
+    func dayCycleMembership() throws {
+        let anchor = try day(2026, 11, 20)
+        let cycle45 = try cycle(.day, 45)
+        #expect(isBillingOccurrence(try day(2027, 1, 4), anchor: anchor, cycle: cycle45))
+        #expect(!isBillingOccurrence(try day(2027, 1, 5), anchor: anchor, cycle: cycle45))
+    }
+}

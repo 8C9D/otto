@@ -11,7 +11,6 @@ extension OttoSchemaV1 {
         var effectiveDate: Int?
         var oldAmountCents: Int?
         var newAmountCents: Int?
-        var recordedAt: Date?
         var source: String?
         var note: String?
         var createdAt: Date?

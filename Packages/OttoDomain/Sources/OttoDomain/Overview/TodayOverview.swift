@@ -4,13 +4,21 @@ import Foundation
 /// for it right now, and why.
 public struct TodayEntry: Hashable, Sendable, Identifiable {
     public enum Reason: Hashable, Sendable {
-        /// The trial is inside its cancel-by window - or its conversion date has
-        /// passed while the status still says trial, which equally needs a human.
+        /// The trial is inside its cancel-by window: the deadline is ahead and the
+        /// user can still act for free.
         case trialActionNeeded
+        /// The trial converted (spec §5.2a) and the user has never confirmed they
+        /// know: money is moving. This is the case the app exists for, and it stays
+        /// in Needs action indefinitely - it does not get to scroll away (spec §7.1).
+        case trialConverted(amountCents: Int)
         /// A verification check date has arrived with no answer: did the money stop?
         case verificationDue
         /// The user reported a charge after cancelling - the dispute case (spec §5.4).
         case verificationFailed
+        /// A §5.2b invariant is violated - a cancellation state with no record to
+        /// watch it. The state should not exist; when it does, the user must see it
+        /// rather than the app quietly deciding for them (spec §7.1).
+        case needsReview
         /// An ordinary expected charge.
         case upcomingCharge(amountCents: Int)
         /// The trial converts to paid on `date` - not yet inside the action window.
@@ -40,7 +48,7 @@ public struct TodayEntry: Hashable, Sendable, Identifiable {
     /// Whether this entry belongs in Today's *Needs action* section.
     public var needsAction: Bool {
         switch reason {
-        case .trialActionNeeded, .verificationDue, .verificationFailed: true
+        case .trialActionNeeded, .trialConverted, .verificationDue, .verificationFailed, .needsReview: true
         case .upcomingCharge, .trialConverts, .pauseResumes, .verificationCheck: false
         }
     }
@@ -99,7 +107,20 @@ public func todayEntry(
     cancellation: CancellationRecord?,
     from today: CalendarDay
 ) -> TodayEntry? {
-    switch subscription.status {
+    // Conversion is derived, never awaited (spec §5.2a): a converted trial is
+    // classified here, before the status switch, because its stored status still
+    // says .trial while its effective status is .active - and what the user needs
+    // to see is neither an ordinary charge row nor a cancel-by deadline, but the
+    // fact that money started moving.
+    if subscription.isConvertedTrial(asOf: today), let trial = subscription.trial {
+        return TodayEntry(
+            subscription: subscription,
+            reason: .trialConverted(amountCents: trial.convertsToAmountCents),
+            date: trial.conversionDate
+        )
+    }
+
+    switch subscription.effectiveStatus(asOf: today) {
     case .trial:
         return trialEntry(for: subscription, today: today)
 
@@ -127,12 +148,13 @@ public func todayEntry(
 }
 
 private func trialEntry(for subscription: Subscription, today: CalendarDay) -> TodayEntry? {
-    // A trial-status subscription with no trial term has no dates to classify
-    // by; the reminder planner and the materializer skip it the same way.
+    // Unreachable for a live value (§5.2b makes .trial-without-term unconstructible),
+    // but this function cannot prove its caller checked.
     guard let trial = subscription.trial else { return nil }
     // The action window opens when the trial's reminders do - lead days ahead
-    // of the cancel-by date - and stays open through conversion: past cancel-by
-    // is a last call, not a lost cause.
+    // of the cancel-by date - and stays open through the day before conversion:
+    // past cancel-by is a last call, not a lost cause. Conversion itself is
+    // classified before the status switch (spec §5.2a).
     let windowOpens = trial.cancelByDate.adding(days: -subscription.reminderLeadDays)
     if today < windowOpens {
         return TodayEntry(
@@ -141,9 +163,6 @@ private func trialEntry(for subscription: Subscription, today: CalendarDay) -> T
             date: trial.conversionDate
         )
     }
-    // Inside the window - or past conversion while the status still says trial,
-    // which is a state only the user can resolve (Wave 5 owns the recorded
-    // transition), so it stays a card rather than vanishing.
     return TodayEntry(subscription: subscription, reason: .trialActionNeeded, date: trial.cancelByDate)
 }
 
@@ -153,14 +172,22 @@ private func verificationEntry(
     today: CalendarDay
 ) -> TodayEntry? {
     guard let record = cancellation, record.deletedAt == nil else {
-        // Cancelled with no record: the check date is unknowable, and only the
-        // user can supply it - surfaced today rather than silently unwatched.
-        return TodayEntry(subscription: subscription, reason: .verificationDue, date: today)
+        // A cancellation state with no record is a §5.2b invariant violation: the
+        // subscription is unwatched, which is Failure B with extra steps. Rendered
+        // as needs-review, dated today, rather than as an ordinary due item -
+        // the state should not exist, and the user must see that it does.
+        return TodayEntry(subscription: subscription, reason: .needsReview, date: today)
     }
     switch record.verificationState {
     case .stillCharging:
         return TodayEntry(
             subscription: subscription, reason: .verificationFailed, date: record.nextChargeDateIfNotCancelled
+        )
+    case .needsManualReview:
+        // Three checks ignored (spec §5.4): notifications stopped, and this card
+        // is the escalation - persistent until the user answers.
+        return TodayEntry(
+            subscription: subscription, reason: .verificationDue, date: record.nextChargeDateIfNotCancelled
         )
     case .pending where record.nextChargeDateIfNotCancelled <= today:
         // The check date arrived unanswered. It stays a card until answered -

@@ -66,7 +66,7 @@ struct TodayOverviewTests {
         #expect(overview.next30Days.first?.date == trial.conversionDate)
     }
 
-    @Test("a trial whose conversion has passed unresolved still needs action - it never vanishes")
+    @Test("a converted, unacknowledged trial needs action indefinitely as a conversion card (spec §5.2a)")
     func trialPastConversion() throws {
         let trial = try makeTrialTerm(startDate: try day(2026, 7, 1), lengthDays: 14)
         let sub = try makeSubscription(
@@ -75,7 +75,22 @@ struct TodayOverviewTests {
 
         let overview = try overview([sub])
 
-        #expect(overview.needsAction.map(\.reason) == [.trialActionNeeded])
+        #expect(overview.needsAction.map(\.reason) == [.trialConverted(amountCents: trial.convertsToAmountCents)])
+        #expect(overview.needsAction.first?.date == trial.conversionDate)
+    }
+
+    @Test("the conversion day itself already classifies as converted, not as a cancel-by deadline")
+    func trialOnConversionDay() throws {
+        // Conversion lands exactly on today: §5.2a says today >= conversionDate IS
+        // converted, so the card states money moved rather than urging a cancel.
+        let trial = try makeTrialTerm(startDate: try day(2026, 7, 23), lengthDays: 14)
+        let sub = try makeSubscription(
+            index: 1, status: .trial, cycle: .monthly, cycleStartDay: try day(2026, 7, 23), trial: trial
+        )
+
+        let overview = try overview([sub])
+
+        #expect(overview.needsAction.map(\.reason) == [.trialConverted(amountCents: trial.convertsToAmountCents)])
     }
 
     @Test("a paused subscription surfaces only its resume date")
@@ -143,12 +158,27 @@ struct TodayOverviewTests {
         #expect(overview.later.isEmpty)
     }
 
-    @Test("a cancelled subscription with no record surfaces as due today, never silently unwatched")
+    @Test("a cancelled subscription with no record is a needs-review invariant violation, never silently unwatched")
     func cancelledWithoutRecord() throws {
         let sub = try makeSubscription(index: 1, status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
         let overview = try overview([sub])
-        #expect(overview.needsAction.map(\.reason) == [.verificationDue])
+        #expect(overview.needsAction.map(\.reason) == [.needsReview])
         #expect(overview.needsAction.first?.date == today)
+    }
+
+    @Test("a needs-manual-review verification stays a persistent card (spec §5.4)")
+    func needsManualReviewStaysVisible() throws {
+        let sub = try makeSubscription(index: 1, status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
+        var record = try makeCancellationRecord(
+            index: 601, subscriptionID: sub.id, nextChargeDateIfNotCancelled: try day(2026, 7, 20)
+        )
+        record.verificationState = .needsManualReview
+        record.unansweredCheckCount = 3
+
+        let overview = try overview([sub], cancellations: [sub.id: record])
+
+        #expect(overview.needsAction.map(\.reason) == [.verificationDue])
+        #expect(overview.needsAction.first?.date == (try day(2026, 7, 20)))
     }
 
     @Test("archived and soft-deleted subscriptions appear nowhere")

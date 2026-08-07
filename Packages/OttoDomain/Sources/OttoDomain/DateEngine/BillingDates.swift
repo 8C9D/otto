@@ -84,6 +84,16 @@ func firstOccurrenceIndex(after today: CalendarDay, anchor: CalendarDay, cycle: 
     }
 }
 
+/// True when `day` is an occurrence of the sequence - the membership test behind
+/// spec §5.3's schedule-change invalidation: an `.upcoming` ledger row whose date
+/// this rejects belongs to a sequence that no longer exists.
+///
+/// Days before the anchor are never occurrences; the anchor itself (occurrence 0) is.
+public func isBillingOccurrence(_ day: CalendarDay, anchor: CalendarDay, cycle: BillingCycle) -> Bool {
+    guard day >= anchor else { return false }
+    return nextBillingDate(after: day.adding(days: -1), anchor: anchor, cycle: cycle) == day
+}
+
 /// Derives the billing anchor for a subscription entered as "I know my next charge"
 /// (spec §5.1, mode B) - the entry mode most long-held subscriptions need, because
 /// their true start date is unknowable.

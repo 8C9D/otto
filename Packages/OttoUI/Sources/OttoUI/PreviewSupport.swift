@@ -85,7 +85,7 @@ enum PreviewData {
         if let effective = CalendarDay(year: 2026, month: 3, day: 31) {
             fixtures.priceChanges.append(PriceChange(
                 id: uuid(201), subscriptionID: netflix.id, effectiveDate: effective,
-                oldAmountCents: 1899, newAmountCents: 2099, recordedAt: now,
+                oldAmountCents: 1899, newAmountCents: 2099,
                 source: .userEdit, note: "Standard plan price increase",
                 createdAt: now, updatedAt: now
             ))
@@ -239,6 +239,14 @@ actor PreviewRepository:
         []
     }
 
+    func invalidateOutdatedUpcomingEvents(
+        for subscription: Subscription,
+        asOf today: CalendarDay,
+        at instant: Date
+    ) async throws -> [BillingEvent] {
+        []
+    }
+
     // MARK: CancellationRepository
 
     func save(_ record: CancellationRecord) async throws {
@@ -261,12 +269,12 @@ actor PreviewRepository:
 
     func history(forSubscription subscriptionID: UUID) async throws -> [PriceChange] {
         priceChanges.values.filter { $0.subscriptionID == subscriptionID && $0.deletedAt == nil }
-            .sorted { ($0.effectiveDate, $0.recordedAt) < ($1.effectiveDate, $1.recordedAt) }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
     }
 
     func historyIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [PriceChange] {
         priceChanges.values.filter { $0.subscriptionID == subscriptionID }
-            .sorted { ($0.effectiveDate, $0.recordedAt) < ($1.effectiveDate, $1.recordedAt) }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
     }
 
     // MARK: PaymentMethodRepository

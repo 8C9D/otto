@@ -2,7 +2,13 @@ import Foundation
 
 /// A tracked subscription (spec §5.1) - a pure value type. Persistence records map to
 /// and from this shape; the domain never sees optionals-with-defaults or framework types.
-public struct Subscription: Identifiable, Hashable, Codable, Sendable {
+///
+/// Construction enforces spec §5.2b's first invariant: a `.trial` subscription must
+/// carry a `TrialTerm`, because without one §5.2a has no `conversionDate` to derive
+/// anything from. Wave 3 found that state silently no-op'ing in three separate places;
+/// it is now unconstructible in process (precondition) and undecodable from data
+/// (throwing `Codable`), and the mapping layer refuses it loudly before reaching here.
+public struct Subscription: Identifiable, Hashable, Sendable {
     /// Client-generated, so there is never an autoincrement to reconcile against a
     /// server later (spec §3.5).
     public let id: UUID
@@ -84,6 +90,10 @@ public struct Subscription: Identifiable, Hashable, Codable, Sendable {
         updatedAt: Date,
         deletedAt: Date? = nil
     ) {
+        precondition(
+            status != .trial || trial != nil,
+            "A .trial subscription must have a TrialTerm (spec §5.2b)"
+        )
         self.id = id
         self.name = name
         self.vendorURL = vendorURL
@@ -117,4 +127,115 @@ extension Subscription {
 
     /// Spec §5.1's `anchorMonth` (1-12, year cycles), derived for the same reason.
     public var anchorMonth: Int { cycleStartDay.month }
+}
+
+// MARK: - Effective status (spec §5.2a)
+
+extension Subscription {
+    /// The status every consumer acts on. Conversion is DERIVED, never awaited: a
+    /// `.trial` whose `conversionDate` has arrived IS `.active`, whether or not any
+    /// flow ever wrote the flip through. The founding failure is a user who is not
+    /// paying attention, so nothing may depend on the user acting, and nothing may
+    /// depend on the status flip having been persisted - a trial that converts while
+    /// the phone is in a drawer for six weeks still bills, still materializes, and
+    /// still reminds the moment anything asks.
+    public func effectiveStatus(asOf today: CalendarDay) -> SubscriptionStatus {
+        isConvertedTrial(asOf: today) ? .active : status
+    }
+
+    /// True when the stored status still says `.trial` but the conversion date has
+    /// passed - the converted-but-never-acknowledged state that must stay visible
+    /// (spec §7.1) and announce itself (Wave 4).
+    public func isConvertedTrial(asOf today: CalendarDay) -> Bool {
+        status == .trial && trial.map { today >= $0.conversionDate } ?? false
+    }
+
+    /// The anchor the billing sequence runs from as of `today`: on conversion the
+    /// paid sequence takes over at `conversionDate` (spec §5.2a). For every other
+    /// state - including an `.active` subscription whose conversion was persisted
+    /// with a rebased `cycleStartDay` - it is the stored anchor.
+    public func billingAnchor(asOf today: CalendarDay) -> CalendarDay {
+        guard isConvertedTrial(asOf: today), let trial else { return cycleStartDay }
+        return trial.conversionDate
+    }
+
+    /// The expected charge amount as of `today`: `convertsToAmountCents` once a
+    /// trial has converted (spec §5.2a), the stored amount otherwise.
+    public func billingAmountCents(asOf today: CalendarDay) -> Int {
+        guard isConvertedTrial(asOf: today), let trial else { return amountCents }
+        return trial.convertsToAmountCents
+    }
+}
+
+// MARK: - Codable
+
+extension Subscription: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, vendorURL, category, status, amountCents, currencyCode
+        case cycle, cycleStartDay, reminderLeadDays, sameDayReminder, pauseEndsOn
+        case trial, paymentMethodID, cancellationURL, cancellationNotes
+        case lastUsedDate, notes, createdAt, updatedAt, deletedAt
+    }
+
+    // Hand-written so decoding routes through the §5.2b invariant instead of
+    // assigning stored properties directly, which is what a synthesized decoder does.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let status = try container.decode(SubscriptionStatus.self, forKey: .status)
+        let trial = try container.decodeIfPresent(TrialTerm.self, forKey: .trial)
+        guard status != .trial || trial != nil else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "A .trial subscription must have a TrialTerm (spec §5.2b)"
+            ))
+        }
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            vendorURL: try container.decodeIfPresent(URL.self, forKey: .vendorURL),
+            category: try container.decode(Category.self, forKey: .category),
+            status: status,
+            amountCents: try container.decode(Int.self, forKey: .amountCents),
+            currencyCode: try container.decode(String.self, forKey: .currencyCode),
+            cycle: try container.decode(BillingCycle.self, forKey: .cycle),
+            cycleStartDay: try container.decode(CalendarDay.self, forKey: .cycleStartDay),
+            reminderLeadDays: try container.decode(Int.self, forKey: .reminderLeadDays),
+            sameDayReminder: try container.decode(Bool.self, forKey: .sameDayReminder),
+            pauseEndsOn: try container.decodeIfPresent(CalendarDay.self, forKey: .pauseEndsOn),
+            trial: trial,
+            paymentMethodID: try container.decodeIfPresent(UUID.self, forKey: .paymentMethodID),
+            cancellationURL: try container.decodeIfPresent(URL.self, forKey: .cancellationURL),
+            cancellationNotes: try container.decodeIfPresent(String.self, forKey: .cancellationNotes),
+            lastUsedDate: try container.decodeIfPresent(CalendarDay.self, forKey: .lastUsedDate),
+            notes: try container.decodeIfPresent(String.self, forKey: .notes),
+            createdAt: try container.decode(Date.self, forKey: .createdAt),
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt),
+            deletedAt: try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(vendorURL, forKey: .vendorURL)
+        try container.encode(category, forKey: .category)
+        try container.encode(status, forKey: .status)
+        try container.encode(amountCents, forKey: .amountCents)
+        try container.encode(currencyCode, forKey: .currencyCode)
+        try container.encode(cycle, forKey: .cycle)
+        try container.encode(cycleStartDay, forKey: .cycleStartDay)
+        try container.encode(reminderLeadDays, forKey: .reminderLeadDays)
+        try container.encode(sameDayReminder, forKey: .sameDayReminder)
+        try container.encodeIfPresent(pauseEndsOn, forKey: .pauseEndsOn)
+        try container.encodeIfPresent(trial, forKey: .trial)
+        try container.encodeIfPresent(paymentMethodID, forKey: .paymentMethodID)
+        try container.encodeIfPresent(cancellationURL, forKey: .cancellationURL)
+        try container.encodeIfPresent(cancellationNotes, forKey: .cancellationNotes)
+        try container.encodeIfPresent(lastUsedDate, forKey: .lastUsedDate)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
+    }
 }

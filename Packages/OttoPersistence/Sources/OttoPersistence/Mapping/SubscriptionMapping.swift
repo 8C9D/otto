@@ -16,6 +16,14 @@ extension OttoSchemaV1.StoredSubscription {
             domainTrial = try trial.toDomain()
         }
 
+        // Spec §5.2b: a .trial subscription without a live trial term is an invariant
+        // violation, refused here - loudly, before the domain's own construction
+        // precondition could trip on it. Wave 3 had this state silently no-op'ing in
+        // three separate places; now it cannot enter the domain at all.
+        if status == SubscriptionStatus.trial.rawValue && domainTrial == nil {
+            throw MappingError.missingField(entity: entity, field: "trial (required while status is .trial)")
+        }
+
         return Subscription(
             id: try require(id, entity: entity, field: "id"),
             name: try require(name, entity: entity, field: "name"),

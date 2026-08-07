@@ -96,9 +96,11 @@ struct TodayEntryRow: View {
 
     private var amountText: String? {
         switch entry.reason {
-        case .upcomingCharge(let amountCents), .trialConverts(let amountCents):
+        case .upcomingCharge(let amountCents), .trialConverts(let amountCents),
+             .trialConverted(let amountCents):
             currencyText(cents: amountCents, currencyCode: entry.subscription.currencyCode)
-        case .trialActionNeeded, .verificationDue, .verificationFailed, .pauseResumes, .verificationCheck:
+        case .trialActionNeeded, .verificationDue, .verificationFailed, .needsReview,
+             .pauseResumes, .verificationCheck:
             nil
         }
     }
@@ -108,10 +110,16 @@ struct TodayEntryRow: View {
         return switch entry.reason {
         case .trialActionNeeded:
             String(localized: "Trial - cancel by \(date)")
+        case .trialConverted:
+            // A statement of fact, not a request to act (spec §5.2a): the trial
+            // converted and money is moving.
+            String(localized: "Trial converted \(date) - you're now being charged")
         case .verificationDue:
             String(localized: "Cancelled - check that the charges stopped")
         case .verificationFailed:
             String(localized: "Still charging after cancellation")
+        case .needsReview:
+            String(localized: "Marked cancelled, but nothing is watching it - review this")
         case .upcomingCharge:
             String(localized: "Charges \(date)")
         case .trialConverts:
@@ -126,8 +134,10 @@ struct TodayEntryRow: View {
     private var symbolName: String {
         switch entry.reason {
         case .trialActionNeeded: "hourglass"
+        case .trialConverted: "dollarsign.circle"
         case .verificationDue: "questionmark.circle"
         case .verificationFailed: "exclamationmark.triangle"
+        case .needsReview: "exclamationmark.triangle"
         case .upcomingCharge: "calendar"
         case .trialConverts: "hourglass"
         case .pauseResumes: "play.circle"

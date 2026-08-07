@@ -13,6 +13,9 @@ extension OttoSchemaV1 {
         /// yyyymmdd - required in the domain (spec §5.4, v1.1).
         var nextChargeDateIfNotCancelled: Int?
         var verificationState: String?
+        /// Consecutive unanswered checks (spec §5.4, added v1.3). Optional like every
+        /// stored field; mapping reads nil as 0, so pre-v1.3 rows need no migration.
+        var unansweredCheckCount: Int?
         var verifiedAt: Date?
         var evidenceNote: String?
         var createdAt: Date?

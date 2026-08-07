@@ -39,20 +39,24 @@ extension OttoStore: BillingEventRepository {
             return []
         }
 
-        // Which charge dates a status expects (spec §5.3): active expects its whole
-        // cycle sequence; a trial expects exactly one - the conversion charge, the
-        // charge this app exists to catch; paused generates no rows (spec §5.1);
-        // cancellation states are watched by verification rather than expectation;
-        // archived is terminal.
+        // Which charge dates the EFFECTIVE status expects (spec §5.2a): a converted
+        // trial is an active subscription anchored at its conversion date, whether
+        // or not any flow persisted the flip - the six-weeks-in-a-drawer trial still
+        // materializes its charges. An unconverted trial expects exactly one charge,
+        // the conversion; paused generates no rows (spec §5.1); cancellation states
+        // are watched by verification rather than expectation; archived is terminal.
         let chargeDates: [(day: CalendarDay, amountCents: Int)]
-        switch subscription.status {
+        switch subscription.effectiveStatus(asOf: today) {
         case .active:
             chargeDates = activeChargeDates(
-                for: subscription, from: today, through: today.adding(days: horizonDays + maxReminderLeadDays)
+                anchor: subscription.billingAnchor(asOf: today),
+                amountCents: subscription.billingAmountCents(asOf: today),
+                cycle: subscription.cycle,
+                from: today,
+                through: today.adding(days: horizonDays + maxReminderLeadDays)
             )
         case .trial:
-            // A trial subscription with no trial term cannot place its conversion
-            // charge; the reminder planner treats that state the same way.
+            // §5.2b guarantees the term exists; the guard keeps this function total.
             guard let trial = subscription.trial else { return [] }
             let window = today...today.adding(days: horizonDays + maxReminderLeadDays)
             chargeDates = window.contains(trial.conversionDate)
@@ -67,10 +71,15 @@ extension OttoStore: BillingEventRepository {
             throw RepositoryError.subscriptionNotFound(subscription.id)
         }
 
-        // Dedup against every existing row INCLUDING tombstones: a soft-deleted row
-        // was deliberately removed, and re-materializing it would resurrect it.
+        // Dedup against live rows and non-upcoming tombstones. A tombstoned
+        // NON-upcoming row was deliberate history removal and must not resurrect;
+        // a tombstoned .upcoming row is a §5.3 schedule-change invalidation
+        // artifact, and the new sequence's rows are new records, not resurrections -
+        // so it must not block the date it happens to share.
         let existingDates = Set(
-            try storedEvents(subscriptionID: subscription.id).compactMap(\.expectedDate)
+            try storedEvents(subscriptionID: subscription.id)
+                .filter { $0.deletedAt == nil || $0.state != BillingEvent.State.upcoming.rawValue }
+                .compactMap(\.expectedDate)
         )
 
         var created: [BillingEvent] = []
@@ -94,24 +103,88 @@ extension OttoStore: BillingEventRepository {
         return created
     }
 
+    public func invalidateOutdatedUpcomingEvents(
+        for subscription: Subscription,
+        asOf today: CalendarDay,
+        at instant: Date
+    ) async throws -> [BillingEvent] {
+        // Spec §5.3 (v1.3): a changed anchor, cycle, or amount changes the sequence,
+        // and .upcoming rows for the old sequence are phantom charges on dates that
+        // will never happen. Soft-delete every live .upcoming row that no longer
+        // matches the effective sequence; touch NOTHING in any other state - a
+        // confirmed charge is history, and history does not change because a
+        // schedule did. Invalidated rows are tombstoned, never resurrected; the new
+        // sequence's rows are new records (materializeEvents' dedup ignores
+        // tombstoned .upcoming rows for exactly this reason).
+        let upcomingRaw = BillingEvent.State.upcoming.rawValue
+        let candidates = try storedEvents(subscriptionID: subscription.id)
+            .filter { $0.deletedAt == nil && $0.state == upcomingRaw }
+
+        var invalidated: [BillingEvent] = []
+        for record in candidates {
+            guard let stored = record.expectedDate,
+                  let day = CalendarDay(yyyymmdd: stored),
+                  let amount = record.expectedAmountCents
+            else { continue }
+            if matchesExpectedSequence(day: day, amountCents: amount, of: subscription, asOf: today) {
+                continue
+            }
+            record.deletedAt = instant
+            record.updatedAt = instant
+            if let event = try? record.toDomain() {
+                invalidated.append(event)
+            }
+        }
+        if !invalidated.isEmpty {
+            try modelContext.save()
+        }
+        return invalidated.sorted { ($0.expectedDate, $0.id.uuidString) < ($1.expectedDate, $1.id.uuidString) }
+    }
+
+    /// Whether one (date, amount) pair is a charge the subscription's EFFECTIVE
+    /// schedule (spec §5.2a) still expects.
+    private func matchesExpectedSequence(
+        day: CalendarDay,
+        amountCents: Int,
+        of subscription: Subscription,
+        asOf today: CalendarDay
+    ) -> Bool {
+        switch subscription.effectiveStatus(asOf: today) {
+        case .active:
+            return amountCents == subscription.billingAmountCents(asOf: today)
+                && isBillingOccurrence(
+                    day, anchor: subscription.billingAnchor(asOf: today), cycle: subscription.cycle
+                )
+        case .trial:
+            guard let trial = subscription.trial else { return false }
+            return day == trial.conversionDate && amountCents == trial.convertsToAmountCents
+        case .paused, .cancellationPending, .cancelled, .archived:
+            // A status change is not a schedule change; §5.3's rule is scoped to
+            // anchor/cycle/amount edits, so rows are left for the owning flow.
+            return true
+        }
+    }
+
     /// Every charge date in `[today, windowEnd]`, each computed directly from the
     /// anchor by the date engine - never by adding an interval to a previous date
     /// (spec §4.2 rule 3). The window includes today itself: today's charge is
-    /// still worth confirming.
+    /// still worth confirming. The anchor and amount are the caller's EFFECTIVE
+    /// values (spec §5.2a), so a converted trial's sequence runs from its
+    /// conversion date at the converted price.
     private func activeChargeDates(
-        for subscription: Subscription,
+        anchor: CalendarDay,
+        amountCents: Int,
+        cycle: BillingCycle,
         from today: CalendarDay,
         through windowEnd: CalendarDay
     ) -> [(day: CalendarDay, amountCents: Int)] {
         var dates: [(day: CalendarDay, amountCents: Int)] = []
         var cursor = today.adding(days: -1)
         while true {
-            let chargeDay = nextBillingDate(
-                after: cursor, anchor: subscription.cycleStartDay, cycle: subscription.cycle
-            )
+            let chargeDay = nextBillingDate(after: cursor, anchor: anchor, cycle: cycle)
             guard chargeDay <= windowEnd else { break }
             cursor = chargeDay
-            dates.append((chargeDay, subscription.amountCents))
+            dates.append((chargeDay, amountCents))
         }
         return dates
     }

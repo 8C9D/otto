@@ -12,7 +12,6 @@ extension OttoSchemaV1.StoredPriceChange {
             effectiveDate: try CalendarDay.stored(effectiveDate, entity: entity, field: "effectiveDate"),
             oldAmountCents: try require(oldAmountCents, entity: entity, field: "oldAmountCents"),
             newAmountCents: try require(newAmountCents, entity: entity, field: "newAmountCents"),
-            recordedAt: try require(recordedAt, entity: entity, field: "recordedAt"),
             source: try decodeRaw(source, entity: entity, field: "source"),
             note: note,
             createdAt: try require(createdAt, entity: entity, field: "createdAt"),
@@ -27,7 +26,6 @@ extension OttoSchemaV1.StoredPriceChange {
         effectiveDate = domain.effectiveDate.yyyymmdd
         oldAmountCents = domain.oldAmountCents
         newAmountCents = domain.newAmountCents
-        recordedAt = domain.recordedAt
         source = domain.source.rawValue
         note = domain.note
         createdAt = domain.createdAt

@@ -109,9 +109,12 @@ struct RoundTripTests {
         let (store, _) = try makeStore()
         let subscription = try makeSubscription(status: .cancellationPending, cycleStartDay: try day(2026, 5, 20))
         try await store.save(subscription)
+        // Non-default v1.3 fields included, so the round-trip proves they persist.
         let original = try makeCancellationRecord(
             subscriptionID: subscription.id,
             nextChargeDateIfNotCancelled: try day(2026, 9, 20),
+            verificationState: .needsManualReview,
+            unansweredCheckCount: 3,
             evidenceNote: "confirmation #12345"
         )
 

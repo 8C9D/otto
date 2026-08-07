@@ -44,6 +44,6 @@ extension OttoStore: PriceChangeRepository {
             records = liveOnly(records, deletedAt: \.deletedAt)
         }
         return mapSkippingFailures(records) { try $0.toDomain() }
-            .sorted { ($0.effectiveDate, $0.recordedAt) < ($1.effectiveDate, $1.recordedAt) }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
     }
 }

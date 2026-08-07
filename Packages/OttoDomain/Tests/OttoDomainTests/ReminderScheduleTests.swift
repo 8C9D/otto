@@ -47,16 +47,29 @@ struct ReminderScheduleTests {
         #expect(planned.allSatisfy { $0.priority == .trial })
     }
 
-    @Test("a trial whose cancel-by day has passed gets no reminders")
-    func expiredTrial() throws {
+    @Test("a converted trial plans like the active subscription it now is, anchored at conversion (spec §5.2a)")
+    func convertedTrialPlansAsActive() throws {
         let start = try day(2026, 8, 6)
         let trial = try makeTrialTerm(startDate: start, lengthDays: 7)
         let sub = try makeSubscription(
             status: .trial, cycle: .monthly, cycleStartDay: start, reminderLeadDays: 5, trial: trial
         )
 
+        // Conversion was Aug 13; today is a week later and nothing ever persisted a
+        // status flip. The paid sequence runs from the conversion date regardless:
+        // renewals on the 13th, warned 5 days ahead, plus the 90-day usage check-in
+        // counted from conversion.
         let today = try day(2026, 8, 20)
-        #expect(reminderSchedule(for: sub, from: today, horizonDays: 90).isEmpty)
+        let planned = reminderSchedule(for: sub, from: today, horizonDays: 90)
+
+        let expected = Set([
+            PlannedReminder(subscriptionID: sub.id, day: try day(2026, 9, 8), kind: .renewal),
+            PlannedReminder(subscriptionID: sub.id, day: try day(2026, 10, 8), kind: .renewal),
+            PlannedReminder(subscriptionID: sub.id, day: try day(2026, 11, 8), kind: .renewal),
+            PlannedReminder(subscriptionID: sub.id, day: try day(2026, 11, 11), kind: .usageCheckIn)
+        ])
+        #expect(Set(planned) == expected)
+        #expect(planned.contains { $0.priority == .trial } == false)
     }
 
     @Test("a paused subscription gets only a resume warning ahead of pauseEndsOn")
@@ -144,6 +157,40 @@ struct ReminderScheduleTests {
             updatedAt: Date(timeIntervalSince1970: 0)
         )
         let today = try day(2026, 8, 6)
+        #expect(reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90).isEmpty)
+    }
+
+    @Test("three unanswered checks stop verification notifications - the Today card escalates instead (spec §5.4)")
+    func threeStrikesStopsNotifications() throws {
+        let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
+        let record = CancellationRecord(
+            id: try fixtureUUID(600),
+            subscriptionID: sub.id,
+            markedCancelledAt: Date(timeIntervalSince1970: 0),
+            nextChargeDateIfNotCancelled: try day(2026, 8, 20),
+            verificationState: .pending,
+            unansweredCheckCount: 3,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let today = try day(2026, 9, 6)
+        #expect(reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90).isEmpty)
+    }
+
+    @Test("a needs-manual-review record generates nothing either")
+    func needsManualReviewGeneratesNothing() throws {
+        let sub = try makeSubscription(status: .cancelled, cycle: .monthly, cycleStartDay: try day(2026, 5, 20))
+        let record = CancellationRecord(
+            id: try fixtureUUID(600),
+            subscriptionID: sub.id,
+            markedCancelledAt: Date(timeIntervalSince1970: 0),
+            nextChargeDateIfNotCancelled: try day(2026, 8, 20),
+            verificationState: .needsManualReview,
+            unansweredCheckCount: 3,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let today = try day(2026, 9, 6)
         #expect(reminderSchedule(for: sub, cancellation: record, from: today, horizonDays: 90).isEmpty)
     }
 

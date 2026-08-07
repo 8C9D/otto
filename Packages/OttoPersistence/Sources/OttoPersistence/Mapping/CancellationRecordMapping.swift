@@ -14,6 +14,8 @@ extension OttoSchemaV1.StoredCancellationRecord {
                 nextChargeDateIfNotCancelled, entity: entity, field: "nextChargeDateIfNotCancelled"
             ),
             verificationState: try decodeRaw(verificationState, entity: entity, field: "verificationState"),
+            // Written before the field existed means never rolled forward: 0.
+            unansweredCheckCount: unansweredCheckCount ?? 0,
             verifiedAt: verifiedAt,
             evidenceNote: evidenceNote,
             createdAt: try require(createdAt, entity: entity, field: "createdAt"),
@@ -28,6 +30,7 @@ extension OttoSchemaV1.StoredCancellationRecord {
         markedCancelledAt = domain.markedCancelledAt
         nextChargeDateIfNotCancelled = domain.nextChargeDateIfNotCancelled.yyyymmdd
         verificationState = domain.verificationState.rawValue
+        unansweredCheckCount = domain.unansweredCheckCount
         verifiedAt = domain.verifiedAt
         evidenceNote = domain.evidenceNote
         createdAt = domain.createdAt

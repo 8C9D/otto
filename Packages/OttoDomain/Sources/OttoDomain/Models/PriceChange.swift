@@ -17,14 +17,12 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
     public var effectiveDate: CalendarDay
     public var oldAmountCents: Int
     public var newAmountCents: Int
-    public var recordedAt: Date
     public var source: Source
     public var note: String?
 
     /// Audit instants (spec §5.0), injected by callers - the domain never reads a
-    /// clock. `recordedAt` stays separate: it is the domain fact "when the change
-    /// was noticed", while `createdAt` is the sync bookkeeping fact "when the row
-    /// was written", and an import can legitimately split the two.
+    /// clock. `recordedAt` was dropped in spec v1.3: it duplicated `createdAt`, and
+    /// two fields meaning almost the same thing is how they drift apart.
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -37,7 +35,6 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
         effectiveDate: CalendarDay,
         oldAmountCents: Int,
         newAmountCents: Int,
-        recordedAt: Date,
         source: Source,
         note: String? = nil,
         createdAt: Date,
@@ -49,7 +46,6 @@ public struct PriceChange: Identifiable, Hashable, Codable, Sendable {
         self.effectiveDate = effectiveDate
         self.oldAmountCents = oldAmountCents
         self.newAmountCents = newAmountCents
-        self.recordedAt = recordedAt
         self.source = source
         self.note = note
         self.createdAt = createdAt

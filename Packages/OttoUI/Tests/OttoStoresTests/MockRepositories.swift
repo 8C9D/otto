@@ -128,6 +128,15 @@ actor MockBillingEventRepository: BillingEventRepository {
         try throwPrimedFailure()
         return []
     }
+
+    func invalidateOutdatedUpcomingEvents(
+        for subscription: Subscription,
+        asOf today: CalendarDay,
+        at instant: Date
+    ) async throws -> [BillingEvent] {
+        try throwPrimedFailure()
+        return []
+    }
 }
 
 actor MockPriceChangeRepository: PriceChangeRepository {
@@ -153,14 +162,14 @@ actor MockPriceChangeRepository: PriceChangeRepository {
         try throwPrimedFailure()
         return changes.values
             .filter { $0.subscriptionID == subscriptionID && $0.deletedAt == nil }
-            .sorted { ($0.effectiveDate, $0.recordedAt) < ($1.effectiveDate, $1.recordedAt) }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
     }
 
     func historyIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [PriceChange] {
         try throwPrimedFailure()
         return changes.values
             .filter { $0.subscriptionID == subscriptionID }
-            .sorted { ($0.effectiveDate, $0.recordedAt) < ($1.effectiveDate, $1.recordedAt) }
+            .sorted { ($0.effectiveDate, $0.createdAt) < ($1.effectiveDate, $1.createdAt) }
     }
 }
 
