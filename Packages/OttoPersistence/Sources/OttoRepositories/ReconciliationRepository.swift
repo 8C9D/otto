@@ -8,14 +8,16 @@ public struct ReconciliationSummary: Hashable, Sendable {
     /// earliest-created row survived with acknowledgement and confirmation
     /// state folded in, the twins were tombstoned.
     public var mergedLedgerGroups = 0
-    /// Rival open cancellation episodes closed as `.superseded`.
-    public var closedCancellationEpisodes = 0
+    /// Rival open cancellation groups merged (spec §4a principle 2a): the
+    /// earliest episode survived with the losers' notes and progress folded
+    /// in, the losers were tombstoned.
+    public var mergedCancellationGroups = 0
     /// Subscriptions whose §4a read repairs were written back to the store.
     public var persistedReadRepairs = 0
 
-    public init(mergedLedgerGroups: Int = 0, closedCancellationEpisodes: Int = 0, persistedReadRepairs: Int = 0) {
+    public init(mergedLedgerGroups: Int = 0, mergedCancellationGroups: Int = 0, persistedReadRepairs: Int = 0) {
         self.mergedLedgerGroups = mergedLedgerGroups
-        self.closedCancellationEpisodes = closedCancellationEpisodes
+        self.mergedCancellationGroups = mergedCancellationGroups
         self.persistedReadRepairs = persistedReadRepairs
     }
 }

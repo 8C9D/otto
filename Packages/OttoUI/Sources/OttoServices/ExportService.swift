@@ -66,7 +66,7 @@ public actor ExportService {
     public func performImport(from url: URL, strategy: ImportStrategy, now: Date) async throws -> ImportSummary {
         let incoming = try importedSnapshot(from: readSecurityScoped(url))
         let current = try await transfer.completeSnapshot()
-        let resolved = try resolveImport(current: current, incoming: incoming, strategy: strategy)
+        let resolved = try resolveImport(current: current, incoming: incoming, strategy: strategy, at: now)
         try await transfer.restore(resolved.snapshot, at: now)
         // A replace resets this device's ledger progress; a merge leaves it
         // untouched (spec §5.3, Wave 6B-Prep - the watermark lives only in the

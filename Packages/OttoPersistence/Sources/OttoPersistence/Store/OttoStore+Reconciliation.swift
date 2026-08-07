@@ -13,7 +13,7 @@ extension OttoStore: ReconciliationRepository {
     public func reconcile(at instant: Date) async throws -> ReconciliationSummary {
         var summary = ReconciliationSummary()
         try mergeDuplicateLedgerRows(at: instant, into: &summary)
-        try closeRivalCancellationEpisodes(into: &summary)
+        try mergeRivalCancellationEpisodes(at: instant, into: &summary)
         try persistReadRepairs(into: &summary)
         if modelContext.hasChanges {
             try modelContext.save()
@@ -57,10 +57,15 @@ extension OttoStore: ReconciliationRepository {
         }
     }
 
-    /// Two open live episodes on one subscription: the shared §5.3a rule (one
-    /// rule with the import merge) keeps the newest open and returns the rest
-    /// closed as `.superseded`; this pass writes them back.
-    private func closeRivalCancellationEpisodes(into summary: inout ReconciliationSummary) throws {
+    /// Two open live episodes on one subscription: the shared §4a-2a rule (one
+    /// rule with the import merge, one shape with the ledger merge) keeps the
+    /// earliest and folds the losers' notes and progress in; this pass writes
+    /// the merge and tombstones the losers at `instant`. A loser's own note
+    /// records stay under its tombstone as history - the winner carries the
+    /// live copies.
+    private func mergeRivalCancellationEpisodes(
+        at instant: Date, into summary: inout ReconciliationSummary
+    ) throws {
         let records = try modelContext.fetch(
             FetchDescriptor<StoredCancellationEpisode>(predicate: #Predicate { $0.deletedAt == nil })
         )
@@ -73,11 +78,19 @@ extension OttoStore: ReconciliationRepository {
             uniquingKeysWith: { first, _ in first }
         )
         for rivals in openBySubscription.values {
-            for closed in CancellationEpisode.closingSupersededRivals(among: rivals) {
-                guard let record = recordsByID[closed.id] else { continue }
-                record.update(from: closed)
-                summary.closedCancellationEpisodes += 1
+            guard let merged = CancellationEpisode.reconcilingOpenRivals(among: rivals) else { continue }
+            if let winnerRecord = recordsByID[merged.winner.id],
+               (try? winnerRecord.toDomain()) != merged.winner {
+                var stamped = merged.winner
+                stamped.updatedAt = instant
+                winnerRecord.update(from: stamped)
             }
+            for loserID in merged.loserIDs {
+                guard let loser = recordsByID[loserID] else { continue }
+                loser.deletedAt = instant
+                loser.updatedAt = instant
+            }
+            summary.mergedCancellationGroups += 1
         }
     }
 

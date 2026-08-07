@@ -142,7 +142,10 @@ struct ExportLegacyImportTests {
 
         // And merging the second import over the first changes nothing: same
         // ids, same updatedAt, tie keeps existing.
-        let resolved = try resolveImport(current: first, incoming: second, strategy: .merge)
+        let resolved = try resolveImport(
+            current: first, incoming: second, strategy: .merge,
+            at: Date(timeIntervalSinceReferenceDate: 900)
+        )
         #expect(resolved.snapshot == first)
     }
 

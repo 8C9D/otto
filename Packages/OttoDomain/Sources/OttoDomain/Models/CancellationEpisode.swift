@@ -102,9 +102,11 @@ public struct CancellationEpisode: Identifiable, Hashable, Sendable {
         /// The user un-cancelled: the cancellation was a mistake, or was never
         /// completed with the vendor. The episode is history, never deleted.
         case abandoned
-        /// Closed by an import merge that found a later episode already open
-        /// for the same subscription (two devices cancelled independently).
-        /// Recorded as what it is rather than dressed up as a user action.
+        /// Closed by the pre-v2.1 convergence rule, which kept the newest
+        /// rival open and closed the rest. §4a principle 2a (v2.1) merges
+        /// rivals into the earliest and tombstones the losers instead, so
+        /// nothing writes this anymore - but stored and exported episodes can
+        /// carry it forever, so the case stays (spec §5.6's raw-string rule).
         case superseded
     }
 

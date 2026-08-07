@@ -73,33 +73,47 @@ extension SerializedPersistenceTests {
             #expect(tombstoned.deletedAt == instant)
         }
 
-        @Test("rival open cancellation episodes: the newest stays open, the older closes as .superseded")
-        func rivalCancellationsConverge() async throws {
+        @Test(
+            "rival open cancellation episodes merge from both arrival orders: the earliest survives, the newest is tombstoned",
+            arguments: [[601, 602], [602, 601]]
+        )
+        func rivalCancellationsConverge(order: [Int]) async throws {
             let (store, _) = try makeStore()
             let subscription = try makeSubscription(
                 status: .cancellationPending, cycleStartDay: try day(2026, 1, 15)
             )
             try await store.save(subscription)
-            let older = try makeCancellationEpisode(
-                index: 601, subscriptionID: subscription.id,
-                nextChargeDateIfNotCancelled: try day(2026, 9, 15)
-            )
             var newer = try makeCancellationEpisode(
                 index: 602, subscriptionID: subscription.id,
-                nextChargeDateIfNotCancelled: try day(2026, 9, 15)
+                nextChargeDateIfNotCancelled: try day(2026, 9, 15),
+                evidenceNote: "emailed support"
             )
             newer.markedCancelledAt = Date(timeIntervalSince1970: 7_000)
-            try await store.save(older)
-            try await store.save(newer)
+            let rows = [
+                601: try makeCancellationEpisode(
+                    index: 601, subscriptionID: subscription.id,
+                    nextChargeDateIfNotCancelled: try day(2026, 9, 15)
+                ),
+                602: newer
+            ]
+            for index in order {
+                try await store.save(try #require(rows[index]))
+            }
 
             let summary = try await store.reconcile(at: instant)
 
-            #expect(summary.closedCancellationEpisodes == 1)
-            #expect(try await store.openEpisode(forSubscription: subscription.id)?.id == newer.id)
-            let episodes = try await store.episodes(forSubscription: subscription.id)
-            let closed = try #require(episodes.first { $0.id == older.id })
-            #expect(closed.outcome == .superseded)
-            #expect(closed.endedAt == newer.markedCancelledAt)
+            #expect(summary.mergedCancellationGroups == 1)
+            // The earliest cancellation is when the user actually acted; it
+            // keeps the watch, wearing the tombstoned rival's evidence.
+            let survivor = try #require(try await store.openEpisode(forSubscription: subscription.id))
+            #expect(survivor.id == (try fixtureUUID(601)))
+            #expect(survivor.liveEvidenceNotes.map(\.text) == ["emailed support"])
+            #expect(survivor.updatedAt == instant)
+            let live = try await store.episodes(forSubscription: subscription.id)
+            #expect(!live.contains { $0.id == newer.id })
+            let all = try await store.episodesIncludingDeleted(forSubscription: subscription.id)
+            let tombstoned = try #require(all.first { $0.id == newer.id })
+            #expect(tombstoned.deletedAt == instant)
         }
 
         @Test("the pass persists §4a read repairs without waiting for a user save")

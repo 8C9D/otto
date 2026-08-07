@@ -46,25 +46,63 @@ extension BillingEvent {
     }
 }
 
+/// What merging one subscription's rival OPEN episodes decided: the surviving
+/// episode (with the losers' notes and progress merged in) and the episodes to
+/// tombstone - the same shape as the ledger merge, because it is the same
+/// situation: two devices recorded one real-world act.
+public struct CancellationRivalReconciliation: Hashable, Sendable {
+    public let winner: CancellationEpisode
+    public let loserIDs: [UUID]
+}
+
 extension CancellationEpisode {
-    /// The §5.3a convergence for multiple OPEN live episodes on one
-    /// subscription - each side cancelled independently. The newest
-    /// `markedCancelledAt` (tie: id) stays open; the rest come back CLOSED
-    /// with `.superseded` at the winner's start - recorded as what happened
-    /// rather than deleted. One rule, shared by the import merge and the
-    /// post-sync reconciliation pass, so the two paths cannot drift.
-    public static func closingSupersededRivals(among open: [CancellationEpisode]) -> [CancellationEpisode] {
-        guard open.count > 1 else { return [] }
+    /// The convergence for multiple OPEN live episodes on one subscription -
+    /// each side cancelled independently. One shape with the ledger rule and
+    /// the pause repair (spec §4a principle 2a, unified in v2.1): the earliest
+    /// `markedCancelledAt` (tie: id) survives, because the earliest
+    /// cancellation is when the user actually acted, and its earlier check
+    /// date errs toward watching sooner, never too late. The losers' evidence
+    /// notes and verification progress merge into it; the losers themselves
+    /// are tombstoned by the applying paths (the import merge and the
+    /// post-sync reconciliation pass, which share this rule so they cannot
+    /// drift). A loser's own note copies ride along under its tombstone as
+    /// communicable history; the winner's copies are the live ones.
+    /// Nil unless there are at least two rivals.
+    public static func reconcilingOpenRivals(among open: [CancellationEpisode]) -> CancellationRivalReconciliation? {
+        guard open.count > 1 else { return nil }
         let ordered = open.sorted {
-            ($0.markedCancelledAt, $0.id.uuidString) > ($1.markedCancelledAt, $1.id.uuidString)
+            ($0.markedCancelledAt, $0.id.uuidString) < ($1.markedCancelledAt, $1.id.uuidString)
         }
-        guard let winner = ordered.first else { return [] }
-        return ordered.dropFirst().map { loser in
-            var closed = loser
-            closed.endedAt = winner.markedCancelledAt
-            closed.outcome = .superseded
-            closed.updatedAt = winner.markedCancelledAt
-            return closed
+        guard var winner = ordered.first else { return nil }
+        let losers = ordered.dropFirst()
+
+        var knownNoteIDs = Set(winner.evidenceNotes.map(\.id))
+        for loser in losers {
+            for note in loser.evidenceNotes where knownNoteIDs.insert(note.id).inserted {
+                winner.evidenceNotes.append(note)
+            }
         }
+        // A rival that already observed the watch failing donates the
+        // observation - un-observing a charge would be data loss. Adopted only
+        // onto a `.pending` winner: `.awaitingResumeDate` cannot take a state
+        // that requires a check date, and a winner past `.pending` made its
+        // own observation, which a twin's does not overwrite.
+        if winner.verificationState == .pending,
+           let progressed = losers.first(where: {
+               $0.verificationState == .stillCharging || $0.verificationState == .needsManualReview
+           }) {
+            winner.verificationState = progressed.verificationState
+        }
+        winner.unansweredCheckCount = max(
+            winner.unansweredCheckCount, losers.map(\.unansweredCheckCount).max() ?? 0
+        )
+        // The two nil-means-legacy fields heal from any twin that recorded them.
+        if winner.statusAtStart == nil {
+            winner.statusAtStart = losers.compactMap(\.statusAtStart).first
+        }
+        if winner.expectedChargeAmountCents == nil {
+            winner.expectedChargeAmountCents = losers.compactMap(\.expectedChargeAmountCents).first
+        }
+        return CancellationRivalReconciliation(winner: winner, loserIDs: losers.map(\.id))
     }
 }

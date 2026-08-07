@@ -99,7 +99,8 @@ extension SerializedPersistenceTests {
             let resolved = try resolveImport(
                 current: try await source.completeSnapshot(),
                 incoming: try importedSnapshot(from: file),
-                strategy: .replace
+                strategy: .replace,
+                at: Date(timeIntervalSince1970: 11_000)
             )
             try await source.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
 
@@ -140,7 +141,8 @@ extension SerializedPersistenceTests {
                     let resolved = try resolveImport(
                         current: try await store.completeSnapshot(),
                         incoming: incoming,
-                        strategy: .replace
+                        strategy: .replace,
+                        at: Date(timeIntervalSince1970: 11_000)
                     )
                     try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
                 }
@@ -187,7 +189,8 @@ extension SerializedPersistenceTests {
             let resolved = try resolveImport(
                 current: try await store.completeSnapshot(),
                 incoming: try importedSnapshot(from: file),
-                strategy: .merge
+                strategy: .merge,
+                at: Date(timeIntervalSince1970: 11_000)
             )
             try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
 

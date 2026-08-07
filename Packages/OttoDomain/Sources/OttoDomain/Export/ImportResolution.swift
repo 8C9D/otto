@@ -20,8 +20,8 @@ public struct ImportCounts: Hashable, Sendable {
     /// Records from the file that did not exist in the database.
     public var added = 0
     /// Existing records overwritten by a newer copy from the file - including
-    /// open cancellation episodes a merge closed as `.superseded` because a
-    /// newer open one claimed the same subscription (spec §5.3a).
+    /// rival open cancellation episodes a merge reconciled (spec §4a principle
+    /// 2a): the earliest carrying the merged state, the rest tombstoned.
     public var updated = 0
     /// File records skipped because the database copy was newer or equal.
     public var skippedOlder = 0
@@ -54,19 +54,21 @@ public struct ResolvedImport: Hashable, Sendable {
 }
 
 /// Resolves an imported snapshot against the current database into the exact
-/// state to persist. Pure - every decision is here and testable; the store only
-/// applies the result.
+/// state to persist. Every decision is here and testable; the store only
+/// applies the result. `instant` stamps only the audit fields of records the
+/// §4a rival-cancellation merge writes - every choice of which record wins is
+/// a pure function of the record data.
 ///
 /// Watermarks: neither the file nor the snapshot carries one (spec §5.3, Wave
 /// 6B-Prep: the watermark lives only in the device store). A merge leaves this
-/// device's ledger progress untouched; a replace resets it (the import flow
-/// calls the device-store reset), because after the database becomes exactly
-/// what the file describes, past observation vouches for rows the file may not
-/// carry.
+/// device's ledger progress untouched; after a replace the import flow orders
+/// the device-store reconstruction from the imported ledger (spec §5.3, v2.1),
+/// because past observation vouches for rows the file may not carry.
 public func resolveImport(
     current: OttoDataSnapshot,
     incoming: OttoDataSnapshot,
-    strategy: ImportStrategy
+    strategy: ImportStrategy,
+    at instant: Date
 ) throws -> ResolvedImport {
     var summary = ImportSummary()
     var resolved = OttoDataSnapshot()
@@ -102,7 +104,7 @@ public func resolveImport(
             current: current.priceChanges, incoming: incoming.priceChanges,
             counts: &summary.priceChanges
         )
-        resolveSingleOpenCancellation(in: &resolved, counts: &summary.cancellationEpisodes)
+        resolveSingleOpenCancellation(in: &resolved, counts: &summary.cancellationEpisodes, at: instant)
     }
 
     try validate(resolved)
@@ -169,23 +171,35 @@ private func replaceCounts<Record: ImportableRecord>(
 
 /// At most one cancellation episode per subscription is OPEN (spec §5.3a). A
 /// merge can legitimately unite two open ones (each side cancelled
-/// independently, different ids): `closingSupersededRivals` - one rule with
-/// the post-sync reconciliation pass - keeps the newest open and closes the
-/// others with `.superseded` at its start instant, recorded as what happened
-/// rather than deleted, and COUNTED as updated so nothing about the outcome
-/// is silent. This is the episode-table win over v1's single slot: the losing
-/// side's cancellation used to be discarded outright; now it stays history.
-private func resolveSingleOpenCancellation(in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts) {
+/// independently, different ids): `reconcilingOpenRivals` - one rule with the
+/// post-sync reconciliation pass, one shape with the ledger merge (spec §4a
+/// principle 2a) - keeps the earliest, folds the losers' notes and progress
+/// into it, and tombstones the losers at `instant`, each write COUNTED as
+/// updated so nothing about the outcome is silent. The tombstone carries a
+/// fresh `updatedAt` so it outranks any still-live copy of the loser under
+/// last-write-wins rather than being resurrected by one.
+private func resolveSingleOpenCancellation(
+    in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts, at instant: Date
+) {
     var openBySubscription: [UUID: [CancellationEpisode]] = [:]
     for episode in snapshot.cancellationEpisodes where episode.isOpen && episode.deletedAt == nil {
         openBySubscription[episode.subscriptionID, default: []].append(episode)
     }
     for (_, rivals) in openBySubscription {
-        for closed in CancellationEpisode.closingSupersededRivals(among: rivals) {
-            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == closed.id }) else {
+        guard let merged = CancellationEpisode.reconcilingOpenRivals(among: rivals) else { continue }
+        if let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == merged.winner.id }),
+           snapshot.cancellationEpisodes[index] != merged.winner {
+            var stamped = merged.winner
+            stamped.updatedAt = instant
+            snapshot.cancellationEpisodes[index] = stamped
+            counts.updated += 1
+        }
+        for loserID in merged.loserIDs {
+            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == loserID }) else {
                 continue
             }
-            snapshot.cancellationEpisodes[index] = closed
+            snapshot.cancellationEpisodes[index].deletedAt = instant
+            snapshot.cancellationEpisodes[index].updatedAt = instant
             counts.updated += 1
         }
     }
