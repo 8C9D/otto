@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v1.3** — revised Aug 7 against Claude Code's Wave 3 report. Waves 0–3 complete and committed (`~/dev/otto`, 156 tests passing).
+**Status:** **v1.4** — revised Aug 7 against Claude Code's Wave 4 report. Waves 0–4 complete and committed (`~/dev/otto`, 203 tests passing).
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -293,6 +293,13 @@ On conversion, the paid sequence takes over: **anchor becomes `conversionDate`, 
 
 Three states are representable in the types but meaningless in the domain. Each was silently no-op'd somewhere in Wave 3 — and **silent no-ops in separate switch arms are how two code paths eventually disagree.** Each is now a declared invariant, enforced at construction and surfaced loudly, never skipped quietly:
 
+**⚠ "Loudly" needs a definition, added in v1.4.** The established read policy is skip-with-log, which is loud *in the console* and invisible *in the UI* — the opposite of how §7.1 treats the cancelled-without-record invariant, and it means an unmappable `.trial` record simply vanishes from the user's view. For a product whose whole promise is that nothing slips past unnoticed, a subscription disappearing silently is the worst available failure.
+
+> **Unmappable records are surfaced as a single aggregate card** in Today's *needs review* — *"2 subscriptions couldn't be read"* — not one card per record.
+
+Aggregate rather than per-record because **Wave 6 will make partially-synced records routine**: CloudKit delivers records mid-sync that are legitimately incomplete for a moment, and a per-record surface would turn normal sync into an alarm. What the count must never do is stay at zero while records are missing. Revisit the threshold in Wave 6, once real sync behaviour is observable rather than guessed at.
+
+
 | Invariant | Why |
 |---|---|
 | A `.trial` subscription **must** have a `TrialTerm` | Without one there is no `conversionDate`, so §5.2a cannot compute anything. Wave 3 found three separate sites no-op'ing on this |
@@ -315,6 +322,7 @@ Every expected charge is a row. This is the backbone of both verification and re
 | `expectedAmountCents` | Int |
 | `state` | `.upcoming` `.confirmedCharged` `.confirmedNotCharged` `.unexpectedCharge` `.skipped` |
 | `userConfirmedAt` | Date? |
+| `acknowledgedAt` | Date? | ⭐ **Added v1.4.** §6.4's *"Keeping it"* and §6.3's *"remainder is cancelled on acknowledgement"* both named a state that did not exist, so neither could actually hold: rescheduling is cancel-all-then-replan, which **replans the silenced reminders right back in the same cycle.** Written by the action handler; the planner skips reminders for acknowledged events. **Must land before Wave 6 while it is still a field addition** |
 | `actualAmountCents` | Int? | if it differed → triggers a price-change prompt |
 
 **When rows are created (specified in v1.1 — previously undefined, and a Wave 2 blocker).** Future billing dates are a **pure function of the anchor and the cycle**, so storing them in advance duplicates derived state and grows the table without bound.
@@ -341,7 +349,18 @@ The charge window is therefore slightly wider than the reminder horizon, by the 
 
 > **On save with a changed anchor, cycle, or amount: soft-delete every `.upcoming` row that no longer matches the new sequence, then re-materialize.**
 
-Rows in any other state are **never** touched — a confirmed charge is history and history does not change because a schedule did. This is consistent with the tombstone-never-resurrected rule: invalidated rows are tombstoned, and the new sequence's rows are new records rather than resurrections.
+Rows in any other state are **never** touched — a confirmed charge is history and history does not change because a schedule did.
+
+**Generalized in v1.4: status transitions invalidate too.** v1.3 scoped this to anchor, cycle, and amount edits, which left a hole — pausing or archiving a subscription leaves its future `.upcoming` rows sitting in the ledger, and the user sees phantom charges in Detail for a subscription that is not going to charge them.
+
+> Invalidation triggers on **any change that alters the expected sequence**, including transitions into `.paused`, `.cancellationPending`, `.cancelled`, and `.archived`. Resuming from `.paused` re-materializes.
+
+**Which tombstones block re-materialization** *(pinned in v1.4)*. Wave 3's dedup blocked re-creation on *any* tombstoned date, which §5.3's "new records rather than resurrections" language quietly overruled. The two kinds of tombstone mean different things:
+
+| Tombstoned row | Blocks re-materialization? |
+|---|---|
+| `.upcoming` | ❌ **No** — it is an invalidation artifact, the byproduct of a schedule change. Blocking on it would prevent the corrected sequence from ever materializing |
+| Any other state | ✅ **Yes** — deliberate removal of history, and re-creating it would resurrect what the user removed |
 
 **The one retrospective creation path.** When a verification reports `.stillCharging`, that charge **did** happen and needs a ledger row — created at that moment with state `.unexpectedCharge`. This is the **only** producer of that state; in v1.1 the enum case existed with nothing able to create it.
 
@@ -389,6 +408,10 @@ Fixed rather than free-form so the rollups mean something — free-form categori
 
 **iOS permits a maximum of 64 pending local notifications per app.** Anything scheduled beyond that is silently dropped. With trials taking three slots each, the ceiling arrives around twenty subscriptions — and the ones dropped are the furthest out, which are the annual renewals you most need warning about. Get this wrong and the app fails in exactly the way it exists to prevent, without any error appearing.
 
+**Snoozes consume the same 64 slots** *(added v1.4 — v1.3's budget model did not contemplate them)*. A snoozed reminder is a pending request like any other. They live in a distinct identifier namespace (`snooze.<origin-kind>`) so that a cancel-all-then-replan cycle does not wipe them, and they are **not** replanned by the scheduler — which means the effective budget for planned reminders is `64 − pendingSnoozes`.
+
+Snoozes rank **above P1**: the user explicitly asked for that one, and honouring an explicit request before an inferred schedule is the right ordering. The consequence — a user who snoozes heavily shrinks their own scheduling horizon — is acceptable and must be reflected in the horizon date Today displays.
+
 **Solution: a rolling horizon plus a deterministic priority budget.**
 
 1. Schedule only within a rolling ~90-day horizon.
@@ -415,6 +438,10 @@ Scheduling is **idempotent**: cancel all pending, recompute, reschedule. Notific
 
 **Catch-up rule (added v1.1 — a real product bug, not a nicety).** If a reminder's computed day is already in the past but its billing date is still in the future, **schedule it immediately** rather than skipping it. Without this, Mode B onboarding silently fails in its most common case: the user adds a subscription because they noticed a charge coming in two days, the default 3-day lead is already past, and **no reminder fires for the exact charge that prompted them to add it.** If the notification hour has not yet passed today, fire at that hour; otherwise fire on the next scheduler run.
 
+**When the lead time is longer than the cycle** *(specified in v1.4)*. A 45-day lead on a monthly subscription puts several lead days in the past simultaneously, and identical `(day, kind)` pairs collide in the deterministic identifier scheme. **Emit exactly one catch-up: the earliest un-warned charge.** More than one is noise about charges the user will be reminded of again anyway.
+
+Separately, this configuration is almost always a mistake rather than an intent — it means the user is permanently being warned about the charge *after* next. **Add/Edit should warn when `reminderLeadDays` ≥ the cycle length**, rather than silently accepting it.
+
 ### 6.3 The reminder ladders
 
 **Renewal (ordinary):** one notification at `reminderLeadDays` before, plus an optional same-day one controlled by `sameDayReminder` (§5.1; the field was missing in v1.0 — the feature had no data model).
@@ -423,7 +450,14 @@ Scheduling is **idempotent**: cancel all pending, recompute, reschedule. Notific
 1. At `reminderLeadDays` before `cancelByDate`
 2. Morning of `cancelByDate` — **time-sensitive**
 3. Evening of `cancelByDate` — **time-sensitive**
-4. If still unacknowledged, repeat daily until the conversion date passes
+4. If still unacknowledged, repeat daily until the conversion date arrives
+5. **On the conversion date, the §5.2a announcement *is* the notification** — the ladder's final rung, not a separate one
+
+**Why the announcement owns conversion day** *(adopted in v1.4 from Wave 4's proposal)*. §6.3 had the dailies running "until the conversion date passes" while §5.2a put the announcement on that date — both claiming the same day. The announcement wins, for a reason that is about honesty rather than tidiness: **the cancel-by deadline has already passed by conversion day** (`cancelBy = conversion − buffer`), so a notification that still says *"cancel by today"* is nagging about a dead deadline. On the day the money actually moves, the correct message states that fact.
+
+Convenient side effect: with the default 2-day buffer the ladder lands at exactly the 5-rung cap.
+
+**Corollary — "Keeping it" cancels the escalation but never the announcement.** §5.2a's *"whether or not the user ever acknowledged anything"* decides this. The escalation is a request to act and can be waived; the announcement is a statement that money started moving, and the user having said "keeping it" a week ago does not make the charge less real.
 
 **How the daily repeat is implemented (resolved in v1.1).** "Repeat until acknowledged" depends on runtime state, which cannot be precomputed by a pure `reminderSchedule` — and if Wave 4 schedules the repeats anyway, they consume P1 slots the budget never counted. Two options existed; the choice is deliberate:
 
@@ -446,6 +480,13 @@ The escalation exists because **a notification is not persistent**. Swipe it awa
 ### 6.4 Notification actions
 
 Registered via `UNNotificationCategory`. Tap opens the subscription detail. Three buttons:
+
+**⚠ v1.3 contradicted itself here and v1.4 resolves it.** It required both that *"I'm cancelling"* open the stored cancellation URL **and** that all three actions work from the background without launching the UI. **iOS cannot open a URL from a background action handler**, so the two requirements were incompatible.
+
+> **The state work is background-safe and redelivery-idempotent for all three actions. The URL opens only because *"I'm cancelling"* is registered as a foreground action.** The other two stay background.
+
+This is the right split regardless: marking a subscription cancelled must succeed whether or not the app comes to the foreground, while opening a vendor page is inherently a foreground act.
+
 
 | Action | Behaviour |
 |---|---|
@@ -533,7 +574,7 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **1** ✅ | Domain layer + date engine + tests, as a standalone SPM package (`Packages/OttoDomain`) so "Foundation only" is compiler-enforced | ✅ **Done** — commit `f36f584`; **50 tests / 11 suites passing**, incl. the 186-case property test |
 | **2** ✅ | SwiftData models, mapping layer, repository protocols + implementations, as a second SPM package (`Packages/OttoPersistence`) so the layer boundary is compiler-enforced. Local only — **CloudKit explicitly `.none`** | ✅ **Done** — commits `fcdcf2d` / `92879f9` / `634e209` / `4b9db37`; **92 tests passing** (51 domain + 41 persistence), incl. a mutation-tested CloudKit-compatibility assertion |
 | **3** ✅ | Store layer (`Packages/OttoUI`, `@MainActor @Observable`, protocol-dependent) then Today / Subscriptions / Add-Edit / Detail. Native components only | ✅ **Done** — commits `9982746`–`909777e`; **156 tests**; layering verified by a failing `import OttoPersistence`. ⚠ Hands-on add-a-subscription pass still unsigned-off by the owner |
-| **4** | Notification engine: scheduling, slot budgeting, actions, reschedule triggers, §5.2a conversion announcement | ⛔ 200-subscription fixture stays within 64 slots with correct priority; ⛔ a trial converts and announces with the app never opened |
+| **4** ✅ | Notification engine as a layer-4 `OttoServices` target behind a `NotificationClient` protocol, so the whole engine tests host-side | ✅ **Done** — commits `768525c`–`29811ca`; **203 tests**. Both ⛔ gates pass, incl. the derivation-path test (conversion announcement fires with stored status still `.trial`). ⚠ `BGAppRefreshTask` **not yet observed to run** — by this spec's own standard it does not exist until it is |
 | **5** | Trial flows, cancellation flow, verification flow | ⛔ End-to-end trial test on device with a compressed timeline |
 | **6** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall |
 | **7** | Insights, payment methods, zombie detection | Numbers reconcile against a hand-computed fixture |
@@ -572,6 +613,17 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 ---
 
 ## Update log
+
+- **2026-08-07 (v1.4 — revised against the Wave 4 report)** — Wave 4 shipped: **203 tests**, engine behind a `NotificationClient` protocol so it tests host-side rather than needing a device. Both gates pass, including the one that matters — the conversion announcement firing with the stored status never flipped, which proves §5.2a's derivation path rather than the persisted one. One adjudication and eight findings:
+  - **⭐ `acknowledgedAt` did not exist, so two promised behaviours were unimplementable.** §6.4's *"Keeping it"* and §6.3's *"remainder is cancelled on acknowledgement"* both named a state with no field behind it — and because rescheduling is cancel-all-then-replan, **the silenced reminders get replanned right back in the same cycle.** Wave 4 knowingly under-delivered here rather than inventing a schema. Field added; **must land before Wave 6.**
+  - **Adopted: the conversion announcement *is* the trial ladder's final rung.** §6.3 and §5.2a both claimed conversion day. The announcement wins because by then the cancel-by deadline has already passed, so a notification still saying *"cancel by today"* nags about a dead deadline while money is moving. **"Keeping it" cancels the escalation but never the announcement** — the escalation is a request and can be waived; the announcement is a fact.
+  - **§6.4 contradicted itself:** it required "I'm cancelling" to open a URL *and* all three actions to work from the background. iOS cannot open a URL from a background handler. Resolved by splitting — state work background-safe for all three, URL opening via a foreground-marked action.
+  - **Status changes still orphaned `.upcoming` rows.** v1.3's invalidation covered anchor/cycle/amount edits only, so pausing or archiving left phantom charges in Detail. Generalized to any change altering the expected sequence.
+  - **Which tombstones block re-materialization, pinned:** tombstoned `.upcoming` rows are invalidation artifacts and must **not** block, or a corrected sequence can never materialize; tombstoned rows in any other state are deliberate history removal and must.
+  - **Snoozes were outside the budget model.** They occupy real slots, so the effective planning limit is `64 − pendingSnoozes`, and they rank above P1 — an explicit user request outranks an inferred schedule.
+  - **§5.2b's "loudly" was undefined**, and the actual read policy (skip-with-log) is loud in the console and invisible in the UI — meaning an unmappable subscription **vanishes from the user's view**, the worst available failure for this product. Now an aggregate needs-review card; aggregate because Wave 6 makes partial records routine.
+  - **Catch-up with lead ≥ cycle length** now emits exactly one reminder (the earliest un-warned charge), and Add/Edit warns on the configuration, which is nearly always a mistake.
+  - **Noted, not a defect:** the three-strike counter has no incrementer until Wave 5, so verification roll-forward is unbounded until then.
 
 - **2026-08-07 (v1.3 — revised against the Wave 3 report)** — Wave 3 shipped: **156 tests**, store layer built before any view, and the layering claim *verified rather than asserted* (adding `import OttoPersistence` to a UI file fails to build). Seven findings; one of them is the most serious defect in the project so far:
   - **⚠⚠ §5.2a — Otto reproduced its own founding failure.** Nothing in the spec said who flips `.trial` → `.active`, or when. Followed literally, a user who **ignores a trial** — the exact founding scenario — leaves the status at `.trial` forever, so no charge after the conversion row is ever materialized or reminded about. **The FoodApp case, rebuilt.** Worse, the obvious fix (Wave 5's flow handles it when the user taps) recreates the failure precisely, because the scenario *is* the user not tapping. **Resolved by making conversion derived, not awaited:** `effectiveStatus(asOf:)` treats a past-conversion trial as active, so a trial that converts with the phone in a drawer for six weeks still materializes and still reminds. Persistence of the flip is an optimisation; **no behaviour may depend on it.** Otto also now announces the conversion — a statement that money started moving, not a request to act.
