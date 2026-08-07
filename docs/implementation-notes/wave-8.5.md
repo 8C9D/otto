@@ -42,9 +42,10 @@ No new user-facing features beyond what the model changes require; the product o
 ## Test-infrastructure note (not a product issue)
 
 SwiftData keeps a process-global, name-keyed model registry, and V1/V2 deliberately share entity names (V1 must match shipped stores).
-Building both schemas CONCURRENTLY in one test process races that registry and dies in `ModelCoders` - the app never does this (it builds exactly one container), but parallel test suites did.
-Fix: every `ModelContainer` creation in `OttoPersistenceTests` goes through one lock, and the migration test holds it across its whole V1-touching phase.
-Hammered five parallel runs clean; worth carrying to any future project that keeps two live schema versions (Kept included).
+Building or using both schemas CONCURRENTLY in one test process races that registry and dies in `ModelCoders` - the app never does this (it builds exactly one container), but parallel test suites did.
+A lock around container creation narrowed the window but a clean-clone verify run still caught the race once, which is the honest measure: model-object USE races the registry too, and use cannot be locked.
+Fix that held: every suite in `OttoPersistenceTests` nests under one `@Suite(.serialized)` root, so the whole target runs serially (sub-second suites - the parallelism given up is noise), with the creation lock kept as documentation and belt.
+Eight consecutive runs clean, plus the clean-clone verify below; worth carrying to any future project that keeps two live schema versions (Kept included).
 
 ## verify.sh against this wave's HEAD
 

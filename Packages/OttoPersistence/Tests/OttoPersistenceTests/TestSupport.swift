@@ -24,6 +24,20 @@ func fixtureUUID(
     return try #require(UUID(uuidString: uuidString), sourceLocation: sourceLocation)
 }
 
+/// The serialized root every suite in this target nests under.
+///
+/// SwiftData keeps a process-global, name-keyed model registry, and this
+/// package deliberately declares TWO schema versions whose classes share
+/// entity names - V1 is the migration source and must match shipped stores
+/// byte for byte. Concurrent activity across the two versions (the migration
+/// test's V1 phase against any other test's V2 objects) races that registry
+/// and dies in SwiftData's ModelCoders. The app never does this - it builds
+/// exactly one container - so this is a test-environment hazard only, closed
+/// by running the whole target serially. The suites are sub-second; the
+/// parallelism given up is noise.
+@Suite(.serialized)
+struct SerializedPersistenceTests {}
+
 /// Serializes every `ModelContainer` creation in this test target. SwiftData
 /// keeps a process-global, name-keyed model registry, and this package
 /// deliberately declares two schema versions whose classes SHARE entity names
