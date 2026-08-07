@@ -64,17 +64,19 @@ extension OttoSchemaV3.StoredSubscription {
         )
     }
 
-    /// Writes the domain value onto the record verbatim, syncing the children:
-    /// a trial on the domain value reuses the existing record (clearing any
-    /// tombstone - the one-to-one slot can only hold one record, so reuse is the
-    /// only coherent choice); a trial absent from the domain value soft-deletes the
-    /// record at the subscription's `updatedAt`, the caller-supplied instant of the
-    /// change (no clock is read anywhere in the store).
+    /// Writes the domain value onto the record verbatim, applying its children
+    /// to identified records: a trial on the domain value reuses the existing
+    /// record (clearing any tombstone - the one-to-one slot can only hold one
+    /// record, so reuse is the only coherent choice), and each pause episode
+    /// updates the record carrying its id or inserts a new one.
     ///
-    /// Pause episodes sync by id: each domain episode updates its record or
-    /// inserts a new one, and a stored episode the domain value no longer
-    /// carries is soft-deleted the same way the trial is - the domain array is
-    /// the whole history, so absence is deliberate removal, never drift.
+    /// **Absence is not deletion** (spec §4a, Wave 6B-Prep): a stored child the
+    /// domain value does not carry is left exactly as it is. Under per-record
+    /// sync a stale in-memory snapshot is ordinary, and the old contract -
+    /// "absence is deliberate removal" - silently tombstoned records the
+    /// snapshot had simply never seen. Deletion is expressed only as an
+    /// explicit operation on an identified record: a domain child carrying its
+    /// tombstone, or the delete cascade. This save path cannot remove anything.
     func update(from domain: Subscription) {
         id = domain.id
         name = domain.name
@@ -106,22 +108,20 @@ extension OttoSchemaV3.StoredSubscription {
                 trial = record
             }
             // Written verbatim, tombstone included: a live domain trial carries a nil
-            // deletedAt, so reusing a tombstoned slot resurrects it.
+            // deletedAt, so reusing a tombstoned slot resurrects it - and removing
+            // the trial is a domain value carrying the term WITH its tombstone
+            // (`editedTrial`), never an absent slot.
             record.update(from: domainTrial)
-        } else if let existing = trial, existing.deletedAt == nil {
-            existing.deletedAt = domain.updatedAt
         }
 
-        syncPauseEpisodes(with: domain)
+        upsertPauseEpisodes(from: domain)
     }
 
-    private func syncPauseEpisodes(with domain: Subscription) {
-        let storedEpisodes = pauseEpisodes ?? []
+    private func upsertPauseEpisodes(from domain: Subscription) {
         let storedByID = Dictionary(
-            storedEpisodes.compactMap { record in record.id.map { ($0, record) } },
+            (pauseEpisodes ?? []).compactMap { record in record.id.map { ($0, record) } },
             uniquingKeysWith: { first, _ in first }
         )
-        let domainIDs = Set(domain.pauseEpisodes.map(\.id))
         for episode in domain.pauseEpisodes {
             if let existing = storedByID[episode.id] {
                 existing.update(from: episode)
@@ -130,10 +130,6 @@ extension OttoSchemaV3.StoredSubscription {
                 record.subscription = self
                 record.update(from: episode)
             }
-        }
-        for orphan in storedEpisodes
-        where orphan.id.map({ !domainIDs.contains($0) }) ?? true {
-            if orphan.deletedAt == nil { orphan.deletedAt = domain.updatedAt }
         }
     }
 }

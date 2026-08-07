@@ -135,18 +135,17 @@ extension OttoSchemaV3.StoredCancellationEpisode {
         syncEvidenceNotes(with: domain)
     }
 
-    /// Notes sync by id, exactly like a subscription's pause episodes: each
-    /// domain note updates its record or inserts a new one, and a stored note
-    /// the domain value no longer carries is soft-deleted at the episode's
-    /// `updatedAt` - the domain array is the whole history, so absence is
-    /// deliberate removal, never drift.
+    /// Notes upsert by id, exactly like a subscription's pause episodes: each
+    /// domain note updates the record carrying its id or inserts a new one. A
+    /// stored note the domain value does not carry is left untouched - absence
+    /// is not deletion (spec §4a, Wave 6B-Prep); removing a note is the domain
+    /// note carrying its tombstone (the evidence flow already writes it), never
+    /// an absent array slot.
     private func syncEvidenceNotes(with domain: CancellationEpisode) {
-        let storedNotes = evidenceNotes ?? []
         let storedByID = Dictionary(
-            storedNotes.compactMap { record in record.id.map { ($0, record) } },
+            (evidenceNotes ?? []).compactMap { record in record.id.map { ($0, record) } },
             uniquingKeysWith: { first, _ in first }
         )
-        let domainIDs = Set(domain.evidenceNotes.map(\.id))
         for note in domain.evidenceNotes {
             if let existing = storedByID[note.id] {
                 existing.update(from: note)
@@ -155,10 +154,6 @@ extension OttoSchemaV3.StoredCancellationEpisode {
                 record.episode = self
                 record.update(from: note)
             }
-        }
-        for orphan in storedNotes
-        where orphan.id.map({ !domainIDs.contains($0) }) ?? true {
-            if orphan.deletedAt == nil { orphan.deletedAt = domain.updatedAt }
         }
     }
 }

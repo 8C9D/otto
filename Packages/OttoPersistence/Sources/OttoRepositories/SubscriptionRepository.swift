@@ -8,9 +8,13 @@ import OttoDomain
 /// tombstone filtering is the repository's default, not a thing callers remember
 /// (Wave 2 constraint 7).
 public protocol SubscriptionRepository: Sendable {
-    /// Inserts or updates by `id`, including the embedded trial term. Writes the
-    /// domain value verbatim - `deletedAt` included - but never cascades; use
-    /// `deleteSubscription(withID:at:)` to delete.
+    /// Inserts or updates by `id`, applying embedded children (trial term,
+    /// pause episodes) to identified records. Writes each carried value
+    /// verbatim - `deletedAt` included - but **absence is not deletion**
+    /// (spec §4a): a stored child the value does not carry is left untouched,
+    /// so a stale snapshot cannot remove a record it never saw. Deleting a
+    /// child is saving it WITH its tombstone; deleting the subscription is
+    /// `deleteSubscription(withID:at:)`.
     func save(_ subscription: Subscription) async throws
 
     /// The live subscription with this id, or nil when none exists or it is deleted.

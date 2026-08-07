@@ -237,7 +237,7 @@ struct SubscriptionFormModelTests {
         #expect(edited.pauseEndsOn == (try day(2026, 9, 1)))
     }
 
-    @Test("toggling the trial off on an edited trial builds an active subscription without the trial")
+    @Test("toggling the trial off builds an active subscription carrying the term's explicit tombstone")
     func trialToggleOff() throws {
         let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
         let original = try makeSubscription(
@@ -249,7 +249,12 @@ struct SubscriptionFormModelTests {
         form.isTrial = false
         let edited = try #require(form.buildSubscription())
         #expect(edited.storedStatus == .active)
-        #expect(edited.trial == nil)
+        // The removal is an explicit deletion of the identified record - the
+        // term rides along tombstoned, because a save infers nothing from
+        // absence (spec §4a, Wave 6B-Prep).
+        let dropped = try #require(edited.trial)
+        #expect(dropped.id == trial.id)
+        #expect(dropped.deletedAt == Date(timeIntervalSince1970: 10_000))
     }
 
     @Test("editing a confirmed-converted subscription preserves its trial term - history is not a toggle")

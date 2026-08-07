@@ -157,20 +157,27 @@ struct RecordPreservingEditTests {
         #expect(archived.editedStatus(isTrial: true) == .archived)
     }
 
-    @Test("a confirmed conversion's term survives an unrelated edit; unmarking a live trial drops it")
+    @Test("a confirmed conversion's term survives an unrelated edit; unmarking a live trial tombstones it explicitly")
     func editedTrial() throws {
+        let now = Date(timeIntervalSince1970: 5_000)
         let term = try makeTrialTerm(startDate: try day(2026, 6, 1), lengthDays: 30)
         let converted = try makeSubscription(
             status: .active, cycleStartDay: try day(2026, 7, 1), trial: term
         )
-        #expect(converted.editedTrial(draft: nil) == term)
+        #expect(converted.editedTrial(draft: nil, droppedAt: now) == term)
 
+        // Toggle-off is an explicit deletion of the identified record - the
+        // term rides along WITH its tombstone, because a save infers nothing
+        // from absence any more (spec §4a).
         let stillTrial = try makeSubscription(
             status: .trial, cycleStartDay: try day(2026, 6, 1), trial: term
         )
-        #expect(stillTrial.editedTrial(draft: nil) == nil)
+        let dropped = try #require(stillTrial.editedTrial(draft: nil, droppedAt: now))
+        #expect(dropped.id == term.id)
+        #expect(dropped.deletedAt == now)
+        #expect(dropped.updatedAt == now)
 
         let redrafted = try makeTrialTerm(index: 501, startDate: try day(2026, 6, 2), lengthDays: 14)
-        #expect(stillTrial.editedTrial(draft: redrafted) == redrafted)
+        #expect(stillTrial.editedTrial(draft: redrafted, droppedAt: now) == redrafted)
     }
 }

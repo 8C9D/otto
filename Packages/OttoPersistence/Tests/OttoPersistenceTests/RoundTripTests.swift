@@ -63,14 +63,18 @@ extension SerializedPersistenceTests {
             #expect(all == [subscription])
         }
 
-        @Test("removing the trial on save soft-deletes its record, and a re-added trial reuses it")
+        @Test("removing the trial is an explicit tombstone on the term, and a re-added trial reuses the record")
         func trialLifecycle() async throws {
             let (store, containers) = try makeStore()
             let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
             var subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
             try await store.save(subscription)
 
-            subscription.trial = nil
+            // The removal rides on the identified record - a term carrying its
+            // tombstone - because absence deletes nothing (spec §4a).
+            var dropped = trial
+            dropped.deletedAt = subscription.updatedAt
+            subscription.trial = dropped
             subscription.storedStatus = .active
             try await store.save(subscription)
             #expect(try await store.subscription(withID: subscription.id)?.trial == nil)

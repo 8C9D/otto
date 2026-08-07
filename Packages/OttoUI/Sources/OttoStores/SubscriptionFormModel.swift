@@ -307,7 +307,7 @@ public final class SubscriptionFormModel {
             // Wave 6B-Prep): the save path (SubscriptionsStore) initialises a
             // new entry's and applies §5.3's (v1.7) rewind rule to an edit's.
             pauseEpisodes: original?.pauseEpisodes ?? [],
-            trial: preservedTrial,
+            trial: preservedTrial(at: now),
             paymentMethodID: paymentMethodID,
             cancellationURL: nonEmptyURL(from: cancellationURLText),
             cancellationNotes: nonEmpty(cancellationNotes),
@@ -320,10 +320,12 @@ public final class SubscriptionFormModel {
     }
 
     /// The trial the built subscription carries - the preservation decision is
-    /// the domain's (`editedTrial`): a confirmed conversion keeps its term, and
-    /// an unrelated edit must not silently delete it.
-    private var preservedTrial: TrialTerm? {
-        original?.editedTrial(draft: draftTrial) ?? draftTrial
+    /// the domain's (`editedTrial`): a confirmed conversion keeps its term, an
+    /// unrelated edit must not silently delete it, and turning the toggle off
+    /// carries the term tombstoned at `now` - the explicit deletion the save
+    /// path requires now that absence deletes nothing (spec §4a).
+    private func preservedTrial(at now: Date) -> TrialTerm? {
+        original?.editedTrial(draft: draftTrial, droppedAt: now) ?? draftTrial
     }
 
     /// The status the form writes - the domain's `editedStatus`: the trial

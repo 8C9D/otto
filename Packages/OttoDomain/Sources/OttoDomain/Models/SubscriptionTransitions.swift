@@ -163,10 +163,15 @@ extension Subscription {
     /// a non-trial record the historical term untouched - a confirmed
     /// conversion keeps its term deliberately (§5.2a: confirming records,
     /// never deletes), and an unrelated edit must not silently delete it.
-    /// Turning the toggle off on a still-trial record drops the term: that is
-    /// the user saying "this was never a trial".
-    public func editedTrial(draft: TrialTerm?) -> TrialTerm? {
+    /// Turning the toggle off on a still-trial record TOMBSTONES the term at
+    /// `now`: that is the user saying "this was never a trial", and it must be
+    /// said as an explicit deletion of the identified record - absence is not
+    /// deletion (spec §4a), so a save could no longer express the removal.
+    public func editedTrial(draft: TrialTerm?, droppedAt now: Date) -> TrialTerm? {
         if let draft { return draft }
-        return editsAsTrial ? nil : trial
+        guard editsAsTrial, var dropped = trial else { return trial }
+        dropped.deletedAt = now
+        dropped.updatedAt = now
+        return dropped
     }
 }
