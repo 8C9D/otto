@@ -24,6 +24,14 @@ public struct BillingEvent: Identifiable, Hashable, Codable, Sendable {
     public var state: State
     public var userConfirmedAt: Date?
 
+    /// When the user said "Keeping it" for this charge (spec §5.3, added v1.4).
+    /// The reminder planner skips reminders for acknowledged events, which is what
+    /// lets the silencing survive a cancel-all-then-replan reschedule - without a
+    /// persisted acknowledgement, a full pass in the same cycle replans the
+    /// silenced reminders right back. Silences this cycle only: the next cycle's
+    /// event is a different row with a nil acknowledgement.
+    public var acknowledgedAt: Date?
+
     /// What was actually charged, when it differed from the expectation; a difference
     /// triggers a price-change prompt (spec §5.3).
     public var actualAmountCents: Int?
@@ -42,6 +50,7 @@ public struct BillingEvent: Identifiable, Hashable, Codable, Sendable {
         expectedAmountCents: Int,
         state: State,
         userConfirmedAt: Date? = nil,
+        acknowledgedAt: Date? = nil,
         actualAmountCents: Int? = nil,
         createdAt: Date,
         updatedAt: Date,
@@ -53,6 +62,7 @@ public struct BillingEvent: Identifiable, Hashable, Codable, Sendable {
         self.expectedAmountCents = expectedAmountCents
         self.state = state
         self.userConfirmedAt = userConfirmedAt
+        self.acknowledgedAt = acknowledgedAt
         self.actualAmountCents = actualAmountCents
         self.createdAt = createdAt
         self.updatedAt = updatedAt

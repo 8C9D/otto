@@ -58,6 +58,30 @@ struct MappingFailureTests {
         #expect(loaded.map(\.id) == [try fixtureUUID(2)])
     }
 
+    @Test("whatever the list read drops, the unreadable count reports (spec §5.2b, v1.4)")
+    func unreadableCountMatchesSkippedRecords() async throws {
+        let container = try OttoContainerFactory.inMemoryContainer()
+        let context = ModelContext(container)
+        let store = OttoStore(modelContainer: container)
+        try await store.save(try makeSubscription(index: 2, cycleStartDay: try day(2026, 8, 15)))
+        #expect(try await store.unreadableSubscriptionCount() == 0)
+
+        let partial = StoredSubscription()
+        partial.id = try fixtureUUID(1)
+        context.insert(partial)
+        // A tombstoned unmappable record is not missing from any list the user
+        // sees, so it must not inflate the count.
+        let deletedPartial = StoredSubscription()
+        deletedPartial.id = try fixtureUUID(3)
+        deletedPartial.deletedAt = Date(timeIntervalSince1970: 9_000)
+        context.insert(deletedPartial)
+        try context.save()
+
+        let fresh = OttoStore(modelContainer: container)
+        #expect(try await fresh.unreadableSubscriptionCount() == 1)
+        #expect(try await fresh.subscriptions().count == 1)
+    }
+
     @Test("a single-record fetch treats an unmappable record as absent")
     func fetchSkipsBadRecord() async throws {
         let container = try OttoContainerFactory.inMemoryContainer()

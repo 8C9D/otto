@@ -205,6 +205,8 @@ actor PreviewRepository:
         Array(subscriptions.values)
     }
 
+    func unreadableSubscriptionCount() async throws -> Int { 0 }
+
     func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         guard var subscription = subscriptions[id] else { return }
         if subscription.deletedAt == nil {

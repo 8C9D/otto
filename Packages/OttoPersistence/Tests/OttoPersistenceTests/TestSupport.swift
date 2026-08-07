@@ -73,6 +73,7 @@ func makeBillingEvent(index: Int = 100, subscriptionID: UUID, expectedDate: Cale
         expectedAmountCents: 1099,
         state: .confirmedCharged,
         userConfirmedAt: Date(timeIntervalSince1970: 3_000),
+        acknowledgedAt: Date(timeIntervalSince1970: 3_500),
         actualAmountCents: 1299,
         createdAt: Date(timeIntervalSince1970: 1_000),
         updatedAt: Date(timeIntervalSince1970: 2_000)

@@ -40,6 +40,18 @@ struct SubscriptionsStoreTests {
         #expect(!store.subscriptions.isLoading)
     }
 
+    @Test("unreadable records surface as a count, never silently (spec §5.2b, v1.4)")
+    func surfacesUnreadableCount() async throws {
+        let fixture = try makeStore()
+        await fixture.subscriptions.primeUnreadableCount(2)
+        await fixture.store.refresh()
+        #expect(fixture.store.unreadableCount == 2)
+
+        await fixture.subscriptions.primeUnreadableCount(0)
+        await fixture.store.refresh()
+        #expect(fixture.store.unreadableCount == 0)
+    }
+
     @Test("refresh loads subscriptions and the cancellation records that go with them")
     func loadsData() async throws {
         let fixture = try makeStore()

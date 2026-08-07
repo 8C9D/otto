@@ -22,6 +22,13 @@ public protocol SubscriptionRepository: Sendable {
     /// All subscriptions including tombstones - for sync, export, and audits only.
     func subscriptionsIncludingDeleted() async throws -> [Subscription]
 
+    /// How many live subscription records could not be read as domain values
+    /// (spec §5.2b, v1.4). The read policy skips unmappable records, which is loud
+    /// in the console and invisible in the UI - so this count feeds Today's
+    /// aggregate needs-review card, and it must never stay at zero while records
+    /// are missing from `subscriptions()`.
+    func unreadableSubscriptionCount() async throws -> Int
+
     /// Soft-deletes the subscription at the given instant and cascades the tombstone
     /// to its trial term, billing events, cancellation record, and price changes.
     /// Hard deletes happen nowhere (spec §3.5).

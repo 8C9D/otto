@@ -114,9 +114,14 @@ public actor NotificationScheduler: ReminderScheduling {
         where subscription.status == .cancellationPending || subscription.status == .cancelled {
             records[subscription.id] = try await cancellations.record(forSubscription: subscription.id)
         }
+        let acknowledged = try await acknowledgedChargeDays(for: live)
         let plan = live.flatMap {
             reminderSchedule(
-                for: $0, cancellation: records[$0.id], from: today, horizonDays: Self.horizonDays
+                for: $0,
+                cancellation: records[$0.id],
+                acknowledgedChargeDays: acknowledged[$0.id] ?? [],
+                from: today,
+                horizonDays: Self.horizonDays
             )
         }
         let pending = await client.pendingRequests()
@@ -140,6 +145,22 @@ public actor NotificationScheduler: ReminderScheduling {
             coveredThrough: min(truncatedAfter ?? horizonEnd, horizonEnd),
             ledgerFailures: ledgerFailures
         )
+    }
+
+    /// Acknowledged charges by subscription (spec §5.3, v1.4): the planner skips
+    /// their reminders, which is what makes "Keeping it" survive this very
+    /// cancel-all-then-replan pass.
+    private func acknowledgedChargeDays(
+        for live: [Subscription]
+    ) async throws -> [UUID: Set<CalendarDay>] {
+        var acknowledged: [UUID: Set<CalendarDay>] = [:]
+        for subscription in live {
+            let days = try await billingEvents.events(forSubscription: subscription.id)
+                .filter { $0.acknowledgedAt != nil }
+                .map(\.expectedDate)
+            if !days.isEmpty { acknowledged[subscription.id] = Set(days) }
+        }
+        return acknowledged
     }
 
     /// Ledger upkeep happens at reminder-scheduling time and nowhere else

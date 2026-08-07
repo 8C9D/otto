@@ -22,6 +22,7 @@ public actor NotificationActionHandler {
 
     private let subscriptions: any SubscriptionRepository
     private let cancellations: any CancellationRepository
+    private let billingEvents: any BillingEventRepository
     private let client: any NotificationClient
     private let scheduler: any ReminderScheduling
     private let fireTimes: FireTimePolicy
@@ -29,12 +30,14 @@ public actor NotificationActionHandler {
     public init(
         subscriptions: any SubscriptionRepository,
         cancellations: any CancellationRepository,
+        billingEvents: any BillingEventRepository,
         client: any NotificationClient,
         scheduler: any ReminderScheduling,
         fireTimes: FireTimePolicy = .standard
     ) {
         self.subscriptions = subscriptions
         self.cancellations = cancellations
+        self.billingEvents = billingEvents
         self.client = client
         self.scheduler = scheduler
         self.fireTimes = fireTimes
@@ -78,34 +81,33 @@ public actor NotificationActionHandler {
         }
     }
 
-    /// "Keeping it": acknowledge and silence this cycle only. For a trial that
-    /// means cancelling the remaining pre-scheduled escalation (spec §6.3's
-    /// "remainder is cancelled when the user acknowledges") - but never the
-    /// conversion announcement, which §5.2a sends whether or not the user ever
-    /// acknowledged anything: acknowledging a deadline is not the same as being
-    /// told money started moving.
-    private func keepIt(
+    /// "Keeping it" (spec §6.4): mark the charge's `BillingEvent` acknowledged and
+    /// silence this cycle only. The acknowledgement is PERSISTED (spec §5.3, v1.4)
+    /// and honoured by the planner, so the silencing holds through any number of
+    /// cancel-all-then-replan reschedules - the Wave 4 gap. For a trial that
+    /// cancels the remaining escalation but never the conversion announcement,
+    /// which §5.2a sends whether or not the user ever acknowledged anything.
+    /// Reminders resume next cycle because the next cycle's event is a different
+    /// row. Redelivery-safe: an already-acknowledged event keeps its first
+    /// acknowledgement instant, and the reschedule is idempotent.
+    func keepIt(
         subscriptionID: UUID,
         now: Date,
         today: CalendarDay,
         timeZone: TimeZone
     ) async throws {
-        let silencedKinds: Set<PlannedReminder.Kind> = [
-            .renewal, .renewalDayOf, .trialLead, .trialDayOfMorning, .trialDayOfEvening, .trialDaily
-        ]
-        let pending = await client.pendingRequests()
-        let toRemove = pending.map(\.identifier).filter { identifier in
-            guard NotificationPlanIdentifier.subscriptionID(of: identifier) == subscriptionID,
-                  let kind = NotificationPlanIdentifier.kind(of: identifier)
-            else { return false }
-            return silencedKinds.contains(kind)
+        // The charge this cycle's reminders point at: the earliest still-expected
+        // event on or after today. Lead, same-day, catch-up, and every trial rung
+        // all warn about exactly this event.
+        let target = try await billingEvents.events(forSubscription: subscriptionID)
+            .filter { $0.state == .upcoming && $0.expectedDate >= today }
+            .min { $0.expectedDate < $1.expectedDate }
+        if var event = target, event.acknowledgedAt == nil {
+            event.acknowledgedAt = now
+            event.updatedAt = now
+            try await billingEvents.save(event)
         }
-        await client.removePendingRequests(withIdentifiers: toRemove)
-        // Deliberately NOT followed by a reschedule: a full pass would replan the
-        // silenced reminders right back. They return at the next natural trigger
-        // for the next cycle; §6.3's cancellation-on-acknowledgement would need a
-        // persisted acknowledgement to survive a reschedule, which is flagged in
-        // the Wave 4 report as a spec gap.
+        _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
     }
 
     /// "I'm cancelling" (spec §6.4): flip to `.cancellationPending`, create the

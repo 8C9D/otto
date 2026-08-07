@@ -138,6 +138,8 @@ actor FakeSubscriptionRepository: SubscriptionRepository {
         stored.values.sorted { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
     }
 
+    func unreadableSubscriptionCount() async throws -> Int { 0 }
+
     func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         guard var subscription = stored[id] else { throw RepositoryError.subscriptionNotFound(id) }
         if subscription.deletedAt == nil {
@@ -168,17 +170,34 @@ actor FakeCancellationRepository: CancellationRepository {
     }
 }
 
-/// Records ledger calls so tests can assert the scheduler performs upkeep at
-/// scheduling time (spec §5.3) without dragging SwiftData into this target.
+/// In-memory ledger with the same materialization and invalidation semantics as
+/// the SwiftData store - both defer every decision to the domain's
+/// `expectedCharges`/`isExpectedCharge`, so the fake stays honest without
+/// dragging SwiftData into this target. Call counters let scheduler tests assert
+/// upkeep happens at scheduling time (spec §5.3).
 actor FakeBillingEventRepository: BillingEventRepository {
+    private var stored: [UUID: BillingEvent] = [:]
     private(set) var invalidateCalls: [UUID] = []
     private(set) var materializeCalls: [UUID] = []
 
-    func save(_ event: BillingEvent) async throws {}
+    func seed(_ events: [BillingEvent]) {
+        for event in events { stored[event.id] = event }
+    }
 
-    func events(forSubscription subscriptionID: UUID) async throws -> [BillingEvent] { [] }
+    func save(_ event: BillingEvent) async throws {
+        stored[event.id] = event
+    }
 
-    func eventsIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [BillingEvent] { [] }
+    func events(forSubscription subscriptionID: UUID) async throws -> [BillingEvent] {
+        try await eventsIncludingDeleted(forSubscription: subscriptionID)
+            .filter { $0.deletedAt == nil }
+    }
+
+    func eventsIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [BillingEvent] {
+        stored.values
+            .filter { $0.subscriptionID == subscriptionID }
+            .sorted { ($0.expectedDate, $0.id.uuidString) < ($1.expectedDate, $1.id.uuidString) }
+    }
 
     func materializeEvents(
         for subscription: Subscription,
@@ -188,7 +207,37 @@ actor FakeBillingEventRepository: BillingEventRepository {
         at instant: Date
     ) async throws -> [BillingEvent] {
         materializeCalls.append(subscription.id)
-        return []
+        guard subscription.deletedAt == nil, horizonDays >= 0, maxReminderLeadDays >= 0 else {
+            return []
+        }
+        let charges = expectedCharges(
+            for: subscription,
+            from: today,
+            through: today.adding(days: horizonDays + maxReminderLeadDays)
+        )
+        // Dedup mirrors the store: live rows and non-.upcoming tombstones block;
+        // tombstoned .upcoming rows are invalidation artifacts and do not.
+        let blockedDates = Set(
+            stored.values
+                .filter { $0.subscriptionID == subscription.id }
+                .filter { $0.deletedAt == nil || $0.state != .upcoming }
+                .map(\.expectedDate)
+        )
+        var created: [BillingEvent] = []
+        for charge in charges where !blockedDates.contains(charge.day) {
+            let event = BillingEvent(
+                id: UUID(),
+                subscriptionID: subscription.id,
+                expectedDate: charge.day,
+                expectedAmountCents: charge.amountCents,
+                state: .upcoming,
+                createdAt: instant,
+                updatedAt: instant
+            )
+            stored[event.id] = event
+            created.append(event)
+        }
+        return created
     }
 
     func invalidateOutdatedUpcomingEvents(
@@ -197,7 +246,19 @@ actor FakeBillingEventRepository: BillingEventRepository {
         at instant: Date
     ) async throws -> [BillingEvent] {
         invalidateCalls.append(subscription.id)
-        return []
+        var invalidated: [BillingEvent] = []
+        for var event in stored.values
+        where event.subscriptionID == subscription.id && event.deletedAt == nil && event.state == .upcoming {
+            if isExpectedCharge(
+                day: event.expectedDate, amountCents: event.expectedAmountCents,
+                for: subscription, asOf: today
+            ) { continue }
+            event.deletedAt = instant
+            event.updatedAt = instant
+            stored[event.id] = event
+            invalidated.append(event)
+        }
+        return invalidated.sorted { ($0.expectedDate, $0.id.uuidString) < ($1.expectedDate, $1.id.uuidString) }
     }
 }
 
@@ -226,6 +287,7 @@ struct SchedulerFixture {
         NotificationActionHandler(
             subscriptions: subscriptions,
             cancellations: cancellations,
+            billingEvents: billingEvents,
             client: client,
             scheduler: scheduler
         )

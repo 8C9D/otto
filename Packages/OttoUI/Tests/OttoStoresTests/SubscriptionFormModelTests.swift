@@ -251,4 +251,21 @@ struct SubscriptionFormModelTests {
         #expect(edited.status == .active)
         #expect(edited.trial == nil)
     }
+
+    @Test("a lead of at least a whole cycle warns, and never blocks saving (spec §6.2, v1.4)")
+    func leadCoveringCycleWarns() throws {
+        let form = SubscriptionFormModel(dates: try fixedDates())
+        form.name = "FoodApp"
+        form.amount = 11
+        form.cyclePreset = .weekly
+        #expect(!form.leadCoversWholeCycle)
+
+        form.reminderLeadDays = 7
+        #expect(form.leadCoversWholeCycle)
+        // Warn, don't block: the configuration is legal.
+        #expect(form.canSave)
+
+        form.cyclePreset = .monthly
+        #expect(!form.leadCoversWholeCycle)
+    }
 }

@@ -249,6 +249,14 @@ public final class SubscriptionFormModel {
     public var trialConversionDate: CalendarDay? { draftTrial?.conversionDate }
     public var trialCancelByDate: CalendarDay? { draftTrial?.cancelByDate }
 
+    /// Spec §6.2 (v1.4): a lead at least one whole cycle long means the user is
+    /// permanently warned about the charge AFTER next - nearly always a mistake.
+    /// The form warns; it does not block, because the configuration is legal.
+    public var leadCoversWholeCycle: Bool {
+        guard let cycle else { return false }
+        return cycle.isCovered(byLeadDays: reminderLeadDays)
+    }
+
     // MARK: - Validation and building
 
     public var canSave: Bool {

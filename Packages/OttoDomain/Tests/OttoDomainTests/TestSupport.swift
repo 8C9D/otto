@@ -76,9 +76,10 @@ func makeCancellationRecord(
 func makeSubscription(
     index: Int = 0,
     status: SubscriptionStatus,
-    cycle: BillingCycle,
+    cycle: BillingCycle = .monthly,
     cycleStartDay: CalendarDay,
     reminderLeadDays: Int = 3,
+    sameDayReminder: Bool = false,
     pauseEndsOn: CalendarDay? = nil,
     trial: TrialTerm? = nil,
     lastUsedDate: CalendarDay? = nil
@@ -93,6 +94,7 @@ func makeSubscription(
         cycle: cycle,
         cycleStartDay: cycleStartDay,
         reminderLeadDays: reminderLeadDays,
+        sameDayReminder: sameDayReminder,
         pauseEndsOn: pauseEndsOn,
         trial: trial,
         lastUsedDate: lastUsedDate,

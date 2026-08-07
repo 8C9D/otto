@@ -16,6 +16,8 @@ extension OttoSchemaV1 {
         var expectedAmountCents: Int?
         var state: String?
         var userConfirmedAt: Date?
+        /// Spec §5.3 (v1.4): when the user said "Keeping it" for this charge.
+        var acknowledgedAt: Date?
         var actualAmountCents: Int?
         var createdAt: Date?
         var updatedAt: Date?

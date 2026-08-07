@@ -54,7 +54,8 @@ struct OttoApp: App {
         let coordinator = NotificationCoordinator(
             scheduler: scheduler,
             handler: NotificationActionHandler(
-                subscriptions: store, cancellations: store, client: client, scheduler: scheduler
+                subscriptions: store, cancellations: store, billingEvents: store,
+                client: client, scheduler: scheduler
             ),
             client: client,
             now: dates.now,

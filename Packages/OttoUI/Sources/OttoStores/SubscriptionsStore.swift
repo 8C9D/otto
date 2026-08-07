@@ -19,6 +19,12 @@ public final class SubscriptionsStore {
     /// cards are derived from both together.
     public private(set) var cancellations: [UUID: CancellationRecord] = [:]
 
+    /// How many live records the last refresh could not read (spec §5.2b, v1.4).
+    /// Today renders a single aggregate needs-review card whenever this is
+    /// non-zero: a subscription that vanishes from every list silently is the
+    /// worst available failure for this product.
+    public private(set) var unreadableCount = 0
+
     private let subscriptionRepository: any SubscriptionRepository
     private let cancellationRepository: any CancellationRepository
     private let dates: DateProvider
@@ -61,6 +67,7 @@ public final class SubscriptionsStore {
             }
             subscriptions = .loaded(loaded)
             cancellations = records
+            unreadableCount = try await subscriptionRepository.unreadableSubscriptionCount()
         } catch {
             subscriptions = .failed(error)
         }

@@ -84,3 +84,17 @@ extension BillingCycle {
         }
     }
 }
+
+// MARK: - Lead-time sanity (spec §6.2, v1.4)
+
+extension BillingCycle {
+    /// True when a reminder lead of `leadDays` is at least a whole cycle long -
+    /// the configuration where the user is permanently being warned about the
+    /// charge AFTER next. Almost always a mistake rather than an intent, so
+    /// Add/Edit warns on it instead of silently accepting it. Compared against
+    /// the average cycle length; month lengths vary, and a warning threshold
+    /// does not need calendar precision.
+    public func isCovered(byLeadDays leadDays: Int) -> Bool {
+        Double(leadDays) >= averageLengthInDays
+    }
+}

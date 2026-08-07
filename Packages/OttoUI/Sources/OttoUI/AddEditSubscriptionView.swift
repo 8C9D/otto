@@ -84,7 +84,7 @@ struct AddEditSubscriptionView: View {
             billingDateSection($form)
             trialSection($form)
 
-            Section(String(localized: "Reminders")) {
+            Section {
                 Stepper(value: $form.reminderLeadDays, in: 0...30) {
                     LabeledContent(
                         String(localized: "Remind me"),
@@ -92,6 +92,21 @@ struct AddEditSubscriptionView: View {
                     )
                 }
                 Toggle(String(localized: "Also remind on the day"), isOn: $form.sameDayReminder)
+            } header: {
+                Text(String(localized: "Reminders"))
+            } footer: {
+                // Spec §6.2 (v1.4): warn, don't block - the configuration is
+                // legal, just almost never what anyone means.
+                if form.leadCoversWholeCycle {
+                    Label(
+                        String(localized: """
+                        This lead time is at least a whole billing cycle, \
+                        so every reminder would be about the charge after next.
+                        """),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .foregroundStyle(.orange)
+                }
             }
 
             paymentSection($form)

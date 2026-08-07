@@ -29,6 +29,15 @@ extension OttoStore: SubscriptionRepository {
         try fetchSubscriptions(nil)
     }
 
+    public func unreadableSubscriptionCount() async throws -> Int {
+        let records = try modelContext.fetch(
+            FetchDescriptor<StoredSubscription>(predicate: #Predicate { $0.deletedAt == nil })
+        )
+        // The same mapping `subscriptions()` performs, counted instead of skipped:
+        // whatever that read drops, this read reports (spec §5.2b, v1.4).
+        return records.count { (try? $0.toDomain()) == nil }
+    }
+
     public func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         guard let record = try storedSubscription(id: id, includingDeleted: true) else {
             throw RepositoryError.subscriptionNotFound(id)

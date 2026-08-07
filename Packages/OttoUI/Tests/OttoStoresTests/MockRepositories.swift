@@ -44,6 +44,17 @@ actor MockSubscriptionRepository: SubscriptionRepository {
         return stored.values.sorted { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
     }
 
+    /// Primed by tests; the mock's dictionary of domain values cannot hold a
+    /// genuinely unmappable record.
+    private var primedUnreadableCount = 0
+
+    func primeUnreadableCount(_ count: Int) { primedUnreadableCount = count }
+
+    func unreadableSubscriptionCount() async throws -> Int {
+        try throwPrimedFailure()
+        return primedUnreadableCount
+    }
+
     func deleteSubscription(withID id: UUID, at instant: Date) async throws {
         try throwPrimedFailure()
         guard var subscription = stored[id] else { throw RepositoryError.subscriptionNotFound(id) }

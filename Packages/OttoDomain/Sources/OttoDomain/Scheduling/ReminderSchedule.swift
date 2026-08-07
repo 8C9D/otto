@@ -12,9 +12,17 @@ import Foundation
 ///
 /// - Parameter cancellation: the subscription's cancellation record when one exists;
 ///   it drives the verification check for cancellation-pending and cancelled statuses.
+/// - Parameter acknowledgedChargeDays: the expected dates of this subscription's
+///   acknowledged `BillingEvent`s (spec §5.3, v1.4). "Keeping it" silences that
+///   charge's reminders - and because the acknowledgement is persisted and honoured
+///   HERE, in the plan, the silencing survives a cancel-all-then-replan reschedule.
+///   Silences this cycle only: other charges plan normally. The §5.2a conversion
+///   announcement is never silenced - acknowledging a deadline is not the same as
+///   being told money started moving.
 public func reminderSchedule(
     for subscription: Subscription,
     cancellation: CancellationRecord? = nil,
+    acknowledgedChargeDays: Set<CalendarDay> = [],
     from today: CalendarDay,
     horizonDays: Int
 ) -> [PlannedReminder] {
@@ -27,9 +35,11 @@ public func reminderSchedule(
     // any flow ever persisted the flip.
     let planned: [PlannedReminder] = switch subscription.effectiveStatus(asOf: today) {
     case .trial:
-        trialReminders(for: subscription, in: window)
+        trialReminders(for: subscription, acknowledgedChargeDays: acknowledgedChargeDays, in: window)
     case .active:
-        renewalReminders(for: subscription, from: today, in: window)
+        renewalReminders(
+            for: subscription, acknowledgedChargeDays: acknowledgedChargeDays, from: today, in: window
+        )
             + usageCheckInReminders(for: subscription, from: today, in: window)
             + conversionDayAnnouncement(for: subscription, from: today)
     case .paused:
@@ -69,11 +79,21 @@ public let trialLadderCap = 5
 /// is exactly five: lead, morning, evening, one daily, announcement.
 private func trialReminders(
     for subscription: Subscription,
+    acknowledgedChargeDays: Set<CalendarDay>,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
     guard let trial = subscription.trial else { return [] }
     let cancelBy = trial.cancelByDate
     let conversion = trial.conversionDate
+
+    // "Keeping it" acknowledges the conversion charge - the trial's only ledger
+    // row - and cancels the remaining escalation (spec §6.3). The announcement is
+    // the one rung that survives: §5.2a sends it whether or not the user ever
+    // acknowledged anything.
+    if acknowledgedChargeDays.contains(conversion) {
+        guard window.contains(conversion) else { return [] }
+        return [PlannedReminder(subscriptionID: subscription.id, day: conversion, kind: .conversionAnnouncement)]
+    }
 
     var dailies: [(day: CalendarDay, kind: PlannedReminder.Kind)] = []
     var dailyDay = cancelBy.adding(days: 1)
@@ -121,6 +141,7 @@ private func conversionDayAnnouncement(
 /// exact charge that prompted them.
 private func renewalReminders(
     for subscription: Subscription,
+    acknowledgedChargeDays: Set<CalendarDay>,
     from today: CalendarDay,
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
@@ -141,6 +162,12 @@ private func renewalReminders(
         )
         let reminderDay = billing.adding(days: -subscription.reminderLeadDays)
         guard reminderDay <= window.upperBound else { break }
+        if acknowledgedChargeDays.contains(billing) {
+            // "Keeping it" silences this charge only (spec §6.4): no lead, no
+            // same-day, no catch-up. The next cycle's charge plans normally.
+            occurrence += 1
+            continue
+        }
         if window.contains(reminderDay) {
             reminders.append(PlannedReminder(subscriptionID: subscription.id, day: reminderDay, kind: .renewal))
         } else if reminderDay < today, !caughtUp {

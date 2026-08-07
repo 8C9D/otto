@@ -50,6 +50,7 @@ struct TodayView: View {
             if let notifications = model.notifications {
                 notificationStatusSection(notifications)
             }
+            unreadableRecordsSection(count: model.subscriptionsStore.unreadableCount)
             Section(String(localized: "Needs action")) {
                 if overview.needsAction.isEmpty {
                     // Spec §7.1: when empty, say so plainly - never a blank section.
@@ -89,6 +90,29 @@ struct TodayView: View {
             }
         }
         .refreshable { await model.subscriptionsStore.refresh() }
+    }
+
+    /// Spec §5.2b (v1.4): unmappable records surface as ONE aggregate
+    /// needs-review card, never one per record, and never silently.
+    @ViewBuilder
+    private func unreadableRecordsSection(count: Int) -> some View {
+        if count > 0 {
+            Section(String(localized: "Needs review")) {
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String(localized: "^[\(count) subscription](inflect: true) couldn't be read"))
+                            .font(.headline)
+                        Text(String(localized: "The records exist but Otto can't display them. Nothing was deleted."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
     }
 
     @ViewBuilder
