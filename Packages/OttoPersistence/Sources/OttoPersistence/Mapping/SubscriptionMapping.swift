@@ -6,7 +6,7 @@ import OttoDomain
 // nil-required-field and invalid-value case is decided here, explicitly, per
 // the policy in MappingError.
 
-extension OttoSchemaV2.StoredSubscription {
+extension OttoSchemaV3.StoredSubscription {
     private static let entityName = "StoredSubscription"
 
     func toDomain() throws -> Subscription {
@@ -52,9 +52,9 @@ extension OttoSchemaV2.StoredSubscription {
             reminderLeadDays: try require(reminderLeadDays, entity: entity, field: "reminderLeadDays"),
             sameDayReminder: sameDayReminder,
             pauseEpisodes: episodes,
-            lastMaterializedThrough: try CalendarDay.storedOptional(
-                lastMaterializedThrough, entity: entity, field: "lastMaterializedThrough"
-            ),
+            // Not stored here since Wave 6A (spec §5.3): the watermark lives in
+            // the device-state store, and `OttoStore` rejoins it after mapping.
+            lastMaterializedThrough: nil,
             trial: domainTrial,
             paymentMethodID: paymentMethodID,
             cancellationURL: try URL.storedOptional(cancellationURL, entity: entity, field: "cancellationURL"),
@@ -91,7 +91,6 @@ extension OttoSchemaV2.StoredSubscription {
         cycleStartDay = domain.cycleStartDay.yyyymmdd
         reminderLeadDays = domain.reminderLeadDays
         sameDayReminder = domain.sameDayReminder
-        lastMaterializedThrough = domain.lastMaterializedThrough?.yyyymmdd
         paymentMethodID = domain.paymentMethodID
         cancellationURL = domain.cancellationURL?.absoluteString
         cancellationNotes = domain.cancellationNotes
@@ -102,11 +101,11 @@ extension OttoSchemaV2.StoredSubscription {
         deletedAt = domain.deletedAt
 
         if let domainTrial = domain.trial {
-            let record: OttoSchemaV2.StoredTrialTerm
+            let record: OttoSchemaV3.StoredTrialTerm
             if let existing = trial {
                 record = existing
             } else {
-                record = OttoSchemaV2.StoredTrialTerm()
+                record = OttoSchemaV3.StoredTrialTerm()
                 trial = record
             }
             // Written verbatim, tombstone included: a live domain trial carries a nil
@@ -130,7 +129,7 @@ extension OttoSchemaV2.StoredSubscription {
             if let existing = storedByID[episode.id] {
                 existing.update(from: episode)
             } else {
-                let record = OttoSchemaV2.StoredPauseEpisode()
+                let record = OttoSchemaV3.StoredPauseEpisode()
                 record.subscription = self
                 record.update(from: episode)
             }
@@ -142,7 +141,7 @@ extension OttoSchemaV2.StoredSubscription {
     }
 }
 
-extension OttoSchemaV2.StoredTrialTerm {
+extension OttoSchemaV3.StoredTrialTerm {
     private static let entityName = "StoredTrialTerm"
 
     func toDomain() throws -> TrialTerm {

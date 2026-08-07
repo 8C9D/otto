@@ -1,7 +1,7 @@
 import Foundation
 import OttoDomain
 
-extension OttoSchemaV2.StoredPaymentMethod {
+extension OttoSchemaV3.StoredPaymentMethod {
     private static let entityName = "StoredPaymentMethod"
 
     func toDomain() throws -> PaymentMethod {

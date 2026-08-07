@@ -45,11 +45,12 @@ extension OttoStore: BillingEventRepository {
 
         // The window reaches back to the stored watermark (spec §5.3, v1.5), so a
         // charge date that fell between passes - the founding scenario's
-        // conversion - still gets its row. The STORED record's watermark governs,
-        // not the passed value's: the caller's snapshot may predate the last pass.
-        // A nil watermark is a pre-v1.5 row; it materializes from today once and
-        // carries a watermark from this pass on.
-        let storedWatermark = parent.lastMaterializedThrough.flatMap(CalendarDay.init(yyyymmdd:))
+        // conversion - still gets its row. The STORED watermark governs, not the
+        // passed value's: the caller's snapshot may predate the last pass. Since
+        // Wave 6A it lives in the device-state store (spec §5.3), one row per
+        // subscription. A nil watermark is a pre-v1.5 row; it materializes from
+        // today once and carries a watermark from this pass on.
+        let storedWatermark = try deviceWatermark(for: subscription.id)
         let windowStart = min(storedWatermark ?? today, today)
         let windowEnd = today.adding(days: horizonDays + maxReminderLeadDays)
 
@@ -84,9 +85,9 @@ extension OttoStore: BillingEventRepository {
         )
         if chargeDates.isEmpty {
             // An empty window was still observed: nothing was expected in it, and
-            // the watermark records that so the next pass need not re-ask.
-            parent.lastMaterializedThrough = windowEnd.yyyymmdd
-            try modelContext.save()
+            // the watermark records that so the next pass need not re-ask. Only
+            // the device store changes here - there are no rows to vouch for.
+            try setDeviceWatermark(windowEnd, for: subscription.id)
             return []
         }
 
@@ -118,15 +119,18 @@ extension OttoStore: BillingEventRepository {
             record.update(from: event)
             created.append(event)
         }
-        // Advanced in the same save as the rows it vouches for: the watermark
+        // Advanced only AFTER the rows it vouches for commit: the watermark
         // asserts "every expected charge through this day has a row", and must
-        // never persist without them (spec §5.3, v1.5). `updatedAt` is left
-        // alone - this is scheduler bookkeeping, not a user edit, and bumping it
-        // would make every pass look like a user modification to conflict
-        // resolution (spec §5.3, v1.6: the watermark is device-local, never
-        // synced, and Wave 6 must move it out of the CloudKit-backed schema).
-        parent.lastMaterializedThrough = windowEnd.yyyymmdd
+        // never persist without them (spec §5.3, v1.5). The two stores cannot
+        // share one atomic save since Wave 6A moved the watermark out of the
+        // synced schema, so the ordering carries the invariant - a crash
+        // between the saves leaves rows without an advanced watermark, and the
+        // next pass re-observes them idempotently. `updatedAt` is left alone -
+        // this is scheduler bookkeeping, not a user edit, and bumping it would
+        // make every pass look like a user modification to conflict resolution
+        // (spec §5.3, v1.6: the watermark is device-local and never synced).
         try modelContext.save()
+        try setDeviceWatermark(windowEnd, for: subscription.id)
         return created
     }
 

@@ -1,7 +1,7 @@
 import Foundation
 import OttoDomain
 
-extension OttoSchemaV2.StoredPauseEpisode {
+extension OttoSchemaV3.StoredPauseEpisode {
     private static let entityName = "StoredPauseEpisode"
 
     func toDomain() throws -> PauseEpisode {

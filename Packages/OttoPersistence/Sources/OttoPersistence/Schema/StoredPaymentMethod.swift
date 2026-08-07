@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV2 {
+extension OttoSchemaV3 {
     /// Persistence record for `PaymentMethod` (spec §5.5). Subscriptions reference
     /// it by scalar `paymentMethodID`, matching the domain - no relationship, and
     /// a dangling id is a valid state that renders as "Unknown payment method"

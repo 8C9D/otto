@@ -49,12 +49,14 @@ struct SerializedPersistenceTests {}
 /// containers is safe.
 let containerCreationLock = NSLock()
 
-/// A fresh isolated in-memory store per test.
-func makeStore() throws -> (store: OttoStore, container: ModelContainer) {
+/// A fresh isolated in-memory store per test. The tuple's second element is
+/// the container PAIR (main + device state) so a test can open its own context
+/// on the main store or build a second `OttoStore` over the same data.
+func makeStore() throws -> (store: OttoStore, containers: OttoContainers) {
     containerCreationLock.lock()
     defer { containerCreationLock.unlock() }
-    let container = try OttoContainerFactory.inMemoryContainer()
-    return (OttoStore(modelContainer: container), container)
+    let containers = try OttoContainerFactory.inMemoryContainers()
+    return (OttoStore(containers: containers), containers)
 }
 
 /// A fully populated subscription so round-trips exercise every field.

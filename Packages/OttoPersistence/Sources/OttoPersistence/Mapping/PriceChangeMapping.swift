@@ -1,7 +1,7 @@
 import Foundation
 import OttoDomain
 
-extension OttoSchemaV2.StoredPriceChange {
+extension OttoSchemaV3.StoredPriceChange {
     private static let entityName = "StoredPriceChange"
 
     func toDomain() throws -> PriceChange {

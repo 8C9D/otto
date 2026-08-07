@@ -1,7 +1,7 @@
 import Foundation
 import OttoDomain
 
-extension OttoSchemaV2.StoredCancellationEpisode {
+extension OttoSchemaV3.StoredCancellationEpisode {
     private static let entityName = "StoredCancellationEpisode"
 
     func toDomain() throws -> CancellationEpisode {

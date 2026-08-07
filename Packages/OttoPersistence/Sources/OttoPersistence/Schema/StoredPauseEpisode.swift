@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV2 {
+extension OttoSchemaV3 {
     /// Persistence record for `PauseEpisode` (spec §5.3a) - one row per pause,
     /// reached through the one-to-many relationship, because pausing recurs.
     /// Like `StoredTrialTerm`, no scalar `subscriptionID`: the domain embeds

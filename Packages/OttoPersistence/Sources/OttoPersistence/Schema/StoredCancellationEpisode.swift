@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV2 {
+extension OttoSchemaV3 {
     /// Persistence record for `CancellationEpisode` (spec §5.4, §5.3a) - one row
     /// per cancellation, reached through the one-to-many relationship, because a
     /// subscription can be cancelled, resubscribed, and cancelled again. The

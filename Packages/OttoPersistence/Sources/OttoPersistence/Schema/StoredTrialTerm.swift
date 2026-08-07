@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV2 {
+extension OttoSchemaV3 {
     /// Persistence record for `TrialTerm` (spec §5.2). The domain embeds the trial
     /// in its subscription; here it is a separate record reached through the
     /// one-to-one relationship, which is what CloudKit can sync.

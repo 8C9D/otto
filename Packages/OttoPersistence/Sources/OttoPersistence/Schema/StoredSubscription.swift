@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-extension OttoSchemaV2 {
+extension OttoSchemaV3 {
     /// Persistence record for `Subscription` (spec §5.1). Fields the domain requires
     /// are stored optional and their absence is a mapping error; only fields with a
     /// true domain default carry a storage default, so a partially synced record can
@@ -10,6 +10,11 @@ extension OttoSchemaV2 {
     /// V2 (spec §5.3a): the `pausedOn`/`pauseEndsOn` pair became the one-to-many
     /// `pauseEpisodes`, and the one-to-one `cancellationRecord` slot became the
     /// one-to-many `cancellationEpisodes`.
+    ///
+    /// V3 (spec §5.3, Wave 6A): `lastMaterializedThrough` moved to the
+    /// device-state store (`StoredMaterializationWatermark`) - the watermark
+    /// records what THIS DEVICE has observed, not anything about the
+    /// subscription, and it must be out of this schema before CloudKit syncs it.
     @Model
     final class StoredSubscription {
         var id: UUID?
@@ -25,12 +30,6 @@ extension OttoSchemaV2 {
         var cycleStartDay: Int?
         var reminderLeadDays: Int?
         var sameDayReminder: Bool = false
-        /// yyyymmdd - the §5.3 materialization watermark (added v1.5). Optional
-        /// like every stored field, which doubles as the migration: pre-v1.5 rows
-        /// read nil, materialize from today once, and carry a watermark after
-        /// their first pass. Device-local; Wave 6's first schema act is moving it
-        /// into the local-only configuration before CloudKit sees the schema.
-        var lastMaterializedThrough: Int?
         var paymentMethodID: UUID?
         var cancellationURL: String?
         var cancellationNotes: String?

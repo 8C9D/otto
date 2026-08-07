@@ -1,28 +1,16 @@
+import Foundation
 import SwiftData
 
-// The persistence schema, versioned from the first commit (Wave 2 constraint 4):
-// once CloudKit is on (Wave 6), only lightweight-migration-compatible changes are
-// permitted, so the migration machinery has to predate the constraint.
+// The FROZEN second schema version - Wave 8.5's model lock (spec §5.3a), the
+// shape that replaced V1's one-to-one cancellation slot and pause-field pair
+// with episode tables. Kept byte-for-byte because it is the source side of the
+// V2→V3 migration and must match existing stores exactly. Never edit these
+// models; schema changes happen in a new version.
 //
-// Every @Model here is a PERSISTENCE RECORD ONLY, and internal on purpose: nothing
-// above layer 2 can even name one. The shapes are deliberately CloudKit-compatible
-// now, ahead of Wave 6, because retrofitting them later means migrating data that
-// already exists on devices:
-//   - no @Attribute(.unique) anywhere
-//   - every property optional or carrying a default
-//   - every relationship optional, with an explicit inverse
-//   - no .deny delete rules
-// The resulting optionals-with-defaults ugliness is absorbed entirely by the
-// mapping layer; the domain never sees it.
-//
-// Storage shapes (decision record, Wave 2): calendar days are single Ints in
-// yyyymmdd form, billing cycles are two scalar columns, enums are stable raw
-// strings, money is integer cents, and UUIDs are client-generated (spec §3.5).
-//
-// V2 is Wave 8.5's model lock (spec §5.3a): the one-to-one cancellation slot
-// and the single pause-field pair become one-to-many episode tables - the one
-// change class that cannot be made cheaply after Wave 6, made while it is
-// still cheap. This is the schema-freeze candidate.
+// Wave 6A (spec §5.3) moved `lastMaterializedThrough` off `StoredSubscription`:
+// the watermark is device bookkeeping, and it must be out of the synced schema
+// before CloudKit ever sees it. V3 drops the field; the migration carries the
+// values into the device-state store.
 enum OttoSchemaV2: VersionedSchema {
     static let versionIdentifier = Schema.Version(2, 0, 0)
 
@@ -39,12 +27,165 @@ enum OttoSchemaV2: VersionedSchema {
     }
 }
 
-// The current schema version. Code outside the Schema directory refers to records
-// through these aliases only, so moving to a V3 is a one-line change per model.
-typealias StoredSubscription = OttoSchemaV2.StoredSubscription
-typealias StoredTrialTerm = OttoSchemaV2.StoredTrialTerm
-typealias StoredBillingEvent = OttoSchemaV2.StoredBillingEvent
-typealias StoredCancellationEpisode = OttoSchemaV2.StoredCancellationEpisode
-typealias StoredPauseEpisode = OttoSchemaV2.StoredPauseEpisode
-typealias StoredPriceChange = OttoSchemaV2.StoredPriceChange
-typealias StoredPaymentMethod = OttoSchemaV2.StoredPaymentMethod
+extension OttoSchemaV2 {
+    @Model
+    final class StoredSubscription {
+        var id: UUID?
+        var name: String?
+        var vendorURL: String?
+        var category: String?
+        var status: String?
+        var amountCents: Int?
+        var currencyCode: String?
+        var cycleUnit: String?
+        var cycleInterval: Int?
+        /// yyyymmdd
+        var cycleStartDay: Int?
+        var reminderLeadDays: Int?
+        var sameDayReminder: Bool = false
+        /// yyyymmdd - V2's device-local watermark, migrated into the
+        /// device-state store by the V2→V3 stage.
+        var lastMaterializedThrough: Int?
+        var paymentMethodID: UUID?
+        var cancellationURL: String?
+        var cancellationNotes: String?
+        /// yyyymmdd
+        var lastUsedDate: Int?
+        var notes: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV2.StoredTrialTerm.subscription)
+        var trial: OttoSchemaV2.StoredTrialTerm?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV2.StoredBillingEvent.subscription)
+        var billingEvents: [OttoSchemaV2.StoredBillingEvent]?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV2.StoredCancellationEpisode.subscription)
+        var cancellationEpisodes: [OttoSchemaV2.StoredCancellationEpisode]?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV2.StoredPauseEpisode.subscription)
+        var pauseEpisodes: [OttoSchemaV2.StoredPauseEpisode]?
+
+        @Relationship(deleteRule: .cascade, inverse: \OttoSchemaV2.StoredPriceChange.subscription)
+        var priceChanges: [OttoSchemaV2.StoredPriceChange]?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredTrialTerm {
+        var id: UUID?
+        /// yyyymmdd
+        var startDate: Int?
+        var lengthDays: Int?
+        var bufferDays: Int?
+        var convertsToAmountCents: Int?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV2.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredBillingEvent {
+        var id: UUID?
+        var subscriptionID: UUID?
+        /// yyyymmdd
+        var expectedDate: Int?
+        var expectedAmountCents: Int?
+        var state: String?
+        var userConfirmedAt: Date?
+        var acknowledgedAt: Date?
+        var actualAmountCents: Int?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV2.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredCancellationEpisode {
+        var id: UUID?
+        var subscriptionID: UUID?
+        var markedCancelledAt: Date?
+        var statusAtStart: String?
+        /// yyyymmdd
+        var nextChargeDateIfNotCancelled: Int?
+        var expectedChargeAmountCents: Int?
+        var verificationState: String?
+        var unansweredCheckCount: Int?
+        var verifiedAt: Date?
+        var evidenceNote: String?
+        var endedAt: Date?
+        var outcome: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV2.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredPauseEpisode {
+        var id: UUID?
+        /// yyyymmdd
+        var startedOn: Int?
+        /// yyyymmdd
+        var scheduledResumeOn: Int?
+        /// yyyymmdd
+        var endedOn: Int?
+        var outcome: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV2.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredPriceChange {
+        var id: UUID?
+        var subscriptionID: UUID?
+        /// yyyymmdd
+        var effectiveDate: Int?
+        var oldAmountCents: Int?
+        var newAmountCents: Int?
+        var source: String?
+        var note: String?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        var subscription: OttoSchemaV2.StoredSubscription?
+
+        init() {}
+    }
+
+    @Model
+    final class StoredPaymentMethod {
+        var id: UUID?
+        var label: String?
+        var last4: String?
+        var issuer: String?
+        var expiryMonth: Int?
+        var expiryYear: Int?
+        var isDefault: Bool = false
+        var createdAt: Date?
+        var updatedAt: Date?
+        var deletedAt: Date?
+
+        init() {}
+    }
+}

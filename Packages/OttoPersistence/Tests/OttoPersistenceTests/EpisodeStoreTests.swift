@@ -193,7 +193,7 @@ extension SerializedPersistenceTests {
 
         @Test("a pending cancellation materializes nothing and leaves the watermark alone")
         func pendingFreezesWatermark() async throws {
-            let (store, container) = try makeStore()
+            let (store, _) = try makeStore()
             let pending = try makeSubscription(
                 status: .cancellationPending,
                 cycleStartDay: try day(2026, 1, 15),
@@ -207,12 +207,11 @@ extension SerializedPersistenceTests {
             )
 
             #expect(created.isEmpty)
-            let context = ModelContext(container)
-            let stored = try #require(try context.fetch(FetchDescriptor<StoredSubscription>()).first)
             // NOT advanced to the window's end: an un-cancel re-expects these
             // dates retroactively, and a vouched-for-but-unobserved window is the
             // founding scenario's shape.
-            #expect(stored.lastMaterializedThrough == 20_260_801)
+            let reloaded = try #require(await store.subscription(withID: pending.id))
+            #expect(reloaded.lastMaterializedThrough == (try day(2026, 8, 1)))
         }
 
         @Test("un-cancel then next pass: every charge date the watch covered gets its row")

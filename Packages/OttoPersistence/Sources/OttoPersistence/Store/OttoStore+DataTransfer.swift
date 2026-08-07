@@ -16,8 +16,15 @@ extension OttoStore: DataTransferRepository {
         let cancellations = try modelContext.fetch(FetchDescriptor<StoredCancellationEpisode>())
         let changes = try modelContext.fetch(FetchDescriptor<StoredPriceChange>())
         return OttoDataSnapshot(
-            subscriptions: try subscriptions.map { try $0.toDomain() }
-                .sorted { $0.id.uuidString < $1.id.uuidString },
+            // The device watermarks are rejoined here even though the export
+            // file excludes them: the import MERGE resolves against this
+            // snapshot, and §5.3 requires the stored ledger progress to
+            // survive an import untouched - a snapshot without them would
+            // launder every merge into a silent watermark wipe.
+            subscriptions: try joiningDeviceWatermarks(
+                try subscriptions.map { try $0.toDomain() }
+                    .sorted { $0.id.uuidString < $1.id.uuidString }
+            ),
             paymentMethods: try methods.map { try $0.toDomain() }
                 .sorted { $0.id.uuidString < $1.id.uuidString },
             billingEvents: try events.map { try $0.toDomain() }
@@ -56,6 +63,27 @@ extension OttoStore: DataTransferRepository {
         }
         insert(snapshot)
         try modelContext.save()
+
+        // The device watermarks follow the restore: whatever the snapshot
+        // carries replaces this device's rows (nil for a file-borne snapshot -
+        // the importing device's ledger starts observing from its own today,
+        // spec §5.3; the merge path preserves them via `completeSnapshot`).
+        // Ordered after the main save so a refused or failed restore leaves
+        // device state exactly as it was, matching the atomicity contract
+        // above; the crash window between the two saves is accepted and
+        // documented in docs/cloudkit-readiness.md.
+        let rows = try deviceStateContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
+        for row in rows { deviceStateContext.delete(row) }
+        for subscription in snapshot.subscriptions {
+            guard let watermark = subscription.lastMaterializedThrough else { continue }
+            let row = StoredMaterializationWatermark()
+            deviceStateContext.insert(row)
+            row.subscriptionID = subscription.id
+            row.lastMaterializedThrough = watermark.yyyymmdd
+        }
+        if deviceStateContext.hasChanges {
+            try deviceStateContext.save()
+        }
     }
 
     /// Every reason a restore could be refused, checked before the wipe.

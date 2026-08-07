@@ -29,8 +29,8 @@ struct OttoApp: App {
     }
 
     private static func assemble() throws -> (model: AppModel, coordinator: NotificationCoordinator) {
-        let container = try OttoContainerFactory.localContainer()
-        let store = OttoStore(modelContainer: container)
+        let containers = try OttoContainerFactory.localContainers()
+        let store = OttoStore(containers: containers)
         let dates = DateProvider.live
 
         let client = LiveNotificationClient()

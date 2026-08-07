@@ -1,6 +1,7 @@
 import Foundation
 import OttoDomain
 import OttoRepositories
+import SQLite3
 import SwiftData
 import Testing
 @testable import OttoPersistence
@@ -119,30 +120,45 @@ extension SerializedPersistenceTests {
             return record
         }
 
-        /// The whole V1-touching phase holds the shared creation lock (see
-        /// TestSupport): building the V1 schema while another test builds V2 races
-        /// SwiftData's name-keyed registry. Synchronous so the lock is legal.
-        private func migratedStore(at url: URL) throws -> OttoStore {
+        /// The whole legacy-touching phase holds the shared creation lock (see
+        /// TestSupport): building the V1/V2 schemas while another test builds V3
+        /// races SwiftData's name-keyed registry. Synchronous so the lock is legal.
+        private func migratedStore(
+            at url: URL, deviceStateURL: URL, seed: (URL) throws -> Void
+        ) throws -> (store: OttoStore, containers: OttoContainers) {
             containerCreationLock.lock()
             defer { containerCreationLock.unlock() }
-            try writeV1Store(at: url)
-            // Reopen through the migration plan - what the app does on first
-            // launch after the update.
-            let migrated = try ModelContainer(
-                for: Schema(versionedSchema: OttoSchemaV2.self),
-                migrationPlan: OttoMigrationPlan.self,
-                configurations: [ModelConfiguration(url: url, cloudKitDatabase: .none)]
+            try seed(url)
+            // Reopen through the factory - what the app does on first launch
+            // after the update. The factory hands the migration plan the
+            // device-state store's location for the watermark carry-over.
+            let containers = try OttoContainerFactory.onDiskContainers(
+                mainURL: url, deviceStateURL: deviceStateURL
             )
-            return OttoStore(modelContainer: migrated)
+            return (OttoStore(containers: containers), containers)
+        }
+
+        /// A fresh pair of on-disk store URLs, cleaned up by the caller.
+        private func storeURLs() -> (main: URL, deviceState: URL) {
+            let base = FileManager.default.temporaryDirectory
+                .appendingPathComponent("otto-migration-\(UUID().uuidString)")
+            return (
+                base.appendingPathExtension("main.store"),
+                base.appendingPathExtension("device.store")
+            )
         }
 
         @Test("a pre-8.5 store migrates its pause fields and cancellation slot into episodes, losslessly")
         func v1StoreMigrates() async throws {
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("otto-migration-\(UUID().uuidString).store")
-            defer { try? FileManager.default.removeItem(at: url) }
+            let urls = storeURLs()
+            defer {
+                try? FileManager.default.removeItem(at: urls.main)
+                try? FileManager.default.removeItem(at: urls.deviceState)
+            }
 
-            let store = try migratedStore(at: url)
+            let (store, _) = try migratedStore(
+                at: urls.main, deviceStateURL: urls.deviceState, seed: writeV1Store
+            )
 
             // The dated pause became one OPEN episode carrying both dates.
             let datedPause = try #require(await store.subscription(withID: try fixtureUUID(1)))
@@ -194,5 +210,160 @@ extension SerializedPersistenceTests {
             #expect(finished.verifiedAt == Date(timeIntervalSince1970: 6_000))
             #expect(archived.currentPauseEpisode?.startedOn == (try day(2026, 3, 1)))
         }
+
+        // MARK: - Wave 6A: the watermark relocation (spec §5.3)
+
+        /// Builds a V2 store on disk, exactly as a pre-6A Otto wrote it:
+        /// three subscriptions, two with watermarks, one without.
+        private func writeV2Store(at url: URL) throws {
+            let container = try ModelContainer(
+                for: Schema(versionedSchema: OttoSchemaV2.self),
+                configurations: [ModelConfiguration(url: url, cloudKitDatabase: .none)]
+            )
+            let context = ModelContext(container)
+            func v2Subscription(_ index: Int, watermark: Int?) throws {
+                let record = OttoSchemaV2.StoredSubscription()
+                context.insert(record)
+                record.id = try fixtureUUID(index)
+                record.name = "V2 fixture \(index)"
+                record.category = "other"
+                record.status = "active"
+                record.amountCents = 1000 + index
+                record.currencyCode = "CAD"
+                record.cycleUnit = "month"
+                record.cycleInterval = 1
+                record.cycleStartDay = 20_260_115
+                record.reminderLeadDays = 3
+                record.lastMaterializedThrough = watermark
+                record.createdAt = Date(timeIntervalSince1970: 1_000)
+                record.updatedAt = Date(timeIntervalSince1970: 2_000)
+            }
+            try v2Subscription(1, watermark: 20_260_901)
+            try v2Subscription(2, watermark: 20_261_120)
+            try v2Subscription(3, watermark: nil)
+            try context.save()
+        }
+
+        @Test("the V2→V3 relocation carries every watermark across, and the synced store file provably loses the column")
+        func v2StoreRelocatesWatermarks() async throws {
+            let urls = storeURLs()
+            defer {
+                try? FileManager.default.removeItem(at: urls.main)
+                try? FileManager.default.removeItem(at: urls.deviceState)
+            }
+
+            let (store, containers) = try migratedStore(
+                at: urls.main, deviceStateURL: urls.deviceState, seed: writeV2Store
+            )
+
+            // The domain answers are identical to pre-relocation V2.
+            let first = try #require(await store.subscription(withID: try fixtureUUID(1)))
+            #expect(first.lastMaterializedThrough == (try day(2026, 9, 1)))
+            let second = try #require(await store.subscription(withID: try fixtureUUID(2)))
+            #expect(second.lastMaterializedThrough == (try day(2026, 11, 20)))
+            let third = try #require(await store.subscription(withID: try fixtureUUID(3)))
+            #expect(third.lastMaterializedThrough == nil)
+
+            // The device-state store holds exactly the carried rows.
+            let deviceContext = ModelContext(containers.deviceState)
+            let rows = try deviceContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
+            let carried = Dictionary(
+                rows.compactMap { row in row.subscriptionID.map { ($0, row.lastMaterializedThrough) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+            #expect(carried == [
+                try fixtureUUID(1): 20_260_901,
+                try fixtureUUID(2): 20_261_120
+            ])
+
+            // The artifact itself, not the schema declaration (the Wave 4
+            // lesson): the migrated MAIN store file has no watermark column and
+            // no watermark table; the DEVICE store file has the table.
+            let mainColumns = try sqliteColumns(of: "ZSTOREDSUBSCRIPTION", at: urls.main)
+            #expect(mainColumns.contains("ZNAME"))
+            #expect(!mainColumns.contains("ZLASTMATERIALIZEDTHROUGH"))
+            #expect(!(try sqliteTables(at: urls.main)).contains("ZSTOREDMATERIALIZATIONWATERMARK"))
+            #expect((try sqliteTables(at: urls.deviceState)).contains("ZSTOREDMATERIALIZATIONWATERMARK"))
+        }
+
+        @Test("a V2 store with watermarks refuses to migrate without a device-state destination, and the refused store retries losslessly")
+        func migrationRefusesSilentWatermarkLoss() async throws {
+            let urls = storeURLs()
+            defer {
+                try? FileManager.default.removeItem(at: urls.main)
+                try? FileManager.default.removeItem(at: urls.deviceState)
+            }
+
+            let (refused, store) = try refusedThenRetriedStore(urls)
+            // No destination for the carry-over means dropping the column would
+            // lose the watermarks silently, so the migration must fail instead...
+            #expect(refused)
+            // ...and the refusal happened BEFORE the destructive stage: the same
+            // store reopened through the factory migrates completely.
+            let first = try #require(await store.subscription(withID: try fixtureUUID(1)))
+            #expect(first.lastMaterializedThrough == (try day(2026, 9, 1)))
+        }
+
+        /// Synchronous so holding the creation lock is legal (see TestSupport).
+        private func refusedThenRetriedStore(
+            _ urls: (main: URL, deviceState: URL)
+        ) throws -> (refused: Bool, store: OttoStore) {
+            containerCreationLock.lock()
+            defer { containerCreationLock.unlock() }
+            try writeV2Store(at: urls.main)
+
+            OttoMigrationPlan.deviceStateStoreURL.withLock { $0 = nil }
+            var refused = false
+            do {
+                _ = try ModelContainer(
+                    for: Schema(versionedSchema: OttoSchemaV3.self),
+                    migrationPlan: OttoMigrationPlan.self,
+                    configurations: [ModelConfiguration(url: urls.main, cloudKitDatabase: .none)]
+                )
+            } catch {
+                refused = true
+            }
+
+            let containers = try OttoContainerFactory.onDiskContainers(
+                mainURL: urls.main, deviceStateURL: urls.deviceState
+            )
+            return (refused, OttoStore(containers: containers))
+        }
+
     }
+}
+
+// MARK: - Raw SQLite inspection (file scope: lint forbids deeper nesting)
+
+private enum SQLiteInspectionError: Error {
+    case cannotOpen(URL)
+    case cannotPrepare(String)
+}
+
+private func sqliteTables(at url: URL) throws -> [String] {
+    try sqliteStrings(at: url, query: "SELECT name FROM sqlite_master WHERE type = 'table'")
+}
+
+private func sqliteColumns(of table: String, at url: URL) throws -> [String] {
+    try sqliteStrings(at: url, query: "SELECT name FROM pragma_table_info('\(table)')")
+}
+
+private func sqliteStrings(at url: URL, query: String) throws -> [String] {
+    var database: OpaquePointer?
+    guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+        throw SQLiteInspectionError.cannotOpen(url)
+    }
+    defer { sqlite3_close(database) }
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK else {
+        throw SQLiteInspectionError.cannotPrepare(query)
+    }
+    defer { sqlite3_finalize(statement) }
+    var values: [String] = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+        if let text = sqlite3_column_text(statement, 0) {
+            values.append(String(cString: text))
+        }
+    }
+    return values
 }

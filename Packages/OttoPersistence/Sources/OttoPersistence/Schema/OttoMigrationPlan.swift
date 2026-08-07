@@ -5,16 +5,33 @@ import Synchronization
 
 /// The migration plan. V1→V2 is Wave 8.5's model lock (spec §5.3a): the
 /// one-to-one cancellation slot and the single pause-field pair become
-/// one-to-many episode tables. A CUSTOM stage, permitted exactly because
-/// CloudKit is not on yet - after Wave 6 only lightweight stages are allowed,
-/// which is why this wave exists at all.
+/// one-to-many episode tables. V2→V3 is Wave 6A's relocation (spec §5.3): the
+/// watermark leaves the synced schema for the device-state store. Both are
+/// CUSTOM stages, permitted exactly because CloudKit is not on yet - after
+/// Wave 6B only lightweight stages are allowed.
 enum OttoMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [OttoSchemaV1.self, OttoSchemaV2.self]
+        [OttoSchemaV1.self, OttoSchemaV2.self, OttoSchemaV3.self]
     }
 
     static var stages: [MigrationStage] {
-        [migrateV1toV2]
+        [migrateV1toV2, migrateV2toV3]
+    }
+
+    /// Where the V2→V3 stage writes the carried watermarks. Set by
+    /// `OttoContainerFactory` (or a migration test) BEFORE the main container
+    /// opens; a V2 store with watermarks refuses to migrate without it, because
+    /// proceeding would drop them silently (spec §5.3: an advanced watermark
+    /// lost is re-materialization; lost SILENTLY it is unobserved charge dates).
+    static let deviceStateStoreURL = Mutex<URL?>(nil)
+
+    enum MigrationError: Error {
+        /// The V2 store carries watermarks but no device-state store URL was
+        /// provided to carry them into.
+        case deviceStateStoreUnavailable
+        /// The carried watermarks did not read back from the device-state
+        /// store; the migration aborts BEFORE the schema drops the column.
+        case watermarkCarryOverIncomplete(expected: Int, found: Int)
     }
 
     // What willMigrate reads out of the V1 store for didMigrate to write into
@@ -156,5 +173,64 @@ enum OttoMigrationPlan: SchemaMigrationPlan {
 
             try context.save()
         }
+    )
+
+    /// The Wave 6A stage (spec §5.3). All the work happens in `willMigrate`,
+    /// deliberately: the watermarks are written into the device-state store -
+    /// their own file, their own container - and VERIFIED by readback while the
+    /// V2 column still exists. A crash or failure at any point leaves the main
+    /// store at V2 and the carry-over re-runs (the upsert makes it idempotent);
+    /// only after the values durably exist twice does the destructive stage
+    /// drop the column. There is no window in which the values exist nowhere.
+    static let migrateV2toV3 = MigrationStage.custom(
+        fromVersion: OttoSchemaV2.self,
+        toVersion: OttoSchemaV3.self,
+        willMigrate: { context in
+            var carried: [(subscriptionID: UUID, watermark: Int)] = []
+            for record in try context.fetch(FetchDescriptor<OttoSchemaV2.StoredSubscription>()) {
+                guard let id = record.id, let watermark = record.lastMaterializedThrough else { continue }
+                carried.append((id, watermark))
+            }
+            guard !carried.isEmpty else { return }
+            guard let url = deviceStateStoreURL.withLock({ $0 }) else {
+                throw MigrationError.deviceStateStoreUnavailable
+            }
+
+            let schema = Schema(versionedSchema: OttoDeviceStateSchemaV1.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)
+            )
+            let deviceContext = ModelContext(container)
+            let existing = try deviceContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
+            var rowsByID: [UUID: StoredMaterializationWatermark] = [:]
+            for row in existing {
+                if let id = row.subscriptionID { rowsByID[id] = row }
+            }
+            for carry in carried {
+                if let row = rowsByID[carry.subscriptionID] {
+                    row.lastMaterializedThrough = carry.watermark
+                } else {
+                    let row = StoredMaterializationWatermark()
+                    deviceContext.insert(row)
+                    row.subscriptionID = carry.subscriptionID
+                    row.lastMaterializedThrough = carry.watermark
+                }
+            }
+            try deviceContext.save()
+
+            // The carry-over is asserted, not assumed: every value must read
+            // back from the device store before the column is allowed to drop.
+            let persisted = Dictionary(
+                try deviceContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
+                    .compactMap { row in row.subscriptionID.map { ($0, row.lastMaterializedThrough) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let found = carried.count { persisted[$0.subscriptionID] == $0.watermark }
+            guard found == carried.count else {
+                throw MigrationError.watermarkCarryOverIncomplete(expected: carried.count, found: found)
+            }
+        },
+        didMigrate: nil
     )
 }

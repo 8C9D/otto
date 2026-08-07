@@ -11,8 +11,8 @@ extension SerializedPersistenceTests {
 
         /// Seeds a store through its public save paths with every model type,
         /// including a soft-deleted subscription and a stored watermark.
-        private func seedRichStore() async throws -> (store: OttoStore, container: ModelContainer) {
-            let (store, container) = try makeStore()
+        private func seedRichStore() async throws -> (store: OttoStore, containers: OttoContainers) {
+            let (store, containers) = try makeStore()
 
             let active = try makeSubscription(
                 index: 1,
@@ -55,7 +55,7 @@ extension SerializedPersistenceTests {
 
             // The tombstoned subscription and its cascade stay in the snapshot.
             try await store.deleteSubscription(withID: doomed.id, at: Date(timeIntervalSince1970: 9_000))
-            return (store, container)
+            return (store, containers)
         }
 
         private func twicePausedSubscription() throws -> Subscription {
@@ -199,9 +199,9 @@ extension SerializedPersistenceTests {
 
         @Test("an unreadable record fails the export loudly - a backup with a silent hole is worse than none")
         func exportRefusesUnmappableRecord() async throws {
-            let (store, container) = try makeStore()
+            let (store, containers) = try makeStore()
             try await store.save(try makeSubscription(index: 1, cycleStartDay: try day(2026, 8, 15)))
-            let context = ModelContext(container)
+            let context = ModelContext(containers.main)
             let record = try #require(try context.fetch(FetchDescriptor<StoredSubscription>()).first)
             record.status = "hibernating"
             try context.save()

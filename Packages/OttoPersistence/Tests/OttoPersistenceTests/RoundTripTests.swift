@@ -66,7 +66,7 @@ extension SerializedPersistenceTests {
 
         @Test("removing the trial on save soft-deletes its record, and a re-added trial reuses it")
         func trialLifecycle() async throws {
-            let (store, container) = try makeStore()
+            let (store, containers) = try makeStore()
             let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
             var subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
             try await store.save(subscription)
@@ -76,7 +76,7 @@ extension SerializedPersistenceTests {
             try await store.save(subscription)
             #expect(try await store.subscription(withID: subscription.id)?.trial == nil)
 
-            let context = ModelContext(container)
+            let context = ModelContext(containers.main)
             let storedTrials = try context.fetch(FetchDescriptor<StoredTrialTerm>())
             #expect(storedTrials.count == 1)
             #expect(storedTrials.first?.deletedAt == subscription.updatedAt)

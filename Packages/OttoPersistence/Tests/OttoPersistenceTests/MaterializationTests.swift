@@ -109,7 +109,7 @@ extension SerializedPersistenceTests {
 
         @Test("a soft-deleted history row is never resurrected by re-materialization")
         func tombstoneNotResurrected() async throws {
-            let (store, container) = try makeStore()
+            let (store, containers) = try makeStore()
             let subscription = try makeSubscription(cycleStartDay: try day(2026, 1, 31))
             try await store.save(subscription)
             let today = try day(2026, 8, 6)
@@ -120,14 +120,14 @@ extension SerializedPersistenceTests {
             // A resolved row deliberately removed from history. (A tombstoned .upcoming
             // row behaves differently by design: it is a §5.3 invalidation artifact and
             // does not block its date - see the schedule-change invalidation suite.)
-            let context = ModelContext(container)
+            let context = ModelContext(containers.main)
             let events = try context.fetch(FetchDescriptor<StoredBillingEvent>())
             let target = try #require(events.first { $0.expectedDate == 20260930 })
             target.state = BillingEvent.State.skipped.rawValue
             target.deletedAt = Date(timeIntervalSince1970: 9_000)
             try context.save()
 
-            let fresh = OttoStore(modelContainer: container)
+            let fresh = OttoStore(containers: containers)
             let created = try await fresh.materializeEvents(
                 for: subscription, from: today, horizonDays: 90, maxReminderLeadDays: 0, at: instant
             )

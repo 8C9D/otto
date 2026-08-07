@@ -1,7 +1,7 @@
 import Foundation
 import OttoDomain
 
-extension OttoSchemaV2.StoredBillingEvent {
+extension OttoSchemaV3.StoredBillingEvent {
     private static let entityName = "StoredBillingEvent"
 
     func toDomain() throws -> BillingEvent {

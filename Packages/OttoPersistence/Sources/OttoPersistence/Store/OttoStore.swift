@@ -12,6 +12,14 @@ let mappingLogger = Logger(subsystem: "com.arthurzhang.otto", category: "persist
 /// context. Callers hold it as the protocols; the concrete type exists only to be
 /// constructed and injected.
 ///
+/// Since Wave 6A the actor also owns the device-state store (spec §5.3): a
+/// second context over `OttoContainers.deviceState`, serialized by this same
+/// actor, holding the materialization watermarks. The two stores are separate
+/// files, so a single atomic save across them does not exist; every method
+/// that writes both orders its two saves so a crash between them lands on the
+/// safe side (a REGRESSED watermark re-observes idempotently; an ADVANCED one
+/// vouches for rows that may not exist - spec §5.3).
+///
 /// Reads never surface a `MappingError`: an unmappable record (a partially synced
 /// arrival, once CloudKit is on) is skipped with an error log, because in domain
 /// terms it is not there yet. Reads exclude tombstones unless the method name says
@@ -19,6 +27,95 @@ let mappingLogger = Logger(subsystem: "com.arthurzhang.otto", category: "persist
 /// the value being saved.
 @ModelActor
 public actor OttoStore {
+
+    /// Defaulted so the macro's `init(modelContainer:)` still compiles; that
+    /// init is never used - construction goes through `init(containers:)`.
+    private var deviceStateContainer: ModelContainer! = nil
+    private var _deviceStateContext: ModelContext?
+
+    public init(containers: OttoContainers) {
+        let context = ModelContext(containers.main)
+        self.modelExecutor = DefaultSerialModelExecutor(modelContext: context)
+        self.modelContainer = containers.main
+        self.deviceStateContainer = containers.deviceState
+    }
+
+    /// Lazily created on the actor so its use is serialized with `modelContext`.
+    var deviceStateContext: ModelContext {
+        if let existing = _deviceStateContext { return existing }
+        guard let container = deviceStateContainer else {
+            fatalError("OttoStore was built without a device-state container; use init(containers:)")
+        }
+        let created = ModelContext(container)
+        _deviceStateContext = created
+        return created
+    }
+
+    // MARK: - The materialization watermark (spec §5.3, device state)
+
+    /// All device watermarks, keyed by subscription id. Reads use this to
+    /// rejoin the watermark onto mapped domain values - the field the synced
+    /// schema no longer carries.
+    func deviceWatermarks() throws -> [UUID: CalendarDay] {
+        let rows = try deviceStateContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
+        return Dictionary(
+            rows.compactMap { row -> (UUID, CalendarDay)? in
+                guard let id = row.subscriptionID,
+                      let stored = row.lastMaterializedThrough,
+                      let day = CalendarDay(yyyymmdd: stored)
+                else { return nil }
+                return (id, day)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    func deviceWatermark(for subscriptionID: UUID) throws -> CalendarDay? {
+        let rows = try deviceStateContext.fetch(
+            FetchDescriptor<StoredMaterializationWatermark>(
+                predicate: #Predicate { $0.subscriptionID == subscriptionID }
+            )
+        )
+        return rows.first?.lastMaterializedThrough.flatMap(CalendarDay.init(yyyymmdd:))
+    }
+
+    /// Upserts (or clears, on nil) one watermark and SAVES the device store.
+    /// Callers choose where this falls relative to the main store's save; see
+    /// the actor comment for the ordering rule.
+    func setDeviceWatermark(_ day: CalendarDay?, for subscriptionID: UUID) throws {
+        let rows = try deviceStateContext.fetch(
+            FetchDescriptor<StoredMaterializationWatermark>(
+                predicate: #Predicate { $0.subscriptionID == subscriptionID }
+            )
+        )
+        if let day {
+            if let row = rows.first {
+                row.lastMaterializedThrough = day.yyyymmdd
+            } else {
+                let row = StoredMaterializationWatermark()
+                deviceStateContext.insert(row)
+                row.subscriptionID = subscriptionID
+                row.lastMaterializedThrough = day.yyyymmdd
+            }
+            for extra in rows.dropFirst() { deviceStateContext.delete(extra) }
+        } else {
+            for row in rows { deviceStateContext.delete(row) }
+        }
+        if deviceStateContext.hasChanges {
+            try deviceStateContext.save()
+        }
+    }
+
+    /// Rejoins device watermarks onto freshly mapped subscriptions.
+    func joiningDeviceWatermarks(_ subscriptions: [Subscription]) throws -> [Subscription] {
+        guard !subscriptions.isEmpty else { return subscriptions }
+        let watermarks = try deviceWatermarks()
+        return subscriptions.map { subscription in
+            var joined = subscription
+            joined.lastMaterializedThrough = watermarks[subscription.id]
+            return joined
+        }
+    }
 
     // MARK: - Shared helpers
 

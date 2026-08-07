@@ -27,7 +27,7 @@ extension SerializedPersistenceTests {
 
         @Test("deleting a subscription cascades soft deletes to every child record")
         func cascade() async throws {
-            let (store, container) = try makeStore()
+            let (store, containers) = try makeStore()
             let trial = try makeTrialTerm(startDate: try day(2026, 8, 1))
             let subscription = try makeSubscription(status: .trial, cycleStartDay: try day(2026, 8, 1), trial: trial)
             try await store.save(subscription)
@@ -53,7 +53,7 @@ extension SerializedPersistenceTests {
             #expect(try await store.historyIncludingDeleted(forSubscription: subscription.id).count == 1)
 
             // ...and every stored child carries the cascade instant, trial included.
-            let context = ModelContext(container)
+            let context = ModelContext(containers.main)
             #expect(try context.fetch(FetchDescriptor<StoredTrialTerm>()).first?.deletedAt == instant)
             #expect(try context.fetch(FetchDescriptor<StoredBillingEvent>()).first?.deletedAt == instant)
             #expect(try context.fetch(FetchDescriptor<StoredCancellationEpisode>()).first?.deletedAt == instant)
@@ -62,20 +62,20 @@ extension SerializedPersistenceTests {
 
         @Test("a cascade never overwrites an earlier tombstone's instant")
         func cascadePreservesEarlierTombstones() async throws {
-            let (store, container) = try makeStore()
+            let (store, containers) = try makeStore()
             let subscription = try makeSubscription(cycleStartDay: try day(2026, 8, 15))
             try await store.save(subscription)
             try await store.save(try makeBillingEvent(subscriptionID: subscription.id, expectedDate: try day(2026, 9, 15)))
 
             let earlier = Date(timeIntervalSince1970: 7_000)
-            let context = ModelContext(container)
+            let context = ModelContext(containers.main)
             let event = try #require(try context.fetch(FetchDescriptor<StoredBillingEvent>()).first)
             event.deletedAt = earlier
             try context.save()
 
             try await store.deleteSubscription(withID: subscription.id, at: Date(timeIntervalSince1970: 9_000))
 
-            let verification = ModelContext(container)
+            let verification = ModelContext(containers.main)
             #expect(try verification.fetch(FetchDescriptor<StoredBillingEvent>()).first?.deletedAt == earlier)
         }
 
