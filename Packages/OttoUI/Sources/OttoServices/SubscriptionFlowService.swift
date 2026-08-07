@@ -349,7 +349,7 @@ public actor SubscriptionFlowService {
         now: Date,
         today: CalendarDay
     ) async throws -> DisputeSummary? {
-        guard var subscription = try await subscriptions.subscription(withID: subscriptionID),
+        guard let subscription = try await subscriptions.subscription(withID: subscriptionID),
               let record = try await cancellations.openEpisode(forSubscription: subscriptionID),
               // A deferred check has never watched a date, so there is nothing
               // to answer - and the yes-path must not archive an unverified

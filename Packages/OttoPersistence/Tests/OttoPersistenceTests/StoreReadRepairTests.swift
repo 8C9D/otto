@@ -36,7 +36,7 @@ extension SerializedPersistenceTests {
 
             let context = ModelContext(containers.main)
             let record = try #require(try context.fetch(FetchDescriptor<StoredSubscription>()).first)
-            let remote = OttoSchemaV3.StoredPauseEpisode()
+            let remote = StoredPauseEpisode()
             context.insert(remote)
             remote.subscription = record
             remote.id = try fixtureUUID(702)
@@ -80,7 +80,7 @@ extension SerializedPersistenceTests {
             let context = ModelContext(world.containers.main)
             let remoteID: UUID? = world.remoteEpisodeID
             let stored = try #require(
-                try context.fetch(FetchDescriptor<OttoSchemaV3.StoredPauseEpisode>()).first { $0.id == remoteID }
+                try context.fetch(FetchDescriptor<StoredPauseEpisode>()).first { $0.id == remoteID }
             )
             #expect(stored.endedOn == 20_260_801)
             #expect(stored.outcome == PauseEpisode.Outcome.superseded.rawValue)
@@ -99,7 +99,7 @@ extension SerializedPersistenceTests {
             // status field's last-writer-wins landed on .paused.
             let context = ModelContext(containers.main)
             let episode = try #require(
-                try context.fetch(FetchDescriptor<OttoSchemaV3.StoredPauseEpisode>()).first
+                try context.fetch(FetchDescriptor<StoredPauseEpisode>()).first
             )
             episode.endedOn = 20_260_805
             episode.outcome = PauseEpisode.Outcome.resumed.rawValue

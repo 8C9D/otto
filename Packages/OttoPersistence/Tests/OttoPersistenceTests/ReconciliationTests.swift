@@ -116,7 +116,7 @@ extension SerializedPersistenceTests {
             ))
             let context = ModelContext(containers.main)
             let record = try #require(try context.fetch(FetchDescriptor<StoredSubscription>()).first)
-            let remote = OttoSchemaV3.StoredPauseEpisode()
+            let remote = StoredPauseEpisode()
             context.insert(remote)
             remote.subscription = record
             remote.id = try fixtureUUID(702)
@@ -133,7 +133,7 @@ extension SerializedPersistenceTests {
             let verification = ModelContext(containers.main)
             let remoteID: UUID? = try fixtureUUID(702)
             let stored = try #require(
-                try verification.fetch(FetchDescriptor<OttoSchemaV3.StoredPauseEpisode>())
+                try verification.fetch(FetchDescriptor<StoredPauseEpisode>())
                     .first { $0.id == remoteID }
             )
             #expect(stored.endedOn == 20_260_801)
