@@ -12,6 +12,8 @@ packages:
     path: Packages/OttoDomain
   OttoPersistence:
     path: Packages/OttoPersistence
+  OttoUI:
+    path: Packages/OttoUI
 
 settings:
   base:
@@ -28,12 +30,19 @@ targets:
       - path: Otto
         excludes:
           - "**/.gitkeep"
+    # The app is the composition root: the ONLY target that links the concrete
+    # OttoPersistence. The UI lives in the OttoUI package, which cannot import
+    # it - the layering is a compiler rule, not a convention.
     dependencies:
       - package: OttoDomain
       - package: OttoPersistence
         product: OttoRepositories
       - package: OttoPersistence
         product: OttoPersistence
+      - package: OttoUI
+        product: OttoStores
+      - package: OttoUI
+        product: OttoUI
     settings:
       base:
         # PERMANENT - never change this identifier (spec §10, decision 1).

@@ -21,7 +21,7 @@ public final class SubscriptionListModel {
 
     /// One list row: the subscription with its precomputed display facts, so the
     /// view renders values rather than deriving them.
-    public struct Row: Identifiable, Sendable {
+    public struct Row: Identifiable, Hashable, Sendable {
         public let subscription: Subscription
         /// The next date that matters for this subscription - next charge, trial
         /// conversion, pause resume, or verification check - via `todayEntry`.

@@ -16,7 +16,8 @@ let package = Package(
         .macOS("15.0")
     ],
     products: [
-        .library(name: "OttoStores", targets: ["OttoStores"])
+        .library(name: "OttoStores", targets: ["OttoStores"]),
+        .library(name: "OttoUI", targets: ["OttoUI"])
     ],
     dependencies: [
         .package(path: "../OttoDomain"),
@@ -30,7 +31,18 @@ let package = Package(
                 .product(name: "OttoRepositories", package: "OttoPersistence")
             ]
         ),
-        .testTarget(name: "OttoStoresTests", dependencies: ["OttoStores"])
+        .target(
+            name: "OttoUI",
+            dependencies: [
+                "OttoStores",
+                .product(name: "OttoDomain", package: "OttoDomain"),
+                .product(name: "OttoRepositories", package: "OttoPersistence")
+            ]
+        ),
+        .testTarget(name: "OttoStoresTests", dependencies: ["OttoStores"]),
+        // Renders real views at accessibility type sizes; UIKit-hosted, so it runs
+        // on the simulator and compiles to nothing under `swift test` on the host.
+        .testTarget(name: "OttoUITests", dependencies: ["OttoUI"])
     ],
     swiftLanguageModes: [.v6]
 )
