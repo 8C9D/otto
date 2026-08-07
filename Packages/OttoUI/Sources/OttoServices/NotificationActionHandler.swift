@@ -24,14 +24,15 @@ public actor NotificationActionHandler {
     private let flows: SubscriptionFlowService
     private let client: any NotificationClient
     private let scheduler: any ReminderScheduling
-    private let fireTimes: FireTimePolicy
+    /// Read fresh per snooze, like the scheduler's - see there (Wave 8).
+    private let fireTimes: @Sendable () -> FireTimePolicy
 
     public init(
         subscriptions: any SubscriptionRepository,
         flows: SubscriptionFlowService,
         client: any NotificationClient,
         scheduler: any ReminderScheduling,
-        fireTimes: FireTimePolicy = .standard
+        fireTimes: @escaping @Sendable () -> FireTimePolicy = { .standard }
     ) {
         self.subscriptions = subscriptions
         self.flows = flows
@@ -129,15 +130,16 @@ public actor NotificationActionHandler {
         )
         let target = snoozedReminderDay(from: today, deadline: deadline)
 
-        var hour = fireTimes.preferredHour
-        var minute = fireTimes.preferredMinute
+        let policy = fireTimes()
+        var hour = policy.preferredHour
+        var minute = policy.preferredMinute
         if let atPreferred = target.fireDate(hour: hour, minute: minute, in: timeZone),
            atPreferred <= now {
             // Snoozed on the deadline day itself, after the preferred hour: fall
             // to the evening slot. If even that has passed, the remaining ladder
             // is the coverage - a snooze must never re-fire behind the deadline.
-            hour = fireTimes.eveningHour
-            minute = fireTimes.eveningMinute
+            hour = policy.eveningHour
+            minute = policy.eveningMinute
             guard let atEvening = target.fireDate(hour: hour, minute: minute, in: timeZone),
                   atEvening > now
             else { return }

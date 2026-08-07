@@ -78,10 +78,10 @@ public final class SubscriptionFormModel {
         didSet {
             // Trials default to a longer lead (spec §10) - but only an untouched
             // default swaps, never a value the user chose.
-            if isTrial && reminderLeadDays == Self.defaultRenewalLeadDays {
-                reminderLeadDays = Self.defaultTrialLeadDays
-            } else if !isTrial && reminderLeadDays == Self.defaultTrialLeadDays {
-                reminderLeadDays = Self.defaultRenewalLeadDays
+            if isTrial && reminderLeadDays == reminderDefaults.renewalLeadDays {
+                reminderLeadDays = reminderDefaults.trialLeadDays
+            } else if !isTrial && reminderLeadDays == reminderDefaults.trialLeadDays {
+                reminderLeadDays = reminderDefaults.renewalLeadDays
             }
         }
     }
@@ -105,21 +105,29 @@ public final class SubscriptionFormModel {
     private let trialID: UUID
     private let trialCreatedAt: Date
     private let dates: DateProvider
+    /// The defaults a NEW entry starts from - the settings screen's values
+    /// (Wave 8), spec §10's constants when none are stored.
+    private let reminderDefaults: SettingsStore.ReminderDefaults
 
-    /// Spec §10 defaults: 3 lead days for renewals, 5 for trials, 2 buffer days.
-    /// The settings screen that makes them editable is Wave 8.
+    /// Spec §10's shipped defaults: 3 lead days for renewals, 5 for trials,
+    /// 2 buffer days. The settings screen edits the LIVE values; these remain
+    /// the fallback and the documented baseline.
     public static let defaultRenewalLeadDays = 3
     public static let defaultTrialLeadDays = 5
     public static let defaultTrialBufferDays = 2
 
     /// A blank form for adding.
-    public init(dates: DateProvider = .live) {
+    public init(
+        dates: DateProvider = .live,
+        reminderDefaults: SettingsStore.ReminderDefaults = .standard
+    ) {
         let today = dates.today()
         self.original = nil
         self.newID = UUID()
         self.trialID = UUID()
         self.trialCreatedAt = dates.now()
         self.dates = dates
+        self.reminderDefaults = reminderDefaults
         self.name = ""
         self.category = .other
         self.amount = nil
@@ -132,8 +140,8 @@ public final class SubscriptionFormModel {
         self.isTrial = false
         self.trialStartDate = today
         self.trialLengthDays = 30
-        self.trialBufferDays = Self.defaultTrialBufferDays
-        self.reminderLeadDays = Self.defaultRenewalLeadDays
+        self.trialBufferDays = reminderDefaults.trialBufferDays
+        self.reminderLeadDays = reminderDefaults.renewalLeadDays
         self.sameDayReminder = false
         self.paymentMethodID = nil
         self.vendorURLText = ""
@@ -143,12 +151,17 @@ public final class SubscriptionFormModel {
     }
 
     /// A form prefilled from an existing subscription.
-    public init(editing subscription: Subscription, dates: DateProvider = .live) {
+    public init(
+        editing subscription: Subscription,
+        dates: DateProvider = .live,
+        reminderDefaults: SettingsStore.ReminderDefaults = .standard
+    ) {
         self.original = subscription
         self.newID = subscription.id
         self.trialID = subscription.trial?.id ?? UUID()
         self.trialCreatedAt = subscription.trial?.createdAt ?? dates.now()
         self.dates = dates
+        self.reminderDefaults = reminderDefaults
         self.name = subscription.name
         self.category = subscription.category
         self.amount = Decimal(subscription.amountCents) / 100
@@ -164,7 +177,7 @@ public final class SubscriptionFormModel {
         self.isTrial = subscription.editsAsTrial
         self.trialStartDate = subscription.trial?.startDate ?? dates.today()
         self.trialLengthDays = subscription.trial?.lengthDays ?? 30
-        self.trialBufferDays = subscription.trial?.bufferDays ?? Self.defaultTrialBufferDays
+        self.trialBufferDays = subscription.trial?.bufferDays ?? reminderDefaults.trialBufferDays
         self.reminderLeadDays = subscription.reminderLeadDays
         self.sameDayReminder = subscription.sameDayReminder
         self.paymentMethodID = subscription.paymentMethodID

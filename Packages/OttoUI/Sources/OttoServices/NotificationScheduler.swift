@@ -60,14 +60,17 @@ public actor NotificationScheduler: ReminderScheduling {
     private let cancellations: any CancellationRepository
     private let billingEvents: any BillingEventRepository
     private let client: any NotificationClient
-    private let fireTimes: FireTimePolicy
+    /// Read fresh on every pass (Wave 8): the notification-time setting must
+    /// reach background passes too, and a provider does that without the
+    /// scheduler knowing where settings live.
+    private let fireTimes: @Sendable () -> FireTimePolicy
 
     public init(
         subscriptions: any SubscriptionRepository,
         cancellations: any CancellationRepository,
         billingEvents: any BillingEventRepository,
         client: any NotificationClient,
-        fireTimes: FireTimePolicy = .standard
+        fireTimes: @escaping @Sendable () -> FireTimePolicy = { .standard }
     ) {
         self.subscriptions = subscriptions
         self.cancellations = cancellations
@@ -229,13 +232,14 @@ public actor NotificationScheduler: ReminderScheduling {
         timeZone: TimeZone
     ) -> [NotificationRequestSpec] {
         let subscriptionsByID = Dictionary(uniqueKeysWithValues: live.map { ($0.id, $0) })
+        let policy = fireTimes()
         var specs: [NotificationRequestSpec] = []
         for reminder in scheduled {
             guard let subscription = subscriptionsByID[reminder.subscriptionID],
-                  let fireDate = fireTimes.fireDate(for: reminder, in: timeZone),
+                  let fireDate = policy.fireDate(for: reminder, in: timeZone),
                   fireDate > now
             else { continue }
-            let time = fireTimes.fireTime(for: reminder.kind)
+            let time = policy.fireTime(for: reminder.kind)
             let body = reminder.kind == .verification
                 ? NotificationContent.verificationBody(
                     subscription: subscription,

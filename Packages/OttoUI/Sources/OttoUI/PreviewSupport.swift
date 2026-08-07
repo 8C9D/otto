@@ -35,7 +35,12 @@ enum PreviewData {
                 billingEvents: repository,
                 cancellations: repository,
                 priceChanges: repository,
-                paymentMethods: repository
+                paymentMethods: repository,
+                transfer: repository
+            ),
+            // A throwaway suite: previews must not write the real defaults.
+            settings: SettingsStore(
+                userDefaults: UserDefaults(suiteName: "otto.previews") ?? .standard
             ),
             dates: .fixed(today: today, now: now)
         )
@@ -166,11 +171,11 @@ enum PreviewData {
     }
 }
 
-/// One in-memory actor implementing all five repository protocols, pre-seeded
+/// One in-memory actor implementing every repository protocol, pre-seeded
 /// with the preview fixtures.
 actor PreviewRepository:
     SubscriptionRepository, BillingEventRepository, CancellationRepository,
-    PriceChangeRepository, PaymentMethodRepository {
+    PriceChangeRepository, PaymentMethodRepository, DataTransferRepository {
 
     private var subscriptions: [UUID: Subscription] = [:]
     private var events: [UUID: BillingEvent] = [:]
@@ -304,6 +309,28 @@ actor PreviewRepository:
             method.deletedAt = instant
             paymentMethods[id] = method
         }
+    }
+
+    // MARK: DataTransferRepository
+
+    func completeSnapshot() async throws -> OttoDataSnapshot {
+        OttoDataSnapshot(
+            subscriptions: subscriptions.values.sorted { $0.id.uuidString < $1.id.uuidString },
+            paymentMethods: paymentMethods.values.sorted { $0.id.uuidString < $1.id.uuidString },
+            billingEvents: events.values.sorted { $0.id.uuidString < $1.id.uuidString },
+            cancellationRecords: cancellations.values.sorted { $0.id.uuidString < $1.id.uuidString },
+            priceChanges: priceChanges.values.sorted { $0.id.uuidString < $1.id.uuidString }
+        )
+    }
+
+    func restore(_ snapshot: OttoDataSnapshot) async throws {
+        subscriptions = Dictionary(uniqueKeysWithValues: snapshot.subscriptions.map { ($0.id, $0) })
+        paymentMethods = Dictionary(uniqueKeysWithValues: snapshot.paymentMethods.map { ($0.id, $0) })
+        events = Dictionary(uniqueKeysWithValues: snapshot.billingEvents.map { ($0.id, $0) })
+        cancellations = Dictionary(
+            uniqueKeysWithValues: snapshot.cancellationRecords.map { ($0.subscriptionID, $0) }
+        )
+        priceChanges = Dictionary(uniqueKeysWithValues: snapshot.priceChanges.map { ($0.id, $0) })
     }
 }
 #endif

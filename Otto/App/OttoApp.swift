@@ -1,3 +1,4 @@
+import OttoDomain
 import OttoPersistence
 import OttoServices
 import OttoStores
@@ -33,8 +34,12 @@ struct OttoApp: App {
         let dates = DateProvider.live
 
         let client = LiveNotificationClient()
+        // Fire times are read from settings on every pass, so the Wave 8
+        // notification-time setting reaches background passes too.
+        let fireTimes: @Sendable () -> FireTimePolicy = { SettingsStore.fireTimePolicy() }
         let scheduler = NotificationScheduler(
-            subscriptions: store, cancellations: store, billingEvents: store, client: client
+            subscriptions: store, cancellations: store, billingEvents: store, client: client,
+            fireTimes: fireTimes
         )
         let notifications = NotificationStatusStore(
             scheduler: scheduler, client: client, dates: dates
@@ -45,7 +50,8 @@ struct OttoApp: App {
                 billingEvents: store,
                 cancellations: store,
                 priceChanges: store,
-                paymentMethods: store
+                paymentMethods: store,
+                transfer: store
             ),
             notifications: notifications,
             dates: dates
@@ -57,7 +63,8 @@ struct OttoApp: App {
                 subscriptions: store,
                 flows: model.flows,
                 client: client,
-                scheduler: scheduler
+                scheduler: scheduler,
+                fireTimes: fireTimes
             ),
             client: client,
             now: dates.now,

@@ -1,8 +1,8 @@
 import SwiftUI
 import OttoStores
 
-/// The app's top level: Today, Subscriptions, Insights (Wave 7), and Payment
-/// methods (Wave 7). Settings arrives with Wave 8.
+/// The app's top level: Today, Subscriptions, Insights (Wave 7), Payment
+/// methods (Wave 7), and Settings (Wave 8).
 public struct RootView: View {
     @Environment(AppModel.self) private var model
 
@@ -22,6 +22,9 @@ public struct RootView: View {
             }
             Tab(String(localized: "Payment"), systemImage: "wallet.pass") {
                 PaymentMethodsView()
+            }
+            Tab(String(localized: "Settings"), systemImage: "gearshape") {
+                SettingsView()
             }
         }
         // A notification tap or action follow-up lands here: the detail opens

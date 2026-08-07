@@ -11,7 +11,7 @@ import OttoServices
 @Observable
 public final class AppModel {
 
-    /// The five repositories, as protocols. The composition root fills this with
+    /// The repositories, as protocols. The composition root fills this with
     /// the persistence implementations; previews and tests fill it with mocks.
     public struct Repositories: Sendable {
         public var subscriptions: any SubscriptionRepository
@@ -19,19 +19,23 @@ public final class AppModel {
         public var cancellations: any CancellationRepository
         public var priceChanges: any PriceChangeRepository
         public var paymentMethods: any PaymentMethodRepository
+        /// The whole-database seam export/import runs over (Wave 8).
+        public var transfer: any DataTransferRepository
 
         public init(
             subscriptions: any SubscriptionRepository,
             billingEvents: any BillingEventRepository,
             cancellations: any CancellationRepository,
             priceChanges: any PriceChangeRepository,
-            paymentMethods: any PaymentMethodRepository
+            paymentMethods: any PaymentMethodRepository,
+            transfer: any DataTransferRepository
         ) {
             self.subscriptions = subscriptions
             self.billingEvents = billingEvents
             self.cancellations = cancellations
             self.priceChanges = priceChanges
             self.paymentMethods = paymentMethods
+            self.transfer = transfer
         }
     }
 
@@ -45,6 +49,10 @@ public final class AppModel {
     /// over the same repositories, so the screens and the notification actions
     /// share one implementation of every state change.
     public let flows: SubscriptionFlowService
+    /// Export and import (Wave 8) - the CloudKit escape hatch.
+    public let exports: ExportService
+    /// The user's settings (Wave 8).
+    public let settings: SettingsStore
     public let dates: DateProvider
 
     /// A subscription the notification layer asked the UI to show - a tap on a
@@ -57,6 +65,7 @@ public final class AppModel {
     public init(
         repositories: Repositories,
         notifications: NotificationStatusStore? = nil,
+        settings: SettingsStore? = nil,
         dates: DateProvider = .live
     ) {
         self.repositories = repositories
@@ -67,6 +76,8 @@ public final class AppModel {
             billingEvents: repositories.billingEvents,
             priceChanges: repositories.priceChanges
         )
+        self.exports = ExportService(transfer: repositories.transfer)
+        self.settings = settings ?? SettingsStore()
         self.dates = dates
         self.subscriptionsStore = SubscriptionsStore(
             subscriptionRepository: repositories.subscriptions,
@@ -85,6 +96,10 @@ public final class AppModel {
         if let notifications {
             // Every create, edit, or delete is a reschedule trigger (spec §6.2).
             self.subscriptionsStore.onMutation = { [weak notifications] in
+                await notifications?.reschedule()
+            }
+            // So is a notification-time change: every pending reminder re-times.
+            self.settings.onReminderTimeChange = { [weak notifications] in
                 await notifications?.reschedule()
             }
         }
@@ -197,6 +212,34 @@ public final class AppModel {
         return summary
     }
 
+    // MARK: - Export and import (Wave 8)
+
+    /// The full-fidelity JSON export, as a shareable file URL.
+    public func exportJSONFile() async throws -> URL {
+        try await exports.exportJSONFile(exportedAt: dates.now(), today: dates.today())
+    }
+
+    /// The one-way charges CSV, as a shareable file URL.
+    public func exportChargesCSVFile() async throws -> URL {
+        try await exports.exportChargesCSVFile(today: dates.today())
+    }
+
+    /// What an import of `url` would bring, and whether the merge-or-replace
+    /// question even arises. Touches nothing.
+    public func importPreview(from url: URL) async throws -> ImportPreview {
+        try await exports.importPreview(from: url)
+    }
+
+    /// Runs the import, then treats it as the large mutation it is: reschedule
+    /// (which also materializes the imported subscriptions' ledgers) and
+    /// refresh every published list.
+    public func importData(from url: URL, strategy: ImportStrategy) async throws -> ImportSummary {
+        let summary = try await exports.performImport(from: url, strategy: strategy)
+        await flowFinished()
+        await paymentMethodsStore.refresh()
+        return summary
+    }
+
     /// A fresh detail store for one subscription's screen.
     public func detailStore(for subscriptionID: UUID) -> SubscriptionDetailStore {
         SubscriptionDetailStore(
@@ -209,12 +252,15 @@ public final class AppModel {
         )
     }
 
-    /// A form model for adding (nil) or editing.
+    /// A form model for adding (nil) or editing, seeded with the settings
+    /// screen's defaults (Wave 8).
     public func formModel(editing subscription: Subscription? = nil) -> SubscriptionFormModel {
         if let subscription {
-            SubscriptionFormModel(editing: subscription, dates: dates)
+            SubscriptionFormModel(
+                editing: subscription, dates: dates, reminderDefaults: settings.reminderDefaults
+            )
         } else {
-            SubscriptionFormModel(dates: dates)
+            SubscriptionFormModel(dates: dates, reminderDefaults: settings.reminderDefaults)
         }
     }
 
