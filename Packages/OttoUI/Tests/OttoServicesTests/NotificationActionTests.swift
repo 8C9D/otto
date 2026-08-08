@@ -32,7 +32,9 @@ struct NotificationActionTests {
         let now = try fixtureNow()
         _ = try await scheduler.reschedule(now: now, today: today, timeZone: torontoZone)
         let laddered = await client.pendingRequests()
-        #expect(laddered.count == trialLadderCap - 1) // the lead rung (Aug 3) is already past
+        // All five rungs: the past lead rung (Aug 3) is a §6.2 catch-up since
+        // Wave 10 - its instant passed but the cancel-by deadline has not.
+        #expect(laddered.count == trialLadderCap)
 
         let morningIdentifier = NotificationPlanIdentifier.planned(
             PlannedReminder(subscriptionID: subscription.id, day: trial.cancelByDate, kind: .trialDayOfMorning)

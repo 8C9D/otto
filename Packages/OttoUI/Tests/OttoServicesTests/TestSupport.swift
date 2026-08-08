@@ -113,6 +113,7 @@ actor FakeNotificationClient: NotificationClient {
     /// Every `removePendingRequests` call's identifiers, flattened, in order.
     private(set) var removeCalls: [String] = []
     private var remainingAddsBeforeRefusal: Int?
+    private var delivered: [String] = []
 
     func setPermission(_ permission: NotificationPermission) {
         storedPermission = permission
@@ -130,11 +131,19 @@ actor FakeNotificationClient: NotificationClient {
         removeCalls = []
     }
 
+    /// Models notifications already delivered and still in Notification
+    /// Center - what the §6.2 delivered-check reads.
+    func seedDelivered(_ identifiers: [String]) {
+        delivered = identifiers
+    }
+
     func permission() async -> NotificationPermission { storedPermission }
 
     func requestAuthorization() async -> NotificationPermission { storedPermission }
 
     func pendingRequests() async -> [NotificationRequestSpec] { requests }
+
+    func deliveredIdentifiers() async -> [String] { delivered }
 
     func add(_ spec: NotificationRequestSpec) async throws {
         addCalls.append(spec)

@@ -3,9 +3,12 @@ import Foundation
 /// Plans every reminder one subscription needs within a horizon (spec §6.3).
 ///
 /// Pure planning only: `today` is injected, nothing reads a clock, and turning the
-/// plan into notification requests is Wave 4's job. Reminders dated today are kept -
-/// whether today's fire time has already passed is a scheduling concern, not a
-/// planning one.
+/// plan into notification requests is Wave 4's job. Reminders dated today are kept,
+/// and so is a PAST-dated rung whose deadline is still ahead (§6.2's catch-ups,
+/// Wave 10) - whether a fire time has passed, and whether the rung was already
+/// delivered, are scheduling concerns, not planning ones. The invariant the
+/// scheduler relies on: every rung this plan emits protects a deadline that is
+/// not behind `today`.
 ///
 /// The result is sorted by day, then priority, then kind name, so equal inputs always
 /// produce identical output.
@@ -108,9 +111,25 @@ private func trialReminders(
         (conversion, .conversionAnnouncement)
     ]
     let dailyBudget = max(0, trialLadderCap - fixedRungs.count)
-    let ladder = fixedRungs + dailies.suffix(dailyBudget)
+    var ladder = (fixedRungs + dailies.suffix(dailyBudget)).filter { window.contains($0.day) }
 
-    return ladder.filter { window.contains($0.day) }.map {
+    // §6.2's catch-up, which never covered trial rungs (Wave 10, defect A):
+    // the lead rung stays in the plan AT ITS ORIGINAL DAY while the cancel-by
+    // deadline is still ahead - the scheduler delivers a past-dated rung
+    // immediately unless the system's delivery record already shows it fired.
+    // The original day keeps the identifier stable across passes, which is
+    // what lets that record work; re-dating to "today" would mint a fresh
+    // identifier every day and re-warn daily, the nuisance §6.2 forbids.
+    // Only strictly ahead: on the cancel-by day the morning and evening rungs
+    // own the warning, and past it the dailies do - a late lead saying
+    // "cancel by <past date>" is the dead-deadline dishonesty v1.4
+    // legislated against.
+    let leadDay = cancelBy.adding(days: -subscription.reminderLeadDays)
+    if leadDay < window.lowerBound && window.lowerBound < cancelBy {
+        ladder.append((leadDay, .trialLead))
+    }
+
+    return ladder.map {
         PlannedReminder(subscriptionID: subscription.id, day: $0.day, kind: $0.kind)
     }
 }
@@ -134,11 +153,11 @@ private func conversionDayAnnouncement(
 
 /// One reminder per billing date in the horizon, `reminderLeadDays` ahead of it,
 /// plus the optional same-day reminder (spec §6.3) and the §6.2 catch-up rule: a
-/// billing date still ahead whose lead day has already passed gets a reminder
-/// TODAY instead of silence. Without the catch-up, Mode B onboarding fails in its
-/// most common case - the user adds a subscription because they noticed a charge
-/// coming in two days, the 3-day lead is already past, and nothing fires for the
-/// exact charge that prompted them.
+/// billing date still ahead whose lead day has already passed keeps its rung -
+/// delivered immediately by the scheduler - instead of silence. Without the
+/// catch-up, Mode B onboarding fails in its most common case - the user adds a
+/// subscription because they noticed a charge coming in two days, the 3-day lead
+/// is already past, and nothing fires for the exact charge that prompted them.
 private func renewalReminders(
     for subscription: Subscription,
     acknowledgedChargeDays: Set<CalendarDay>,
@@ -171,13 +190,18 @@ private func renewalReminders(
         if window.contains(reminderDay) {
             reminders.append(PlannedReminder(subscriptionID: subscription.id, day: reminderDay, kind: .renewal))
         } else if reminderDay < today, !caughtUp {
-            // The lead day has passed but the charge is still ahead: fire today.
-            // One catch-up at most - with a lead longer than the cycle several
-            // lead days can be in the past at once, and identical (day, kind)
-            // pairs would collide in the deterministic identifier anyway; the
+            // The lead day has passed but the charge is still ahead: the rung
+            // stays AT ITS ORIGINAL DAY, and the scheduler delivers it
+            // immediately unless the delivery record already shows it (Wave
+            // 10, defect A - re-dating to today minted a fresh identifier
+            // every day, so the same warning re-fired daily until the
+            // charge). One catch-up at most - with a lead longer than the
+            // cycle several lead days can be in the past at once; the
             // earliest un-warned charge is the urgent one.
             caughtUp = true
-            reminders.append(PlannedReminder(subscriptionID: subscription.id, day: today, kind: .renewal))
+            reminders.append(
+                PlannedReminder(subscriptionID: subscription.id, day: reminderDay, kind: .renewal)
+            )
         }
         if subscription.sameDayReminder, window.contains(billing) {
             reminders.append(PlannedReminder(subscriptionID: subscription.id, day: billing, kind: .renewalDayOf))
@@ -229,13 +253,13 @@ private func pauseEndingReminders(
     in window: ClosedRange<CalendarDay>
 ) -> [PlannedReminder] {
     guard let pauseEndsOn = subscription.pauseEndsOn else { return [] }
-    var reminderDay = pauseEndsOn.adding(days: -subscription.reminderLeadDays)
+    let reminderDay = pauseEndsOn.adding(days: -subscription.reminderLeadDays)
     // The §6.2 catch-up rule applies here too: a pause ending inside the lead
-    // window still deserves its warning, today, not silence.
-    if reminderDay < window.lowerBound && pauseEndsOn >= window.lowerBound {
-        reminderDay = window.lowerBound
-    }
-    guard window.contains(reminderDay) else { return [] }
+    // window still deserves its warning, now, not silence - at its ORIGINAL
+    // day, so the identifier stays stable and the delivery record can stop a
+    // second fire (Wave 10, defect A). A rung whose resume date is already
+    // behind the window plans nothing; the resume derives on its own (§5.2a).
+    guard reminderDay <= window.upperBound, pauseEndsOn >= window.lowerBound else { return [] }
     return [PlannedReminder(subscriptionID: subscription.id, day: reminderDay, kind: .pauseEnding)]
 }
 

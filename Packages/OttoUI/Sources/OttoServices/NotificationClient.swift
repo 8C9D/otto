@@ -38,6 +38,14 @@ public struct NotificationRequestSpec: Hashable, Sendable {
     /// The `UNNotificationCategory` identifier carrying the action buttons, or
     /// empty for a plain notification.
     public let categoryIdentifier: String
+    /// Non-nil for a §6.2 catch-up (Wave 10, defect A): the rung's wall-clock
+    /// fire instant is already behind us, so delivery uses a short interval
+    /// trigger instead of a calendar one - a calendar trigger in the past
+    /// never fires. `year`/`month`/`day` still carry the rung's calendar day
+    /// (it is in the identifier regardless); `hour` and `minute` are 0 by
+    /// convention, because the wall-clock time is moot for a rung that fires
+    /// now.
+    public let catchUpIntervalSeconds: Int?
 
     public init(
         identifier: String,
@@ -49,7 +57,8 @@ public struct NotificationRequestSpec: Hashable, Sendable {
         hour: Int,
         minute: Int,
         isTimeSensitive: Bool,
-        categoryIdentifier: String
+        categoryIdentifier: String,
+        catchUpIntervalSeconds: Int? = nil
     ) {
         self.identifier = identifier
         self.title = title
@@ -61,6 +70,7 @@ public struct NotificationRequestSpec: Hashable, Sendable {
         self.minute = minute
         self.isTimeSensitive = isTimeSensitive
         self.categoryIdentifier = categoryIdentifier
+        self.catchUpIntervalSeconds = catchUpIntervalSeconds
     }
 }
 
@@ -78,6 +88,13 @@ public protocol NotificationClient: Sendable {
 
     /// Every pending request, as specs, in insertion order.
     func pendingRequests() async -> [NotificationRequestSpec]
+
+    /// Identifiers of notifications already delivered and still present in
+    /// Notification Center - the §6.2 catch-up's never-fire-twice check (Wave
+    /// 10, defect A). Deliberately the system's own delivery record rather
+    /// than a stored flag, which a restore can desynchronize; its honest
+    /// limit is that a notification the user has cleared no longer appears.
+    func deliveredIdentifiers() async -> [String]
 
     /// Adds one request. An existing pending request with the same identifier is
     /// replaced - `UNUserNotificationCenter` semantics, which is what makes

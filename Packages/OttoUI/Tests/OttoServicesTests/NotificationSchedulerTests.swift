@@ -82,7 +82,7 @@ struct NotificationSchedulerTests {
         #expect(furthestKept <= truncatedAfter.adding(days: 1))
     }
 
-    @Test("the catch-up case: added two days before the charge with a 3-day lead fires today, not never")
+    @Test("the catch-up case: added two days before the charge with a 3-day lead fires now, not never")
     func catchUp() async throws {
         let fixture = SchedulerFixture()
         let (scheduler, client, subscriptions) = (fixture.scheduler, fixture.client, fixture.subscriptions)
@@ -95,15 +95,17 @@ struct NotificationSchedulerTests {
         _ = try await scheduler.reschedule(now: try fixtureNow(), today: today, timeZone: torontoZone)
         let pending = await client.pendingRequests()
 
+        // The rung keeps its original day (Aug 5) so its identifier is stable;
+        // delivery is immediate because that instant has passed (Wave 10, §6.2).
         let catchUp = try #require(pending.first {
             NotificationPlanIdentifier.kind(of: $0.identifier) == .renewal
-                && CalendarDay(year: $0.year, month: $0.month, day: $0.day) == today
+                && CalendarDay(year: $0.year, month: $0.month, day: $0.day) == (try? day(2026, 8, 5))
         })
-        #expect(catchUp.hour == 9)
+        #expect(catchUp.catchUpIntervalSeconds == NotificationScheduler.catchUpIntervalSeconds)
     }
 
-    @Test("a reminder for today whose hour already passed waits for the next run instead of misfiring")
-    func passedHourIsLeftForNextRun() async throws {
+    @Test("a reminder for today whose hour already passed becomes a §6.2 catch-up, not silence (Wave 10)")
+    func passedHourBecomesCatchUp() async throws {
         let fixture = SchedulerFixture()
         let (scheduler, client, subscriptions) = (fixture.scheduler, fixture.client, fixture.subscriptions)
         let today = try day(2026, 8, 6)
@@ -111,16 +113,21 @@ struct NotificationSchedulerTests {
             makeSubscription(index: 1, cycleStartDay: try day(2026, 8, 8), reminderLeadDays: 3)
         ])
 
-        // 10:00 - an hour past the preferred fire time.
+        // 10:00 - an hour past the preferred fire time. The charge is still
+        // two days ahead: the warning fires now, by interval trigger, because
+        // a calendar trigger in the past never fires and the old code dropped
+        // the rung entirely - §6.2's motivating case, unimplemented since v1.1.
         let lateNow = try #require(Calendar.gregorianDate(
             year: 2026, month: 8, day: 6, hour: 10, in: torontoZone
         ))
         _ = try await scheduler.reschedule(now: lateNow, today: today, timeZone: torontoZone)
         let pending = await client.pendingRequests()
 
-        #expect(!pending.contains {
-            CalendarDay(year: $0.year, month: $0.month, day: $0.day) == today
+        let catchUp = try #require(pending.first {
+            $0.catchUpIntervalSeconds != nil
         })
+        #expect(catchUp.catchUpIntervalSeconds == NotificationScheduler.catchUpIntervalSeconds)
+        #expect(NotificationPlanIdentifier.kind(of: catchUp.identifier) == .renewal)
     }
 
     @Test("⭐ the conversion announcement is pending, correctly dated, with the app never opened again")

@@ -40,15 +40,17 @@ struct AcknowledgedChargeTests {
         let subscription = try makeSubscription(status: .active, cycleStartDay: try day(2026, 8, 8))
         let today = try day(2026, 8, 6)
 
+        // The catch-up keeps the rung's original (past) day since Wave 10.
+        let leadDay = try day(2026, 8, 5)
         let unacknowledged = reminderSchedule(for: subscription, from: today, horizonDays: 90)
-        #expect(unacknowledged.contains { $0.kind == .renewal && $0.day == today })
+        #expect(unacknowledged.contains { $0.kind == .renewal && $0.day == leadDay })
 
         let acknowledged = reminderSchedule(
             for: subscription,
             acknowledgedChargeDays: [try day(2026, 8, 8)],
             from: today, horizonDays: 90
         )
-        #expect(!acknowledged.contains { $0.kind == .renewal && $0.day == today })
+        #expect(!acknowledged.contains { $0.kind == .renewal && $0.day == leadDay })
     }
 
     @Test("with a lead longer than the cycle, the catch-up moves past an acknowledged charge to the next un-warned one")
@@ -67,10 +69,11 @@ struct AcknowledgedChargeTests {
             from: today, horizonDays: 90
         )
 
-        let catchUps = plan.filter { $0.kind == .renewal && $0.day == today }
-        #expect(catchUps.count == 1)
-        // Sep 15's own lead day (Aug 1) is also past, so the catch-up is its
-        // reminder; Oct 15's lead (Aug 31) is ahead and plans normally.
+        // Sep 15's own lead day (Aug 1) is also past, so the one catch-up is
+        // its rung, kept at that original day (Wave 10); Oct 15's lead
+        // (Aug 31) is ahead and plans normally.
+        let catchUps = plan.filter { $0.kind == .renewal && $0.day < today }
+        #expect(catchUps.map(\.day) == [try day(2026, 8, 1)])
         let octoberLeadDay = try day(2026, 8, 31)
         #expect(plan.contains { $0.kind == .renewal && $0.day == octoberLeadDay })
     }

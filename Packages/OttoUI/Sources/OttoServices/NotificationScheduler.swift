@@ -55,6 +55,13 @@ public actor NotificationScheduler: ReminderScheduling {
     public static let slotLimit = 64
     /// The rolling scheduling horizon (spec §6.1).
     public static let horizonDays = 90
+    /// How far out a §6.2 catch-up fires (Wave 10, defect A). Not instant,
+    /// because `UNTimeIntervalNotificationTrigger` requires a positive
+    /// interval and a beat of slack lets the reconciliation pass finish before
+    /// anything fires; not longer, because the whole point is that the user
+    /// who just opened the app at 10:03 sees the 09:00 warning NOW, while the
+    /// subscription that prompted them is still on their mind.
+    public static let catchUpIntervalSeconds = 5
 
     private let subscriptions: any SubscriptionRepository
     private let cancellations: any CancellationRepository
@@ -136,9 +143,11 @@ public actor NotificationScheduler: ReminderScheduling {
         let pending = await client.pendingRequests()
         let snoozeCount = pending.filter { NotificationPlanIdentifier.isSnooze($0.identifier) }.count
         let (scheduled, truncatedAfter) = budgeted(plan, limit: max(0, Self.slotLimit - snoozeCount))
-        let specs = requestSpecs(
-            for: scheduled, subscriptions: live, cancellations: records, now: now, timeZone: timeZone
-        )
+        let delivered = Set(await client.deliveredIdentifiers())
+        let specs = requestSpecs(for: scheduled, translating: SpecInputs(
+            subscriptions: live, cancellations: records,
+            delivered: delivered, now: now, timeZone: timeZone
+        ))
 
         try await reconcile(desired: specs, pending: pending, today: today)
 
@@ -265,25 +274,46 @@ public actor NotificationScheduler: ReminderScheduling {
         return failures
     }
 
-    /// Translates budgeted reminders into request specs. A reminder dated today
-    /// whose fire time has already passed is left for the next scheduler run, per
-    /// §6.2's catch-up rule - a calendar trigger in the past would not fire anyway.
+    /// Translates budgeted reminders into request specs. A rung whose fire
+    /// instant is still ahead gets a calendar trigger; a rung whose fire
+    /// instant has PASSED gets a §6.2 catch-up - a short interval trigger,
+    /// because a calendar trigger in the past never fires (Wave 10, defect A:
+    /// the old code dropped these with a comment wrongly claiming §6.2 would
+    /// recover them, and "schedule it immediately" was implemented for no
+    /// kind at all).
+    ///
+    /// The catch-up's boundaries: the PLANNER emits a passed-instant rung
+    /// only while the deadline it protects is not behind - a trial whose
+    /// conversion passed plans no trial rungs at all - so a dead deadline can
+    /// never reach here; and the delivered check is the never-fire-twice
+    /// guarantee, read from the system's own delivery record (which the
+    /// stable, content-derived identifier makes meaningful across passes)
+    /// rather than from a stored flag a restore could desynchronize.
+    /// What one translation pass reads besides the budgeted plan itself.
+    private struct SpecInputs {
+        let subscriptions: [Subscription]
+        let cancellations: [UUID: CancellationEpisode]
+        let delivered: Set<String>
+        let now: Date
+        let timeZone: TimeZone
+    }
+
     private func requestSpecs(
         for scheduled: [PlannedReminder],
-        subscriptions live: [Subscription],
-        cancellations records: [UUID: CancellationEpisode],
-        now: Date,
-        timeZone: TimeZone
+        translating inputs: SpecInputs
     ) -> [NotificationRequestSpec] {
-        let subscriptionsByID = Dictionary(uniqueKeysWithValues: live.map { ($0.id, $0) })
+        let (records, delivered) = (inputs.cancellations, inputs.delivered)
+        let (now, timeZone) = (inputs.now, inputs.timeZone)
+        let subscriptionsByID = Dictionary(
+            uniqueKeysWithValues: inputs.subscriptions.map { ($0.id, $0) }
+        )
         let policy = fireTimes()
         var specs: [NotificationRequestSpec] = []
         for reminder in scheduled {
             guard let subscription = subscriptionsByID[reminder.subscriptionID],
-                  let fireDate = policy.fireDate(for: reminder, in: timeZone),
-                  fireDate > now
+                  let fireDate = policy.fireDate(for: reminder, in: timeZone)
             else { continue }
-            let time = policy.fireTime(for: reminder.kind)
+            let identifier = NotificationPlanIdentifier.planned(reminder)
             let body = reminder.kind == .verification
                 ? NotificationContent.verificationBody(
                     subscription: subscription,
@@ -291,68 +321,36 @@ public actor NotificationScheduler: ReminderScheduling {
                     timeZone: timeZone
                 )
                 : NotificationContent.body(for: reminder, subscription: subscription)
-            specs.append(NotificationRequestSpec(
-                identifier: NotificationPlanIdentifier.planned(reminder),
-                title: NotificationContent.title(for: reminder, subscription: subscription),
-                body: body,
-                year: reminder.day.year,
-                month: reminder.day.month,
-                day: reminder.day.day,
-                hour: time.hour,
-                minute: time.minute,
-                isTimeSensitive: reminder.kind.isTimeSensitive,
-                categoryIdentifier: NotificationCategory.identifier(for: reminder.kind)
-            ))
+            if fireDate > now {
+                let time = policy.fireTime(for: reminder.kind)
+                specs.append(NotificationRequestSpec(
+                    identifier: identifier,
+                    title: NotificationContent.title(for: reminder, subscription: subscription),
+                    body: body,
+                    year: reminder.day.year,
+                    month: reminder.day.month,
+                    day: reminder.day.day,
+                    hour: time.hour,
+                    minute: time.minute,
+                    isTimeSensitive: reminder.kind.isTimeSensitive,
+                    categoryIdentifier: NotificationCategory.identifier(for: reminder.kind)
+                ))
+            } else if !delivered.contains(identifier) {
+                specs.append(NotificationRequestSpec(
+                    identifier: identifier,
+                    title: NotificationContent.title(for: reminder, subscription: subscription),
+                    body: body,
+                    year: reminder.day.year,
+                    month: reminder.day.month,
+                    day: reminder.day.day,
+                    hour: 0,
+                    minute: 0,
+                    isTimeSensitive: reminder.kind.isTimeSensitive,
+                    categoryIdentifier: NotificationCategory.identifier(for: reminder.kind),
+                    catchUpIntervalSeconds: Self.catchUpIntervalSeconds
+                ))
+            }
         }
         return specs
     }
-}
-
-/// The notification categories and their action buttons (spec §6.4).
-public enum NotificationCategory {
-    /// Renewal and trial reminders carry the three §6.4 actions.
-    public static let actionable = "otto.category.reminder"
-    /// Verification checks carry the yes/no answer buttons (spec §5.4, Wave 5).
-    public static let verification = "otto.category.verification"
-    /// Usage check-ins carry the §7.3 responses (Wave 7): "still using it"
-    /// records the use in the background; "not really" opens the subscription
-    /// so the user can decide - Otto presents facts, never a recommendation.
-    public static let usage = "otto.category.usage"
-    /// Everything else is informational.
-    public static let plain = ""
-
-    public static func identifier(for kind: PlannedReminder.Kind) -> String {
-        switch kind {
-        case .renewal, .renewalDayOf, .trialLead, .trialDayOfMorning,
-             .trialDayOfEvening, .trialDaily:
-            actionable
-        case .verification:
-            verification
-        case .usageCheckIn:
-            usage
-        case .conversionAnnouncement, .pauseEnding:
-            plain
-        }
-    }
-}
-
-/// The action buttons (spec §6.4 and, since Wave 5, the §5.4 verification
-/// answers), by stable identifier.
-public enum NotificationAction: String, CaseIterable, Sendable {
-    case keepingIt = "otto.action.keepingIt"
-    case cancelling = "otto.action.cancelling"
-    case remindLater = "otto.action.remindLater"
-    /// Verification yes-path: the charge stopped - verify and archive, all in
-    /// the background.
-    case chargesStopped = "otto.action.chargesStopped"
-    /// Verification no-path: a charge arrived - record it and bring the dispute
-    /// summary to the screen (foreground-registered).
-    case stillCharging = "otto.action.stillCharging"
-    /// Usage check-in yes-path (spec §7.3): records today as the last use, all
-    /// in the background - answering must work with the phone in a pocket.
-    case stillUsing = "otto.action.stillUsing"
-    /// Usage check-in other-path: opens the subscription. What to do about an
-    /// unused subscription is the user's decision, so the button leads to the
-    /// facts rather than performing anything.
-    case notUsing = "otto.action.notUsing"
 }

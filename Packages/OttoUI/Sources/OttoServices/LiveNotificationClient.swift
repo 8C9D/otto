@@ -21,6 +21,7 @@ public protocol UserNotificationCentering: Sendable {
     func authorizationStatus() async -> UNAuthorizationStatus
     func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
     func pendingNotificationRequests() async -> [UNNotificationRequest]
+    func deliveredNotificationIdentifiers() async -> [String]
     func add(_ request: UNNotificationRequest) async throws
     func removePendingNotificationRequests(withIdentifiers identifiers: [String])
 }
@@ -36,6 +37,10 @@ extension UNNotificationCategory: @retroactive @unchecked Sendable {}
 extension UNUserNotificationCenter: UserNotificationCentering {
     public func authorizationStatus() async -> UNAuthorizationStatus {
         await notificationSettings().authorizationStatus
+    }
+
+    public func deliveredNotificationIdentifiers() async -> [String] {
+        await deliveredNotifications().map(\.request.identifier)
     }
 }
 
@@ -137,27 +142,63 @@ public final class LiveNotificationClient: NotificationClient {
     }
 
     public func pendingRequests() async -> [NotificationRequestSpec] {
-        await center.pendingNotificationRequests().compactMap { request in
-            guard let trigger = request.trigger as? UNCalendarNotificationTrigger,
-                  let year = trigger.dateComponents.year,
-                  let month = trigger.dateComponents.month,
-                  let day = trigger.dateComponents.day,
-                  let hour = trigger.dateComponents.hour,
-                  let minute = trigger.dateComponents.minute
-            else { return nil }
-            return NotificationRequestSpec(
-                identifier: request.identifier,
-                title: request.content.title,
-                body: request.content.body,
-                year: year,
-                month: month,
-                day: day,
-                hour: hour,
-                minute: minute,
-                isTimeSensitive: request.content.interruptionLevel == .timeSensitive,
-                categoryIdentifier: request.content.categoryIdentifier
-            )
+        await center.pendingNotificationRequests().compactMap { request -> NotificationRequestSpec? in
+            switch request.trigger {
+            case let calendar as UNCalendarNotificationTrigger:
+                guard let year = calendar.dateComponents.year,
+                      let month = calendar.dateComponents.month,
+                      let day = calendar.dateComponents.day,
+                      let hour = calendar.dateComponents.hour,
+                      let minute = calendar.dateComponents.minute
+                else { return nil }
+                return spec(for: request, fields: TriggerFields(
+                    year: year, month: month, day: day, hour: hour, minute: minute,
+                    catchUpIntervalSeconds: nil
+                ))
+            case let interval as UNTimeIntervalNotificationTrigger:
+                // A §6.2 catch-up: the trigger has no date, so the rung's day
+                // is read back from the deterministic identifier, and the
+                // wall-clock time is 0/0 by the producer's convention.
+                guard let day = NotificationPlanIdentifier.day(of: request.identifier) else { return nil }
+                return spec(for: request, fields: TriggerFields(
+                    year: day.year, month: day.month, day: day.day, hour: 0, minute: 0,
+                    catchUpIntervalSeconds: Int(interval.timeInterval)
+                ))
+            default:
+                return nil
+            }
         }
+    }
+
+    private struct TriggerFields {
+        let year: Int
+        let month: Int
+        let day: Int
+        let hour: Int
+        let minute: Int
+        let catchUpIntervalSeconds: Int?
+    }
+
+    private func spec(
+        for request: UNNotificationRequest, fields: TriggerFields
+    ) -> NotificationRequestSpec {
+        NotificationRequestSpec(
+            identifier: request.identifier,
+            title: request.content.title,
+            body: request.content.body,
+            year: fields.year,
+            month: fields.month,
+            day: fields.day,
+            hour: fields.hour,
+            minute: fields.minute,
+            isTimeSensitive: request.content.interruptionLevel == .timeSensitive,
+            categoryIdentifier: request.content.categoryIdentifier,
+            catchUpIntervalSeconds: fields.catchUpIntervalSeconds
+        )
+    }
+
+    public func deliveredIdentifiers() async -> [String] {
+        await center.deliveredNotificationIdentifiers()
     }
 
     public func add(_ spec: NotificationRequestSpec) async throws {
@@ -169,20 +210,29 @@ public final class LiveNotificationClient: NotificationClient {
         if spec.isTimeSensitive {
             content.interruptionLevel = .timeSensitive
         }
-        // Wall-clock components with NO timezone, deliberately (spec §4.1): the
-        // day and hour are the user's local ones, and a timezone change fires a
-        // full reschedule anyway - so the pending request stays legible and the
-        // one instant conversion happened upstream, in exactly one place.
-        var components = DateComponents()
-        components.year = spec.year
-        components.month = spec.month
-        components.day = spec.day
-        components.hour = spec.hour
-        components.minute = spec.minute
+        let trigger: UNNotificationTrigger
+        if let seconds = spec.catchUpIntervalSeconds {
+            // A §6.2 catch-up (Wave 10, defect A): the wall-clock instant is
+            // behind us, so delivery is a short interval from now.
+            trigger = UNTimeIntervalNotificationTrigger(
+                timeInterval: TimeInterval(seconds), repeats: false
+            )
+        } else {
+            // Wall-clock components with NO timezone, deliberately (spec §4.1):
+            // the day and hour are the user's local ones, and a timezone change
+            // fires a full reschedule anyway - so the pending request stays
+            // legible and the one instant conversion happened upstream, in
+            // exactly one place.
+            var components = DateComponents()
+            components.year = spec.year
+            components.month = spec.month
+            components.day = spec.day
+            components.hour = spec.hour
+            components.minute = spec.minute
+            trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        }
         let request = UNNotificationRequest(
-            identifier: spec.identifier,
-            content: content,
-            trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            identifier: spec.identifier, content: content, trigger: trigger
         )
         try await center.add(request)
     }

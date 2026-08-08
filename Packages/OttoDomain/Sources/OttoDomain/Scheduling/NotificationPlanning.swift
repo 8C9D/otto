@@ -83,6 +83,17 @@ public enum NotificationPlanIdentifier {
         return UUID(uuidString: String(first))
     }
 
+    /// The calendar day an identifier carries, or nil for an identifier this
+    /// scheme never produced. A §6.2 catch-up request's interval trigger has
+    /// no date components, so its day is read back from here (Wave 10).
+    public static func day(of identifier: String) -> CalendarDay? {
+        let parts = identifier.split(separator: "|")
+        guard parts.count == 3 else { return nil }
+        let fields = parts[1].split(separator: "-").compactMap { Int($0) }
+        guard fields.count == 3 else { return nil }
+        return CalendarDay(year: fields[0], month: fields[1], day: fields[2])
+    }
+
     private static func kindComponent(of identifier: String) -> String? {
         let parts = identifier.split(separator: "|")
         guard parts.count == 3 else { return nil }

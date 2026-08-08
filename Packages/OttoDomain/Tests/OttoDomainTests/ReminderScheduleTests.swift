@@ -107,17 +107,6 @@ struct ReminderScheduleTests {
         #expect(!planned.contains { $0.kind == .conversionAnnouncement })
     }
 
-    @Test("the catch-up rule: a charge still ahead whose lead day passed gets a reminder today (spec §6.2)")
-    func catchUpReminder() throws {
-        // The Mode B onboarding case: added two days before the charge, 3-day lead.
-        let sub = try makeSubscription(status: .active, cycle: .monthly, cycleStartDay: try day(2026, 8, 8))
-        let today = try day(2026, 8, 6)
-
-        let planned = reminderSchedule(for: sub, from: today, horizonDays: 90)
-
-        #expect(planned.contains(PlannedReminder(subscriptionID: sub.id, day: today, kind: .renewal)))
-    }
-
     @Test("the same-day reminder fires on each billing date when enabled, and only then")
     func sameDayReminders() throws {
         var sub = try makeSubscription(status: .active, cycle: .monthly, cycleStartDay: try day(2026, 7, 15))
@@ -131,22 +120,6 @@ struct ReminderScheduleTests {
         let sameDay = planned.filter { $0.kind == .renewalDayOf }.map(\.day)
         // Nov 15 falls past the Nov 4 horizon end, so its same-day reminder does too.
         #expect(sameDay == [try day(2026, 8, 15), try day(2026, 9, 15), try day(2026, 10, 15)])
-    }
-
-    @Test("a pause ending inside the lead window still warns - today, not silently never")
-    func pauseEndingCatchUp() throws {
-        let sub = try makeSubscription(
-            status: .paused,
-            cycle: .monthly,
-            cycleStartDay: try day(2026, 1, 15),
-            reminderLeadDays: 5,
-            pauseEndsOn: try day(2026, 8, 8)
-        )
-        let today = try day(2026, 8, 6)
-
-        let planned = reminderSchedule(for: sub, from: today, horizonDays: 90)
-
-        #expect(planned == [PlannedReminder(subscriptionID: sub.id, day: today, kind: .pauseEnding)])
     }
 
     @Test("a converted trial plans like the active subscription it now is, anchored at conversion (spec §5.2a)")

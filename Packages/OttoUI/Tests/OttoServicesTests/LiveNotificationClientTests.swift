@@ -23,6 +23,7 @@ final class FakeUserNotificationCenter: UserNotificationCentering, @unchecked Se
     private var _status: UNAuthorizationStatus = .authorized
     private var _requestedOptions: [UNAuthorizationOptions] = []
     private var _addRefused = false
+    private var _delivered: [String] = []
 
     var pending: [UNNotificationRequest] { lock.withLock { _pending } }
     var categories: Set<UNNotificationCategory> { lock.withLock { _categories } }
@@ -53,6 +54,14 @@ final class FakeUserNotificationCenter: UserNotificationCentering, @unchecked Se
 
     func pendingNotificationRequests() async -> [UNNotificationRequest] {
         lock.withLock { _pending }
+    }
+
+    func seedDelivered(_ identifiers: [String]) {
+        lock.withLock { _delivered = identifiers }
+    }
+
+    func deliveredNotificationIdentifiers() async -> [String] {
+        lock.withLock { _delivered }
     }
 
     func add(_ request: UNNotificationRequest) async throws {
@@ -145,6 +154,33 @@ struct LiveNotificationClientTests {
         let original = spec()
         try await client.add(original)
         #expect(await client.pendingRequests() == [original])
+    }
+
+    @Test("a §6.2 catch-up spec becomes a non-repeating interval trigger, not a calendar one")
+    func catchUpBecomesIntervalTrigger() async throws {
+        let catchUp = NotificationRequestSpec(
+            identifier: "00000000-0000-0000-0000-000000000001|2026-08-20|conversionAnnouncement",
+            title: "t", body: "b",
+            year: 2026, month: 8, day: 20, hour: 0, minute: 0,
+            isTimeSensitive: true,
+            categoryIdentifier: "",
+            catchUpIntervalSeconds: 5
+        )
+        try await client.add(catchUp)
+
+        let request = try #require(center.pending.first)
+        let trigger = try #require(request.trigger as? UNTimeIntervalNotificationTrigger)
+        #expect(trigger.timeInterval == 5)
+        #expect(!trigger.repeats)
+        // And it reads back as the identical spec - the day comes from the
+        // deterministic identifier, since an interval trigger has no date.
+        #expect(await client.pendingRequests() == [catchUp])
+    }
+
+    @Test("delivered identifiers pass through from the center's own delivery record")
+    func deliveredPassThrough() async {
+        center.seedDelivered(["a|2026-08-20|renewal"])
+        #expect(await client.deliveredIdentifiers() == ["a|2026-08-20|renewal"])
     }
 
     @Test("a request with no trigger - a shape this scheme never produces - is skipped, not misread")
