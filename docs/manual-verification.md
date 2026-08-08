@@ -9,6 +9,21 @@ A trial's cancel-by day is `conversionDate - bufferDays`, and its conversion day
 
 Record the outcome of each run (date, device, iOS version, pass/fail per step) at the bottom of this file.
 
+## Clock-manipulation rules (learned the hard way, Aug 2026 run)
+
+The first attempt at the Wave 5 gate failed, and the cause was this procedure, not Otto: the old step 8 said to pause "~2 minutes past 09:00" of each advanced day, which lands the clock PAST every fire hour.
+**iOS does not deliver a non-repeating `UNCalendarNotificationTrigger` whose fire instant was jumped over** - Otto had scheduled correctly and iOS held the right trigger for two device-days; the jump killed it.
+
+- **Never let the clock land past a fire time. Always set it to a few minutes BEFORE the fire time and let it tick through.**
+  Real clocks tick; they never jump. The actual phone-in-a-drawer path was never at risk - only the simulation was dishonest.
+- **A dead trigger can resurrect, but only while a sibling timer is still live.**
+  A clock change makes iOS recompute timers only for apps that still have an armed timer; once an app's last pending trigger dies, no rewind can reach it.
+  Recovery then requires a device reboot, which makes SpringBoard reload every app's pending repository from disk.
+  Generalized: **jumping past the last rung of a ladder is unrecoverable by clock manipulation alone.**
+- Restoring automatic time at teardown moves the clock BACKWARDS across every advanced day.
+  Observed in the run: the device moved back two days against a ledger materialized out to November, and rewrote nothing - display and scheduling stayed derived from the stored calendar days, exactly as §4.1 intends.
+  Expect it, and do not file the time jump itself as a defect.
+
 ## 1. Compressed-timeline trial test (⛔ the Wave 5 gate)
 
 Proves the full trial lifecycle on a device in about an hour by backdating the trial's start and advancing the device clock, instead of waiting two weeks.
@@ -28,8 +43,8 @@ Proves the full trial lifecycle on a device in about an hour by backdating the t
 **Conversion with the app closed - the founding scenario**
 
 7. Do NOT open the app again. Force-quit it (swipe up from the app switcher).
-8. Advance the device clock one day at a time to the conversion day, pausing ~2 minutes past 09:00 of each advanced day. Pass: the daily escalation fires on the day between cancel-by and conversion, and the conversion announcement fires on the conversion morning - all with the app never opened.
-9. Advance the clock 3 more days past conversion, app still closed. Pass: no trial-deadline notifications fire after conversion (deadlines that are history stay silent).
+8. Advance the device clock one day at a time to the conversion day, setting it to **08:55 of each advanced day and waiting through 09:00** (never landing past a fire time - see the clock-manipulation rules above). Pass: the daily escalation fires on the day between cancel-by and conversion, and the conversion announcement fires at 09:00 on the conversion morning, on the locked screen - all with the app never opened.
+9. Advance the clock 3 more days past conversion (08:55, tick through, each day), app still closed. Pass: no trial-deadline notifications fire after conversion (deadlines that are history stay silent).
 
 **Wake - derivation, ledger, confirm**
 
@@ -37,15 +52,15 @@ Proves the full trial lifecycle on a device in about an hour by backdating the t
 11. Open detail and check the ledger. Pass: a charge row exists dated exactly the conversion day at 15.99 - created retroactively by the v1.5 watermark even though the app was closed when the date passed.
 12. Confirm the conversion from the card. Pass: the card clears; the price history shows a trial-conversion entry; re-tapping confirm does nothing (idempotent).
 
-**Cancellation after conversion - the Wave 4 bug's exact path**
+**Cancellation after conversion - the Wave 4 bug's path, and defect G's (as actually run, Aug 2026)**
 
-13. Start a cancellation from detail. Pass: the verification watch date shown is the first monthly date counted from the CONVERSION day, not from the trial start day, and not next month's wrong anniversary.
-14. Check the record (detail cancellation section). Pass: the recorded expected charge amount is 15.99, the converted price, not any later edit.
+13. Start a cancellation from detail, on the conversion day itself. Pass: the verification watch date is the first monthly date counted from the CONVERSION day and **strictly after the cancellation day** - cancelling on the conversion day must watch NEXT month's date, never today's conversion charge, which landed legitimately before the cancellation (Wave 10, defect G; the Aug 2026 run watched "today" and produced a dispute summary a bank would reject).
+14. Check the record (detail cancellation section). Pass: the recorded expected charge amount is 15.99, the converted price, not any later edit - and the ledger holds ONE row for the conversion day, not an Expected/Unexpected pair.
 
-**Teardown**
+**Teardown (as actually run)**
 
-15. Settings → General → Date & Time: turn "Set Automatically" back on. Pass: the clock is correct again.
-16. Delete "Gate Test" (or the app). Pass: Today is empty again.
+15. Settings → General → Date & Time: turn "Set Automatically" back on. Pass: the clock is correct again - and note it moves BACKWARDS across every advanced day (two days in the Aug 2026 run, against a ledger materialized to November) while display and scheduling stay derived from stored calendar days; nothing is rewritten.
+16. Delete "Gate Test" (or the app). Pass: Today is empty again, and no orphaned Gate Test notification fires later.
 
 The gate is met only if every step above passed in one uninterrupted run.
 A partial pass is a fail; note which step broke and file it against the wave.
@@ -85,3 +100,4 @@ The basic product loop, by hand, on the device - unsigned-off since Wave 3.
 
 | Date | Procedure | Device / iOS | Result | Notes |
 |---|---|---|---|---|
+| 2026-08-08..10 (device days) | 1 (compressed trial) | physical iPhone | ⛔ gate PASS on 2nd attempt | 1st attempt failed on the procedure (old step 8 jumped past fire times; rules above added). Gate criterion met: conversion announcement fired 09:00 on a locked screen, app never opened since entry two device-days earlier. Four code defects found in the same run (G, B, A, C) plus fixture/display gaps (D, H, I, J) - all fixed in Wave 10. |
