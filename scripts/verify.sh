@@ -89,6 +89,19 @@ fi
 echo "== swiftlint --strict"
 (cd "$CLONE" && swiftlint --strict --quiet)
 
+# The next-wave banner (spec §8, v2.5): 6B-Prep-3 sat correctly recorded in
+# the spec's wave table and was still skipped for several sessions, because
+# the table is not a surface anyone re-reads between waves. This run summary
+# is - so the pointer lives here, and a missing or empty pointer fails the
+# run. Deliberately NOT a claim that the named wave was done or that any wave
+# was: this script cannot know, and a checklist that lies is worse than none.
+NEXT_WAVE_FILE="$CLONE/docs/next-wave.md"
+if [[ ! -s "$NEXT_WAVE_FILE" ]]; then
+    echo "!! docs/next-wave.md is missing or empty - every wave's closing session"
+    echo "!! must leave a pointer to the next one (see README: Verifying a wave)"
+    exit 1
+fi
+
 echo
 echo "== VERIFIED: $HEAD_SHA builds, tests, and lints from a clean clone"
 for line in "${COUNTS[@]}"; do
@@ -100,3 +113,6 @@ echo "   NOT counted: the OttoUI Dynamic Type suite is UIKit-hosted and compiles
 echo "   to nothing under swift test on a mac host. It runs only on a simulator"
 echo "   (the CI simulator job, or xcodebuild test locally) - do not report its"
 echo "   tests as covered by this script's total."
+echo
+echo "== NEXT WAVE (docs/next-wave.md - update it as part of landing a wave):"
+sed 's/^/   /' "$NEXT_WAVE_FILE"

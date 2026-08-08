@@ -38,6 +38,10 @@ It clones the committed HEAD into a temp directory - deliberately ignoring the w
 It exists because Wave 4's committed HEAD did not compile while the local tree passed: a green local run is not evidence about the artifact.
 Report the numbers verify.sh prints, not the numbers a working-tree run prints.
 
+Every run ends by printing `docs/next-wave.md` - a one-line pointer naming the next wave and where it is specified - and fails if that file is missing or empty.
+Updating that line is part of landing a wave: the closing session points it at whatever comes next.
+The banner deliberately claims nothing about whether any wave was actually done; the script cannot know that, and a checklist that lies is worse than none.
+
 ## Building the app
 
 The `.xcodeproj` is generated from `project.yml` and is not committed:
