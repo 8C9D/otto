@@ -79,10 +79,20 @@ public actor NotificationScheduler: ReminderScheduling {
         self.fireTimes = fireTimes
     }
 
-    /// The idempotent full pass (spec §6.2): remove every planned request,
-    /// recompute the plan, schedule it again. Deterministic identifiers and
-    /// deterministic budgeting make a double run produce byte-identical pending
-    /// requests. Snoozes are user-created state living only in the notification
+    /// The idempotent full pass (spec §6.2): recompute the plan, then RECONCILE
+    /// it against the device's pending requests - remove only what the plan no
+    /// longer wants, add only what the device does not hold, and add over the
+    /// top where content differs (same identifier replaces). Deterministic
+    /// identifiers and deterministic budgeting make a double run a no-op.
+    ///
+    /// Reconciliation, never remove-all-then-re-add (Wave 10, defect B): the
+    /// old shape held a window between the removes and the re-adds in which a
+    /// suspension left the device with NOTHING pending - observed on device at
+    /// 5 ms from losing all three trial rungs, on a product built around a
+    /// phone that sits untouched in a drawer. With a diff there is no instant
+    /// at which a rung that should exist does not exist; a suspension
+    /// mid-reconciliation leaves a superset or the correct set, never an empty
+    /// one. Snoozes are user-created state living only in the notification
     /// center, so the pass spares them and shrinks the budget beneath them.
     @discardableResult
     public func reschedule(
@@ -130,14 +140,7 @@ public actor NotificationScheduler: ReminderScheduling {
             for: scheduled, subscriptions: live, cancellations: records, now: now, timeZone: timeZone
         )
 
-        // Replace: every planned identifier goes, snoozes stay, the fresh plan
-        // lands. Identifiers are deterministic, so this is idempotent.
-        let plannedIdentifiers = pending.map(\.identifier)
-            .filter { !NotificationPlanIdentifier.isSnooze($0) }
-        await client.removePendingRequests(withIdentifiers: plannedIdentifiers)
-        for spec in specs {
-            try await client.add(spec)
-        }
+        try await reconcile(desired: specs, pending: pending, today: today)
 
         return ScheduleOutcome(
             permission: permission,
@@ -146,6 +149,47 @@ public actor NotificationScheduler: ReminderScheduling {
             coveredThrough: min(truncatedAfter ?? horizonEnd, horizonEnd),
             ledgerFailures: ledgerFailures
         )
+    }
+
+    /// The diff (Wave 10, defect B): removes only identifiers the plan no
+    /// longer wants, adds only identifiers the device does not already hold
+    /// with identical content - `UNUserNotificationCenter` replaces on same
+    /// identifier, so a changed spec is one idempotent add, and an unchanged
+    /// one is no call at all. Removes go first only because they free budget
+    /// slots; no desired rung is ever among them.
+    ///
+    /// The conversion announcement is never cancelled by a reschedule (Wave
+    /// 10, defect C; spec §6.3): the escalation is a request and can be
+    /// waived, the announcement is a fact and cannot. A pending announcement
+    /// dated TODAY is structurally exempt from removal - if the desired plan
+    /// would drop it (as the passed-hour filter did at 09:01 on conversion
+    /// day, permanently cancelling the one notification that says money
+    /// started moving), the device keeps it anyway. Past-dated announcements
+    /// are removable: a day-late "converted today" is the dishonesty v1.4
+    /// legislated against, and future-dated ones must go when a trial is
+    /// cancelled before converting.
+    private func reconcile(
+        desired specs: [NotificationRequestSpec],
+        pending: [NotificationRequestSpec],
+        today: CalendarDay
+    ) async throws {
+        let desiredByID = Dictionary(uniqueKeysWithValues: specs.map { ($0.identifier, $0) })
+        let planned = pending.filter { !NotificationPlanIdentifier.isSnooze($0.identifier) }
+        let stale = planned.filter { existing in
+            desiredByID[existing.identifier] == nil && !isTodaysAnnouncement(existing, today: today)
+        }
+        if !stale.isEmpty {
+            await client.removePendingRequests(withIdentifiers: stale.map(\.identifier))
+        }
+        let pendingByID = Dictionary(uniqueKeysWithValues: planned.map { ($0.identifier, $0) })
+        for spec in specs where pendingByID[spec.identifier] != spec {
+            try await client.add(spec)
+        }
+    }
+
+    private func isTodaysAnnouncement(_ spec: NotificationRequestSpec, today: CalendarDay) -> Bool {
+        NotificationPlanIdentifier.kind(of: spec.identifier) == .conversionAnnouncement
+            && CalendarDay(year: spec.year, month: spec.month, day: spec.day) == today
     }
 
     /// The cancellation records the plan needs - and loading them doubles as the

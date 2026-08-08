@@ -2,14 +2,57 @@ import Foundation
 import OttoDomain
 import UserNotifications
 
+/// The seam over `UNUserNotificationCenter` (Wave 10): exactly the calls the
+/// live client makes, so the translation layer - trigger construction, the
+/// component fields, categories, interruption levels, and `add`'s error path -
+/// is testable host-side against a fake that records the REAL
+/// `UNNotificationRequest` objects. The seam sits at the system boundary, not
+/// above `LiveNotificationClient`, because a mock of the client would mock
+/// away the thing under test: every engine test runs against a fake whose
+/// `add` never throws, and both device defects this wave fixes lived in the
+/// untested translation underneath it.
+///
+/// `UNNotificationSettings` and `UNNotification` have no public initializers,
+/// so the two calls that would return them are narrowed to the values the
+/// client actually reads - a fake cannot construct the framework types, and a
+/// seam a fake cannot implement tests nothing.
+public protocol UserNotificationCentering: Sendable {
+    func setNotificationCategories(_ categories: Set<UNNotificationCategory>)
+    func authorizationStatus() async -> UNAuthorizationStatus
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
+    func pendingNotificationRequests() async -> [UNNotificationRequest]
+    func add(_ request: UNNotificationRequest) async throws
+    func removePendingNotificationRequests(withIdentifiers identifiers: [String])
+}
+
+// UNUserNotificationCenter is documented thread-safe, and the request/category
+// types are immutable once handed over (the mutable content subclass is copied
+// on add) - the annotations state what the framework already guarantees but
+// predates Sendable checking.
+extension UNUserNotificationCenter: @retroactive @unchecked Sendable {}
+extension UNNotificationRequest: @retroactive @unchecked Sendable {}
+extension UNNotificationCategory: @retroactive @unchecked Sendable {}
+
+extension UNUserNotificationCenter: UserNotificationCentering {
+    public func authorizationStatus() async -> UNAuthorizationStatus {
+        await notificationSettings().authorizationStatus
+    }
+}
+
 /// The `UNUserNotificationCenter`-backed client - a pure translation layer. Every
 /// decision was made upstream; this converts specs to system requests and back,
 /// and registers the §6.4 action category once at startup.
 public final class LiveNotificationClient: NotificationClient {
 
-    public init() {}
+    private let center: any UserNotificationCentering
 
-    private var center: UNUserNotificationCenter { .current() }
+    /// The app target passes nothing and gets the real center; tests inject
+    /// the recording fake, and `UNUserNotificationCenter.current()` - which
+    /// requires an app bundle `swift test` does not have - is then never
+    /// touched.
+    public init(center: (any UserNotificationCentering)? = nil) {
+        self.center = center ?? UNUserNotificationCenter.current()
+    }
 
     /// Registers the action categories (spec §6.4; §5.4's verification answers
     /// since Wave 5). Called once at launch, before any notification can be
@@ -76,8 +119,7 @@ public final class LiveNotificationClient: NotificationClient {
     }
 
     public func permission() async -> NotificationPermission {
-        let settings = await center.notificationSettings()
-        return switch settings.authorizationStatus {
+        switch await center.authorizationStatus() {
         case .notDetermined: .notDetermined
         case .denied: .denied
         case .provisional: .provisional
@@ -87,7 +129,7 @@ public final class LiveNotificationClient: NotificationClient {
     }
 
     public func requestAuthorization() async -> NotificationPermission {
-        // A denied or error outcome reads back the actual settings rather than
+        // A denied or error outcome reads back the actual status rather than
         // guessing - the system dialog result and the settings can disagree
         // transiently, and the settings are the truth.
         _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
@@ -127,6 +169,10 @@ public final class LiveNotificationClient: NotificationClient {
         if spec.isTimeSensitive {
             content.interruptionLevel = .timeSensitive
         }
+        // Wall-clock components with NO timezone, deliberately (spec §4.1): the
+        // day and hour are the user's local ones, and a timezone change fires a
+        // full reschedule anyway - so the pending request stays legible and the
+        // one instant conversion happened upstream, in exactly one place.
         var components = DateComponents()
         components.year = spec.year
         components.month = spec.month

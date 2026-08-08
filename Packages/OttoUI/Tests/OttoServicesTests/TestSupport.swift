@@ -100,13 +100,34 @@ func makeSubscription(
 // MARK: - Fakes
 
 /// In-memory notification center: same replace-by-identifier semantics as
-/// `UNUserNotificationCenter`, plus a switchable permission.
+/// `UNUserNotificationCenter`, plus a switchable permission, a call log for
+/// reconciliation assertions, and injectable `add` failure - the fake whose
+/// `add` never threw is the gap this wave exists to close (Wave 10).
 actor FakeNotificationClient: NotificationClient {
+    struct AddRefused: Error {}
+
     var storedPermission: NotificationPermission = .authorized
     private(set) var requests: [NotificationRequestSpec] = []
+    /// Every `add` call in order, including replacements and failed attempts.
+    private(set) var addCalls: [NotificationRequestSpec] = []
+    /// Every `removePendingRequests` call's identifiers, flattened, in order.
+    private(set) var removeCalls: [String] = []
+    private var remainingAddsBeforeRefusal: Int?
 
     func setPermission(_ permission: NotificationPermission) {
         storedPermission = permission
+    }
+
+    /// Models suspension mid-reconciliation: `count` more adds land, then the
+    /// center stops accepting calls - the device state at that instant is what
+    /// the loss-window tests assert on.
+    func refuseAdds(after count: Int) {
+        remainingAddsBeforeRefusal = count
+    }
+
+    func clearCallLog() {
+        addCalls = []
+        removeCalls = []
     }
 
     func permission() async -> NotificationPermission { storedPermission }
@@ -116,11 +137,17 @@ actor FakeNotificationClient: NotificationClient {
     func pendingRequests() async -> [NotificationRequestSpec] { requests }
 
     func add(_ spec: NotificationRequestSpec) async throws {
+        addCalls.append(spec)
+        if let remaining = remainingAddsBeforeRefusal {
+            guard remaining > 0 else { throw AddRefused() }
+            remainingAddsBeforeRefusal = remaining - 1
+        }
         requests.removeAll { $0.identifier == spec.identifier }
         requests.append(spec)
     }
 
     func removePendingRequests(withIdentifiers identifiers: [String]) async {
+        removeCalls.append(contentsOf: identifiers)
         let doomed = Set(identifiers)
         requests.removeAll { doomed.contains($0.identifier) }
     }
