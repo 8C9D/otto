@@ -14,12 +14,29 @@ WORKDIR="$(mktemp -d /tmp/otto-verify.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 CLONE="$WORKDIR/otto"
-PACKAGES=(OttoDomain OttoPersistence OttoUI)
 
 echo "== Otto verify: committed HEAD $HEAD_SHA"
 echo "== Working tree state is deliberately ignored; only the clone is tested."
 git clone --quiet "$REPO_ROOT" "$CLONE"
 git -C "$CLONE" checkout --quiet "$HEAD_SHA"
+
+# The package list is DERIVED from the clone, never hand-maintained: with a
+# hand list a fourth package would be silently untested, and this script's one
+# job is that nothing committed escapes it. Only directories carrying a
+# Package.swift count. An empty derivation is a failure in its own right - a
+# list that derives to nothing would let the loop below pass while testing
+# nothing, the same class of defect as a guard that goes green while checking
+# nothing.
+PACKAGES=()
+for manifest in "$CLONE"/Packages/*/Package.swift; do
+    [[ -f "$manifest" ]] || continue
+    PACKAGES+=("$(basename "$(dirname "$manifest")")")
+done
+if [[ ${#PACKAGES[@]} -eq 0 ]]; then
+    echo "!! no packages derived from Packages/ - refusing to pass on an empty list"
+    exit 1
+fi
+echo "== packages (derived from the clone's Packages/): ${PACKAGES[*]}"
 
 echo "== xcodegen generate"
 (cd "$CLONE" && xcodegen generate --quiet)
