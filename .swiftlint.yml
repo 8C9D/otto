@@ -2,10 +2,10 @@ included:
   - Otto
   - Packages
 
+# Globbed, not hand-listed: a fourth package's .build must be impossible to
+# forget (the same reasoning as verify.sh's derived package list).
 excluded:
-  - Packages/OttoDomain/.build
-  - Packages/OttoPersistence/.build
-  - Packages/OttoUI/.build
+  - Packages/*/.build
 
 opt_in_rules:
   - force_unwrapping
@@ -23,6 +23,13 @@ line_length:
   warning: 140
   error: 200
 
+# Spec §3.5 (v2.4): only the Exported* types may cross a wire. The domain
+# models' own Codable conformance encodes Date with whatever strategy the
+# ambient coder carries, so a default JSONEncoder on any wire reinstates the
+# 2001 epoch. A wire needs a coder, and the only production code allowed to
+# construct one is the Export layer, whose types pin every strategy
+# explicitly. Tests are exempt - domain Codable is for tests and in-process
+# use, which is precisely the boundary being enforced.
 # Spec §5.2a (v1.7): the stored status is unreadable above layer 2. Every
 # consumer read goes through effectiveStatus(asOf:) or an intent-named
 # transition/edit API on Subscription; only the domain model itself and the
@@ -35,6 +42,20 @@ line_length:
 # not name it; reads route through the domain's Codable and the persistence
 # mapping, and the edit path describes with Subscription.describing.
 custom_rules:
+  wire_coder_outside_export:
+    name: "Wire coder outside the Exported* layer"
+    regex: '\b(?:JSONEncoder|JSONDecoder|PropertyListEncoder|PropertyListDecoder|JSONSerialization)\b'
+    included:
+      - ".*/Packages/[^/]+/Sources/.*"
+      - ".*/Otto/.*\\.swift"
+    excluded:
+      - ".*/Packages/OttoDomain/Sources/OttoDomain/Export/.*"
+    message: >-
+      Only the Exported* types may cross a wire (spec §3.5, v2.4). Domain
+      Codable carries the ambient Date strategy - a default coder brings the
+      2001 epoch back. Go through the Export layer (exportData/decodeExport),
+      or add an Exported* type rather than reusing a domain one.
+    severity: error
   reading_repaired_in_write_path:
     name: "Read-path tolerance in a write path"
     regex: '\breadingRepaired\b'
