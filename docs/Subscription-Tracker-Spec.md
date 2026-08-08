@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.3 — SCHEMA FROZEN (V3).** ⭐ **Otto now runs on a real iPhone with three real subscriptions in it.** Revised Aug 7 after the first hands-on session. HEAD `d151122`, **460 tests**. Three defects found by hand that 460 tests did not catch (§9b).
+**Status:** **v2.4 — SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** Wave 9A complete: HEAD `ab52879`, **475 tests**, all three hands-on defects fixed and verified **on device**. ⚠ **Wave 6B-Prep-3 was specified in v2.2 and never run** — it is the next wave and two of its three items are CloudKit blockers.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -111,6 +111,12 @@ Cheap now, expensive to retrofit. Non-negotiable on every persisted record:
 | Money as **integer cents**, never `Double` | Same rule as Kept. `0.1 + 0.2 != 0.3` |
 | Billing dates as **calendar days**, not `Date` | See §4.1 — this is a correctness issue, not a style one |
 | Export/import as a **first-class v1 feature** | It is simultaneously backup, user trust, and the Android migration path |
+
+**⚠ The wire format is the `Exported*` types, and nothing else** *(added v2.4)*. Wave 9A's sweep found a latent second instance of the epoch problem: **the domain models' own `Codable` conformance** (`Subscription`, `TrialTerm`, and siblings) encodes `Date` with whatever strategy the encoder happens to carry — so a default `JSONEncoder` reaching any wire brings Apple's 2001 epoch straight back. Test-only today.
+
+> **Only the `Exported*` types may cross a wire.** Domain `Codable` conformance is for tests and in-process use; if it ever needs to serialize outward, that is a signal to add an `Exported*` type rather than reuse it.
+
+This is the same *one-mechanism-two-authorities* shape flagged five times already, and the same lesson as the watermark: **a representation that is device-local by convention will eventually leave the device.**
 
 **Export format version policy** *(added v1.8 — Wave 8 correctly noted the spec never stated one)*:
 
@@ -781,7 +787,8 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **6B-Prep** ✅ | §4a's principles, ledger reconciliation, domain watermark removed, the four prerequisites, guard rebuilt to walk the schema the app actually opens | ✅ **Done** — HEAD `8e2ce53`, **449 tests**, verified twice from clean clones. Wholesale collection replace is now **inexpressible**, not merely unused |
 | **6B-Prep-2** ✅ | Convergence unified, closure clamped, watermarks reconstructed on import, the describing constructor, `restore()` gated on the kill switch | ✅ **Done** — HEAD `d151122`, **460 tests**. The nil-watermark state is now **inexpressible** from the import flow; `readingRepaired` is a **build error** in UI, repositories and the app target |
 | **⭐ DEVICE TESTING** | Install on the owner's iPhone; the four manual gates | ✅ **Unblocked — no code dependency remains** |
-| **6B-Prep-3** | Three small items: the restore dirty flag, `verify.sh`'s hand-maintained package list, evidence-note reparenting (§5.0a) | Before 6B |
+| **9A** ✅ | Hands-on fixes: Today permission surface, edit-form mode, export format v4 (ISO 8601 UTC) | ✅ **Done** — HEAD `ab52879`, **475 tests**; all three verified on the physical device |
+| **6B-Prep-3** ⬅ **NEXT** | ⚠ **Specified in v2.2 and skipped.** Restore dirty flag (§5.3), `verify.sh`'s hand-maintained package list, evidence-note reparenting (§5.0a), plus the `Codable`-`Date` wire hazard found by Wave 9A's sweep | ⛔ **All four before 6B** |
 | **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
 
 **⛔ Hard prerequisites for enabling CloudKit** *(added v2.0; the audit answered "what is the rollback story" with **"there is no rollback story — there is a backup story," which is not the same thing**)*. `restore()` hard-deletes and re-inserts, which under mirroring is a **mass cloud deletion plus a resurrection vector for offline devices**; sync cannot be switched off without shipping a build; and nothing can purge the zone. All four must exist first:
@@ -829,7 +836,15 @@ Otto was installed on the owner's iPhone and used for about two hours. Three rea
 | **2** | **The edit form always reopens in "When it started" mode**, displaying the stored anchor under that label regardless of how it was entered. For a Mode B subscription it asserts a start date that never happened — and shows `Started on` and `Next charge` as the **same date** on an annual cycle, which is impossible for a real start date. Root cause is §5.1's back-derivation: the entry mode is **discarded** after save, so the form has nothing to restore | Reproduced 3× |
 | **3** | **Export timestamps use Apple's 2001 reference epoch** (`"createdAt": 807839382.279346`) while `expectedDate` and `cycleStartDay` are proper ISO strings. Two conventions in one file — and **this breaks the file's whole purpose**: export/import is the CloudKit escape hatch (§3.5), the reason Waves 7–8 preceded 6, and the argument that settled §10 Decision 2. **A migration format encoded in a platform-specific epoch is not a migration format** — a Kotlin or TypeScript importer produces dates 31 years off unless it knows the offset | Verified in the exported file |
 
-**Fixes:** (1) surface the not-yet-asked state on Today; (2) either store the entry mode, or **drop the segmented control on edit entirely** and show one unambiguous "Next charge on" field — once a subscription exists, "when did it start" is no longer a question worth asking; (3) ISO 8601 UTC strings, `formatVersion` → 4 per §3.5's policy.
+### ✅ All three fixed in Wave 9A — and the diagnosis found something worse
+
+**⭐ The empty-database gate was hiding more than the banner.** The early-return that skipped the notification surface **also skipped the "N subscriptions couldn't be read" card and the read-repair cards** — so an entirely unreadable database would have displayed **"No subscriptions yet"** while suppressing the one card explaining why. That is not a missing banner; **it is a database silently reporting itself as empty**, which is §4a principle 2 (*reads degrade and repair, never fail silently*) defeated by a UI gate rather than by the persistence layer. Found only because the fix required understanding *why* rather than patching the symptom.
+
+**Option (b) was chosen for the edit form**, on a dependency check confirming nothing reads the anchor as a start date — §7.3's zombie report and the usage check-in already accept Mode B anchors. One subtlety mattered in implementing it: **an untouched edit re-describes the stored anchor verbatim rather than re-deriving it**, so saving without touching the date cannot silently shift a clamped month-end phase or re-ask the last-day question the anchor already answers.
+
+**Export v4 trades bit-exactness for portability, deliberately.** The old numeric encoding round-tripped `Date` doubles exactly; ISO milliseconds cannot. The cost is pinned in a named test (`subMillisecondTruncation`) and the round-trip fixtures were changed from decimal to binary-exact fractions, since the old ones pinned precisely the property v4 gives up.
+
+**Original fixes as specified:** (1) surface the not-yet-asked state on Today; (2) either store the entry mode, or **drop the segmented control on edit entirely** and show one unambiguous "Next charge on" field — once a subscription exists, "when did it start" is no longer a question worth asking; (3) ISO 8601 UTC strings, `formatVersion` → 4 per §3.5's policy.
 
 ### ⚠ Two candidate findings were withdrawn, and the pattern matters more than the findings
 
@@ -877,6 +892,11 @@ Otto was installed on the owner's iPhone and used for about two hours. Three rea
 ---
 
 ## Update log
+
+- **2026-08-07 (v2.4 — Wave 9A complete, verified on device)** — **475 tests**, HEAD `ab52879`; all three §9b defects fixed and **confirmed on the physical iPhone**, with the three real subscriptions surviving the reinstall intact.
+  - **⭐ The empty-database gate was worse than the reported bug.** It hid not just the notification banner but the **"N subscriptions couldn't be read" and read-repair cards** — an entirely unreadable database would have shown "No subscriptions yet" while suppressing the explanation. **A UI gate defeating §4a principle 2**, found only because the fix required diagnosing *why* rather than patching the symptom. Recorded because the general form is worth carrying: **an early return that skips a list can skip everything that renders alongside it.**
+  - **New §3.5 rule: only the `Exported*` types may cross a wire.** The sweep found the domain models' own `Codable` conformance encoding `Date` with the encoder's ambient strategy — a default `JSONEncoder` on any future wire reinstates the 2001 epoch. Test-only today; **a representation that is device-local by convention will eventually leave the device.**
+  - **⚠ Wave 6B-Prep-3 was specified in v2.2 and never ran.** The device-install session and Wave 9A both jumped over it. Three items outstanding — the **restore dirty flag** (crash window currently leaving *stale-ahead* watermarks, the one direction the design refuses), **evidence-note reparenting** (one id naming two live records, a **collision** in CloudKit specifically), and `verify.sh`'s hand-maintained package list — now joined by the `Codable`-`Date` hazard. **Two of the four are CloudKit blockers**, and it is now the next wave.
 
 - **2026-08-07 (v2.3 — first hands-on session)** — ⭐ **Otto is installed on a physical iPhone and holds three real subscriptions**: Subscription A, Subscription B, Subscription C — **$N/year**. The device build succeeded with **nothing stripped** (all three entitlements verified present before install), and the working tree stayed clean at `d151122`.
   - **⭐⭐ Two of the three subscriptions entered were ones the owner had lost track of.** Subscription B ($B/yr, auto-renew on) and Subscription C ($C/yr) appear **nowhere** in `Personal-Finance-Hub-v2` — the most carefully built financial record he has, with 21 reconciled statements — because both landed in the four statements that lack line detail. He could not remember the Proton amount and was unsure which card paid it. **Annual subscriptions are structurally unrememberable, and that is the product thesis confirmed against his own data rather than against a story.** Proton also renews **17% above** the promo price he paid, an increase he would never have seen coming.
