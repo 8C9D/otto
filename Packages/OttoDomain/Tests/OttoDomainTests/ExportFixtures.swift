@@ -4,11 +4,14 @@ import Testing
 
 // MARK: - The full-fidelity export fixture
 
-// Instants carry fractional seconds so round-trips prove bit-exact, not just
-// second-exact.
-private let fixtureCreated = Date(timeIntervalSinceReferenceDate: 776_304_000.123456)
-private let fixtureUpdated = Date(timeIntervalSinceReferenceDate: 776_390_412.654321)
-private let fixtureDeleted = Date(timeIntervalSinceReferenceDate: 776_400_001.000111)
+// Instants carry fractional seconds so round-trips prove fraction-exact, not
+// just second-exact. The fractions are binary-exact multiples of a millisecond
+// because format v4's contract IS millisecond precision (ISO 8601 strings);
+// what a v4 round trip does to a sub-millisecond fraction is pinned separately
+// in `subMillisecondTruncation`.
+private let fixtureCreated = Date(timeIntervalSinceReferenceDate: 776_304_000.5)
+private let fixtureUpdated = Date(timeIntervalSinceReferenceDate: 776_390_412.25)
+private let fixtureDeleted = Date(timeIntervalSinceReferenceDate: 776_400_001.125)
 
 /// A database exercising every model type, every enum case that can appear in
 /// one, soft-deleted rows, multi-year price history, trials at each state, and

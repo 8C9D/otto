@@ -95,6 +95,42 @@ struct WireFormatTests {
         #expect(text.contains("\"evidenceNotes\" :"))
         #expect(!text.contains("\"evidenceNote\" :"))
     }
+
+    @Test("instants are ISO 8601 UTC strings on the wire - never the 2001-epoch numbers (v4)")
+    func instantsAreISO8601Strings() throws {
+        // The Wave 9A hands-on session read "createdAt": 807839382.279346 in a
+        // real export - Apple's reference epoch, 31 years wrong to any importer
+        // that assumes Unix seconds. Format v4 forbids the shape entirely.
+        let data = try exportData(from: try fullSnapshot(), exportedAt: Date(timeIntervalSinceReferenceDate: 0))
+        let text = try #require(String(data: data, encoding: .utf8))
+
+        #expect(text.contains("\"formatVersion\" : 4"))
+        #expect(text.contains("\"exportedAt\" : \"2001-01-01T00:00:00.000Z\""))
+        #expect(text.contains("\"createdAt\" : \"2025-08-08T00:00:00.500Z\""))
+        // Every instant key ends in "At"; none may carry a bare number.
+        #expect(text.range(of: #"At" : \d"#, options: .regularExpression) == nil)
+        #expect(text.range(of: #"At" : -"#, options: .regularExpression) == nil)
+    }
+
+    @Test("a sub-millisecond fraction truncates to the millisecond - v4's documented cost, never more")
+    func subMillisecondTruncation() throws {
+        // The one thing v4 gave up for portability, pinned so it can never
+        // silently grow: an instant loses at most its sub-millisecond digits.
+        let precise = Date(timeIntervalSinceReferenceDate: 807_839_382.279346)
+        let snapshot = OttoDataSnapshot(paymentMethods: [PaymentMethod(
+            id: try fixtureUUID(1), label: "Card", last4: "4242", issuer: "Visa",
+            expiryMonth: 12, expiryYear: 2028, isDefault: true,
+            createdAt: precise, updatedAt: precise
+        )])
+
+        let data = try exportData(from: snapshot, exportedAt: precise)
+        let imported = try importedSnapshot(from: data)
+
+        let method = try #require(imported.paymentMethods.first)
+        let drift = abs(method.createdAt.timeIntervalSince(precise))
+        #expect(drift > 0)
+        #expect(drift < 0.001)
+    }
 }
 
 // MARK: - Version handling
@@ -105,16 +141,16 @@ struct ExportVersionTests {
     @Test("a future format version fails clearly, before anything is applied")
     func futureVersionRefused() throws {
         let data = Data("""
-        {"formatVersion": 4, "exportedAt": 0, "subscriptions": [], "paymentMethods": [],
-         "billingEvents": [], "cancellationEpisodes": [], "priceChanges": []}
+        {"formatVersion": 5, "exportedAt": "2026-08-07T00:00:00.000Z", "subscriptions": [],
+         "paymentMethods": [], "billingEvents": [], "cancellationEpisodes": [], "priceChanges": []}
         """.utf8)
 
-        #expect(throws: ExportFormatError.unsupportedFormatVersion(found: 4, supported: 3)) {
+        #expect(throws: ExportFormatError.unsupportedFormatVersion(found: 5, supported: 4)) {
             try decodeExport(data)
         }
-        let message = ExportFormatError.unsupportedFormatVersion(found: 4, supported: 3)
+        let message = ExportFormatError.unsupportedFormatVersion(found: 5, supported: 4)
             .errorDescription ?? ""
-        #expect(message.contains("format 4"))
+        #expect(message.contains("format 5"))
         #expect(message.contains("Nothing was changed"))
     }
 

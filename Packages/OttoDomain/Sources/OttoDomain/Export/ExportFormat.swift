@@ -8,10 +8,10 @@ import Foundation
 // migration silently breaks the old export files - exactly the files a
 // migration needs most.
 //
-// Format conventions, frozen in v1:
+// Format conventions, frozen in v1 (instants amended in v4 - see below):
 // - calendar days are "YYYY-MM-DD" strings
-// - instants are JSON numbers of seconds since 2001-01-01T00:00:00Z (Swift's
-//   `Date` reference encoding, kept because it round-trips bit-exactly)
+// - instants are ISO 8601 UTC strings with millisecond precision
+//   ("2026-08-07T14:03:02.123Z") since format v4
 // - money is integer cents, never floating point and never formatted strings
 // - enums are the lower-camel-case strings pinned by `WireFormatTests`
 // - the device-local materialization watermark is ABSENT by design (spec §5.3):
@@ -37,6 +37,19 @@ import Foundation
 // removed `evidenceNote` key would otherwise be silently dropped by an older
 // app reading a newer file.
 //
+// Format v4 (Wave 9A, spec §9b defect 3): instants became ISO 8601 UTC
+// strings. v1-v3 wrote them as JSON numbers of seconds since
+// 2001-01-01T00:00:00Z - Swift's `Date` reference encoding, which round-trips
+// bit-exactly on Apple platforms and is silently 31 years wrong everywhere
+// else. A migration format encoded in a platform-specific epoch is not a
+// migration format (spec §3.5: this file IS the CloudKit escape hatch and the
+// Android path), so v4 trades bit-exactness for portability: millisecond
+// precision, parseable by any ISO 8601 reader with no epoch knowledge.
+// Reading a v1-v3 file remains supported forever: their numeric instants are
+// decoded as 2001-epoch seconds (`decodeExport` picks the strategy from the
+// file's declared version), so converting an old file truncates instants to
+// the millisecond and changes nothing else.
+//
 // Reading a v1 file remains supported, with these documented defaults:
 // - a subscription's pause fields become ONE open pause episode (started on
 //   `pausedOn`, scheduled to resume on `pauseEndsOn`), with an id DERIVED from
@@ -50,7 +63,7 @@ import Foundation
 
 /// A whole database as the export format describes it.
 public struct OttoExport: Hashable, Sendable {
-    public static let currentFormatVersion = 3
+    public static let currentFormatVersion = 4
 
     /// The version THE FILE declared - 1 for an upgraded legacy file. Encoding
     /// a fresh export always writes `currentFormatVersion`.
