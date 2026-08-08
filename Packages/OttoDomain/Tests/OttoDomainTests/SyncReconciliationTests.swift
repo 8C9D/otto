@@ -128,6 +128,9 @@ struct CancellationRivalReconciliationTests {
         #expect(merged.winner.id == earliest.id)
         #expect(merged.loserIDs == [later.id])
         #expect(merged.winner.liveEvidenceNotes.map(\.text) == ["confirmation #123"])
+        // Moved, not copied (spec §5.0a): the loser comes back tombstone-ready
+        // holding none - its note now lives only on the winner.
+        #expect(merged.losers.allSatisfy { $0.evidenceNotes.isEmpty })
         // The loser's observation survives; un-observing a charge would be loss.
         #expect(merged.winner.verificationState == .stillCharging)
         #expect(merged.winner.unansweredCheckCount == 2)

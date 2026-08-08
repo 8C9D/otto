@@ -1,5 +1,6 @@
 import Foundation
 import OttoDomain
+import SwiftData
 
 /// The §5.4 v1.9 fold upgrade's result - a tiny bundle because the state, the
 /// end, and the outcome move together or not at all.
@@ -141,6 +142,12 @@ extension OttoSchemaV3.StoredCancellationEpisode {
     /// is not deletion (spec §4a, Wave 6B-Prep); removing a note is the domain
     /// note carrying its tombstone (the evidence flow already writes it), never
     /// an absent array slot.
+    ///
+    /// A note stored under a DIFFERENT episode is reparented here, not copied
+    /// (spec §5.0a): the rival-cancellation merge moves the losers' notes to
+    /// the winner, and this is the one place note records come from - so no
+    /// applier path can put one note id on records under two parents, the
+    /// collision CloudKit turns real in 6B.
     private func syncEvidenceNotes(with domain: CancellationEpisode) {
         let storedByID = Dictionary(
             (evidenceNotes ?? []).compactMap { record in record.id.map { ($0, record) } },
@@ -149,11 +156,33 @@ extension OttoSchemaV3.StoredCancellationEpisode {
         for note in domain.evidenceNotes {
             if let existing = storedByID[note.id] {
                 existing.update(from: note)
+            } else if let elsewhere = storedNoteAnywhere(id: note.id) {
+                elsewhere.episode = self
+                elsewhere.update(from: note)
             } else {
                 let record = OttoSchemaV3.StoredEvidenceNote()
                 record.episode = self
                 record.update(from: note)
             }
+        }
+    }
+
+    /// The whole-store lookup behind the reparent: nil when the id is genuinely
+    /// new (or this record is not yet in a context - then nothing can collide).
+    /// This runs inside restore's no-throw mutation phase, so a failed fetch
+    /// cannot propagate; it is logged and falls back to inserting, which is
+    /// the pre-§5.0a behavior rather than silence.
+    private func storedNoteAnywhere(id noteID: UUID) -> OttoSchemaV3.StoredEvidenceNote? {
+        guard let context = modelContext else { return nil }
+        var descriptor = FetchDescriptor<OttoSchemaV3.StoredEvidenceNote>(
+            predicate: #Predicate { $0.id == noteID }
+        )
+        descriptor.fetchLimit = 1
+        do {
+            return try context.fetch(descriptor).first
+        } catch {
+            mappingLogger.error("Evidence-note reparent lookup failed: \(String(describing: error))")
+            return nil
         }
     }
 }

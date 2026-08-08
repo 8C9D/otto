@@ -223,6 +223,34 @@ func makePaymentMethod(index: Int = 300, label: String = "Bank Mastercard ..4821
     )
 }
 
+// MARK: - The §5.0a store-wide id invariant
+
+/// Every id that more than one LIVE record carries - across the WHOLE main
+/// store, not per table, because CloudKit record names are unique per zone
+/// regardless of record type (spec §5.0a): two live records sharing an id is
+/// a name collision in exactly the subsystem 6B enables. Tombstones are
+/// excluded - they are communicable history, not addressable live records.
+func duplicateLiveIDs(in containers: OttoContainers) throws -> [UUID] {
+    let context = ModelContext(containers.main)
+    var counts: [UUID: Int] = [:]
+    func count<Record: PersistentModel>(
+        _ type: Record.Type, id: (Record) -> UUID?, deletedAt: (Record) -> Date?
+    ) throws {
+        for record in try context.fetch(FetchDescriptor<Record>()) where deletedAt(record) == nil {
+            if let id = id(record) { counts[id, default: 0] += 1 }
+        }
+    }
+    try count(StoredSubscription.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredTrialTerm.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredBillingEvent.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredCancellationEpisode.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredEvidenceNote.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredPauseEpisode.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredPriceChange.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    try count(StoredPaymentMethod.self, id: { $0.id }, deletedAt: { $0.deletedAt })
+    return counts.filter { $0.value > 1 }.map(\.key).sorted { $0.uuidString < $1.uuidString }
+}
+
 // MARK: - On-disk migration helpers (shared by the migration suites)
 
 /// The whole legacy-touching phase holds the shared creation lock (see

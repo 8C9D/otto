@@ -47,12 +47,18 @@ extension BillingEvent {
 }
 
 /// What merging one subscription's rival OPEN episodes decided: the surviving
-/// episode (with the losers' notes and progress merged in) and the episodes to
-/// tombstone - the same shape as the ledger merge, because it is the same
-/// situation: two devices recorded one real-world act.
+/// episode (with the losers' notes and progress merged in) and the losers,
+/// tombstone-ready - the same shape as the ledger merge, because it is the
+/// same situation: two devices recorded one real-world act. The losers are
+/// returned as full values, notes already MOVED out (spec §5.0a), so both
+/// applier paths write the same emptied loser and cannot drift.
 public struct CancellationRivalReconciliation: Hashable, Sendable {
     public let winner: CancellationEpisode
-    public let loserIDs: [UUID]
+    /// The tombstone-ready losers: each holds NO evidence notes, because its
+    /// notes now live on the winner - one id, one record, one parent.
+    public let losers: [CancellationEpisode]
+
+    public var loserIDs: [UUID] { losers.map(\.id) }
 }
 
 extension CancellationEpisode {
@@ -62,12 +68,13 @@ extension CancellationEpisode {
     /// `markedCancelledAt` (tie: id) survives, because the earliest
     /// cancellation is when the user actually acted, and its earlier check
     /// date errs toward watching sooner, never too late. The losers' evidence
-    /// notes and verification progress merge into it; the losers themselves
-    /// are tombstoned by the applying paths (the import merge and the
+    /// notes MOVE to it and their verification progress merges into it; the
+    /// losers are tombstoned by the applying paths (the import merge and the
     /// post-sync reconciliation pass, which share this rule so they cannot
-    /// drift). A loser's own note copies ride along under its tombstone as
-    /// communicable history; the winner's copies are the live ones.
-    /// Nil unless there are at least two rivals.
+    /// drift), each holding no notes. Reparent, never copy (spec §5.0a): a
+    /// live copy under the winner beside the loser's own would put one note
+    /// id on records under two parents - a name collision in CloudKit, the
+    /// subsystem 6B enables. Nil unless there are at least two rivals.
     public static func reconcilingOpenRivals(among open: [CancellationEpisode]) -> CancellationRivalReconciliation? {
         guard open.count > 1 else { return nil }
         let ordered = open.sorted {
@@ -76,11 +83,14 @@ extension CancellationEpisode {
         guard var winner = ordered.first else { return nil }
         let losers = ordered.dropFirst()
 
+        var emptiedLosers: [CancellationEpisode] = []
         var knownNoteIDs = Set(winner.evidenceNotes.map(\.id))
-        for loser in losers {
+        for var loser in losers {
             for note in loser.evidenceNotes where knownNoteIDs.insert(note.id).inserted {
                 winner.evidenceNotes.append(note)
             }
+            loser.evidenceNotes = []
+            emptiedLosers.append(loser)
         }
         // A rival that already observed the watch failing donates the
         // observation - un-observing a charge would be data loss. Adopted only
@@ -103,6 +113,6 @@ extension CancellationEpisode {
         if winner.expectedChargeAmountCents == nil {
             winner.expectedChargeAmountCents = losers.compactMap(\.expectedChargeAmountCents).first
         }
-        return CancellationRivalReconciliation(winner: winner, loserIDs: losers.map(\.id))
+        return CancellationRivalReconciliation(winner: winner, losers: emptiedLosers)
     }
 }

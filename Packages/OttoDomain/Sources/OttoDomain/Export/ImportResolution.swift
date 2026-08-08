@@ -173,10 +173,12 @@ private func replaceCounts<Record: ImportableRecord>(
 /// merge can legitimately unite two open ones (each side cancelled
 /// independently, different ids): `reconcilingOpenRivals` - one rule with the
 /// post-sync reconciliation pass, one shape with the ledger merge (spec §4a
-/// principle 2a) - keeps the earliest, folds the losers' notes and progress
-/// into it, and tombstones the losers at `instant`, each write COUNTED as
-/// updated so nothing about the outcome is silent. The tombstone carries a
-/// fresh `updatedAt` so it outranks any still-live copy of the loser under
+/// principle 2a) - keeps the earliest, MOVES the losers' notes and folds
+/// their progress into it, and tombstones the emptied losers at `instant`,
+/// each write COUNTED as updated so nothing about the outcome is silent
+/// (spec §5.0a: the loser is tombstoned holding none, so no note id ever
+/// names records under two parents). The tombstone carries a fresh
+/// `updatedAt` so it outranks any still-live copy of the loser under
 /// last-write-wins rather than being resurrected by one.
 private func resolveSingleOpenCancellation(
     in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts, at instant: Date
@@ -194,12 +196,14 @@ private func resolveSingleOpenCancellation(
             snapshot.cancellationEpisodes[index] = stamped
             counts.updated += 1
         }
-        for loserID in merged.loserIDs {
-            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == loserID }) else {
+        for loser in merged.losers {
+            guard let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == loser.id }) else {
                 continue
             }
-            snapshot.cancellationEpisodes[index].deletedAt = instant
-            snapshot.cancellationEpisodes[index].updatedAt = instant
+            var stamped = loser
+            stamped.deletedAt = instant
+            stamped.updatedAt = instant
+            snapshot.cancellationEpisodes[index] = stamped
             counts.updated += 1
         }
     }

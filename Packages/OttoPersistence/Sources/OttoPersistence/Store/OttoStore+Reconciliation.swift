@@ -59,10 +59,11 @@ extension OttoStore: ReconciliationRepository {
 
     /// Two open live episodes on one subscription: the shared §4a-2a rule (one
     /// rule with the import merge, one shape with the ledger merge) keeps the
-    /// earliest and folds the losers' notes and progress in; this pass writes
-    /// the merge and tombstones the losers at `instant`. A loser's own note
-    /// records stay under its tombstone as history - the winner carries the
-    /// live copies.
+    /// earliest, MOVES the losers' notes onto it, and folds their progress in;
+    /// this pass writes the merge and tombstones the losers at `instant`.
+    /// Writing the winner reparents each loser's note records (spec §5.0a:
+    /// one id, one record, one parent), so the loser is tombstoned holding
+    /// none - never a tombstone-side copy of a live note.
     private func mergeRivalCancellationEpisodes(
         at instant: Date, into summary: inout ReconciliationSummary
     ) throws {

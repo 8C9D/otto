@@ -78,7 +78,7 @@ extension SerializedPersistenceTests {
             arguments: [[601, 602], [602, 601]]
         )
         func rivalCancellationsConverge(order: [Int]) async throws {
-            let (store, _) = try makeStore()
+            let (store, containers) = try makeStore()
             let subscription = try makeSubscription(
                 status: .cancellationPending, cycleStartDay: try day(2026, 1, 15)
             )
@@ -114,6 +114,19 @@ extension SerializedPersistenceTests {
             let all = try await store.episodesIncludingDeleted(forSubscription: subscription.id)
             let tombstoned = try #require(all.first { $0.id == newer.id })
             #expect(tombstoned.deletedAt == instant)
+            // Moved, not copied (spec §5.0a): the loser is tombstoned holding
+            // none, and ONE stored record carries the note id - live, under
+            // the winner - because a live copy beside the loser's own would be
+            // a CloudKit name collision the moment 6B turns the mirror on.
+            #expect(tombstoned.evidenceNotes.isEmpty)
+            let noteID = try fixtureUUID(652)
+            let noteRows = try ModelContext(containers.main)
+                .fetch(FetchDescriptor<StoredEvidenceNote>())
+                .filter { $0.id == noteID }
+            #expect(noteRows.count == 1)
+            #expect(noteRows.first?.episode?.id == (try fixtureUUID(601)))
+            #expect(noteRows.first?.deletedAt == nil)
+            #expect(try duplicateLiveIDs(in: containers).isEmpty)
         }
 
         @Test("the pass persists §4a read repairs without waiting for a user save")

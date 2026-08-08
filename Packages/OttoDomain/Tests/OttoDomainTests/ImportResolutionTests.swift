@@ -124,6 +124,9 @@ struct ImportResolutionTests {
         )
         #expect(tombstoned.deletedAt == importInstant)
         #expect(tombstoned.updatedAt == importInstant)
+        // Moved, not copied (spec §5.0a): the loser is tombstoned holding
+        // none, so one note id never names records under two parents.
+        #expect(tombstoned.evidenceNotes.isEmpty)
         #expect(resolved.summary.cancellationEpisodes.removed == 0)
         // Added (the incoming episode) plus updated twice: the merged winner
         // and the tombstoned loser.
