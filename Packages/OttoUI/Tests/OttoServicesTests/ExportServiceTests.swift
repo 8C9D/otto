@@ -24,11 +24,7 @@ private actor MockTransfer: DataTransferRepository {
         self.snapshot = snapshot
     }
 
-    private(set) var watermarkReconstructions = 0
-
-    func reconstructMaterializationWatermarks() async throws {
-        watermarkReconstructions += 1
-    }
+    func reconstructMaterializationWatermarks() async throws {}
 }
 
 @MainActor
