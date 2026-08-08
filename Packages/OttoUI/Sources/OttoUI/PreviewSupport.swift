@@ -368,7 +368,9 @@ actor PreviewRepository:
         )
     }
 
-    func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {
+    func restore(
+        _ snapshot: OttoDataSnapshot, at instant: Date, watermarks: RestoreWatermarkPolicy
+    ) async throws {
         subscriptions = Dictionary(uniqueKeysWithValues: snapshot.subscriptions.map { ($0.id, $0) })
         paymentMethods = Dictionary(uniqueKeysWithValues: snapshot.paymentMethods.map { ($0.id, $0) })
         events = Dictionary(uniqueKeysWithValues: snapshot.billingEvents.map { ($0.id, $0) })
@@ -376,6 +378,9 @@ actor PreviewRepository:
             uniqueKeysWithValues: snapshot.cancellationEpisodes.map { ($0.subscriptionID, $0) }
         )
         priceChanges = Dictionary(uniqueKeysWithValues: snapshot.priceChanges.map { ($0.id, $0) })
+        if watermarks == .reconstruct {
+            try await reconstructMaterializationWatermarks()
+        }
     }
 
     func reconstructMaterializationWatermarks() async throws {

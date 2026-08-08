@@ -8,6 +8,7 @@ import OttoRepositories
 private actor MockTransfer: DataTransferRepository {
     private(set) var snapshot: OttoDataSnapshot
     private(set) var restoredSnapshots: [OttoDataSnapshot] = []
+    private(set) var restoredWatermarkPolicies: [RestoreWatermarkPolicy] = []
 
     init(snapshot: OttoDataSnapshot = OttoDataSnapshot()) {
         self.snapshot = snapshot
@@ -15,8 +16,11 @@ private actor MockTransfer: DataTransferRepository {
 
     func completeSnapshot() async throws -> OttoDataSnapshot { snapshot }
 
-    func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {
+    func restore(
+        _ snapshot: OttoDataSnapshot, at instant: Date, watermarks: RestoreWatermarkPolicy
+    ) async throws {
         restoredSnapshots.append(snapshot)
+        restoredWatermarkPolicies.append(watermarks)
         self.snapshot = snapshot
     }
 
@@ -110,10 +114,10 @@ struct ExportServiceTests {
         #expect(stored.subscriptions.count == 2)
         #expect(stored.billingEvents.count == 1)
         // A merge leaves this device's ledger progress untouched (spec §5.3).
-        #expect(await transfer.watermarkReconstructions == 0)
+        #expect(await transfer.restoredWatermarkPolicies == [.keep])
     }
 
-    @Test("a replace import reconstructs the device watermarks after the restore (spec §5.3, v2.1)")
+    @Test("a replace import names the reconstruct policy, so the store runs the §5.3 sequence")
     func replaceImportReconstructsWatermarks() async throws {
         let transfer = MockTransfer(snapshot: try seededSnapshot())
         let service = ExportService(transfer: transfer)
@@ -126,7 +130,7 @@ struct ExportServiceTests {
 
         _ = try await service.performImport(from: file, strategy: .replace, now: Date(timeIntervalSince1970: 11_000))
 
-        #expect(await transfer.watermarkReconstructions == 1)
+        #expect(await transfer.restoredWatermarkPolicies == [.reconstruct])
     }
 
     @Test("a corrupt file fails the import and nothing is restored")

@@ -24,7 +24,9 @@ extension SerializedPersistenceTests {
                 try makeBillingEvent(index: 101, subscriptionID: dropped.id, expectedDate: try day(2026, 2, 1))
             )
 
-            try await store.restore(OttoDataSnapshot(subscriptions: [kept]), at: instant)
+            try await store.restore(
+                OttoDataSnapshot(subscriptions: [kept]), at: instant, watermarks: .reconstruct
+            )
 
             #expect(try await store.subscriptions().map(\.id) == [kept.id])
             // The dropped subscription and its cascade are history, not gone:
@@ -58,7 +60,9 @@ extension SerializedPersistenceTests {
             // IS the whole-database statement, so - unlike a save (§4a) - it
             // may and must remove the child, as a tombstone.
             subscription.pauseEpisodes = []
-            try await store.restore(OttoDataSnapshot(subscriptions: [subscription]), at: instant)
+            try await store.restore(
+                OttoDataSnapshot(subscriptions: [subscription]), at: instant, watermarks: .reconstruct
+            )
 
             let reloaded = try #require(try await store.subscription(withID: subscription.id))
             let episode = try #require(reloaded.pauseEpisodes.first { $0.id == closed.id })
@@ -72,7 +76,7 @@ extension SerializedPersistenceTests {
             try await store.save(subscription)
             try await store.deleteSubscription(withID: subscription.id, at: Date(timeIntervalSince1970: 9_000))
 
-            try await store.restore(OttoDataSnapshot(), at: instant)
+            try await store.restore(OttoDataSnapshot(), at: instant, watermarks: .reconstruct)
 
             let all = try await store.subscriptionsIncludingDeleted()
             #expect(all.first?.deletedAt == Date(timeIntervalSince1970: 9_000))

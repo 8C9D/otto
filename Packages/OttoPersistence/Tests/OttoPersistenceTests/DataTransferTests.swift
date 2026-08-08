@@ -92,7 +92,9 @@ extension SerializedPersistenceTests {
             // Wipe: restore an empty snapshot. Since Wave 6B-Prep the wipe is
             // expressed as TOMBSTONES, never hard deletes (spec §8) - nothing
             // live remains, but the records are still there as history.
-            try await source.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 10_500))
+            try await source.restore(
+                OttoDataSnapshot(), at: Date(timeIntervalSince1970: 10_500), watermarks: .reconstruct
+            )
             #expect(try await source.subscriptions() == [])
             #expect(try await source.completeSnapshot().subscriptions.allSatisfy { $0.deletedAt != nil })
 
@@ -102,7 +104,9 @@ extension SerializedPersistenceTests {
                 strategy: .replace,
                 at: Date(timeIntervalSince1970: 11_000)
             )
-            try await source.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
+            try await source.restore(
+                resolved.snapshot, at: Date(timeIntervalSince1970: 11_000), watermarks: .reconstruct
+            )
 
             // Value-identical: the watermark is device state and lives outside
             // the snapshot entirely (spec §5.3, Wave 6B-Prep).
@@ -144,7 +148,9 @@ extension SerializedPersistenceTests {
                         strategy: .replace,
                         at: Date(timeIntervalSince1970: 11_000)
                     )
-                    try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
+                    try await store.restore(
+                        resolved.snapshot, at: Date(timeIntervalSince1970: 11_000), watermarks: .reconstruct
+                    )
                 }
                 #expect(try await store.completeSnapshot() == before)
             }
@@ -163,7 +169,9 @@ extension SerializedPersistenceTests {
                 try makeBillingEvent(index: 999, subscriptionID: try fixtureUUID(999), expectedDate: try day(2026, 1, 1))
             ])
 
-            await #expect(throws: RepositoryError.self) { try await store.restore(poisoned, at: Date(timeIntervalSince1970: 11_000)) }
+            await #expect(throws: RepositoryError.self) {
+                try await store.restore(poisoned, at: Date(timeIntervalSince1970: 11_000), watermarks: .reconstruct)
+            }
             #expect(try await store.completeSnapshot() == before)
         }
 
@@ -192,7 +200,7 @@ extension SerializedPersistenceTests {
                 strategy: .merge,
                 at: Date(timeIntervalSince1970: 11_000)
             )
-            try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000))
+            try await store.restore(resolved.snapshot, at: Date(timeIntervalSince1970: 11_000), watermarks: .keep)
 
             let stored = try #require(try await store.subscription(withID: subscriptionID))
             #expect(stored.notes == "edited on the other device")
@@ -209,7 +217,9 @@ extension SerializedPersistenceTests {
             let before = try await store.completeSnapshot()
 
             await #expect(throws: RepositoryError.restoreRequiresSyncDisengaged) {
-                try await store.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 11_000))
+                try await store.restore(
+                    OttoDataSnapshot(), at: Date(timeIntervalSince1970: 11_000), watermarks: .reconstruct
+                )
             }
             // Refused before any mutation - the database is exactly as it was,
             // and the message tells the user what to do.
@@ -222,7 +232,9 @@ extension SerializedPersistenceTests {
             let (store, _) = try makeStore(syncState: SyncState(isEnabled: true, killSwitchEngaged: true))
             try await store.save(try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15)))
 
-            try await store.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 11_000))
+            try await store.restore(
+                OttoDataSnapshot(), at: Date(timeIntervalSince1970: 11_000), watermarks: .reconstruct
+            )
 
             #expect(try await store.subscriptions() == [])
         }

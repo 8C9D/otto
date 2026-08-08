@@ -20,7 +20,9 @@ private actor SnapshotTransfer: DataTransferRepository {
         return snapshot
     }
 
-    func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {}
+    func restore(
+        _ snapshot: OttoDataSnapshot, at instant: Date, watermarks: RestoreWatermarkPolicy
+    ) async throws {}
     func reconstructMaterializationWatermarks() async throws {}
 }
 

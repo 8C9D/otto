@@ -46,7 +46,27 @@ extension OttoStore: DataTransferRepository {
     /// mutation phase must not have a failure path that needs it. The one
     /// remaining throw is `save()` itself (disk full and the like), where the
     /// on-disk state is still the old one.
-    public func restore(_ snapshot: OttoDataSnapshot, at instant: Date) async throws {
+    ///
+    /// With `.reconstruct` the store owns the whole §5.3 sequence: dirty flag
+    /// durably first, main-store save, then watermark reconstruction whose
+    /// save also clears the flag. A crash between the two saves leaves the
+    /// flag set, and every watermark access reconstructs before reading while
+    /// it is - the v2.2 stale-ahead window self-heals instead of persisting.
+    public func restore(
+        _ snapshot: OttoDataSnapshot, at instant: Date, watermarks: RestoreWatermarkPolicy
+    ) async throws {
+        try restoreThroughMainSave(snapshot, at: instant, markingDirty: watermarks == .reconstruct)
+        if watermarks == .reconstruct {
+            try reconstructWatermarksNow()
+        }
+    }
+
+    /// Everything up to and including the main-store save - the first of the
+    /// two saves. Internal seam so the crash-window test can interrupt between
+    /// the saves through the real production path rather than a simulation.
+    func restoreThroughMainSave(
+        _ snapshot: OttoDataSnapshot, at instant: Date, markingDirty: Bool
+    ) throws {
         // Refuse-first phase: nothing below this line mutates.
         try refuseUnlessSyncDisengaged()
         try refuseUnholdable(snapshot)
@@ -55,6 +75,13 @@ extension OttoStore: DataTransferRepository {
         let events = try existingByID(StoredBillingEvent.self)
         let cancellations = try existingByID(StoredCancellationEpisode.self)
         let changes = try existingByID(StoredPriceChange.self)
+
+        // The §5.3 dirty flag, durable BEFORE the main store can change: a
+        // crash anywhere past this line reconstructs on the next watermark
+        // access. Last in the refuse phase, so a refused restore writes none.
+        if markingDirty {
+            try markRestoreDirty(at: instant)
+        }
 
         // Mutation phase: no throws until the single save.
         let parents = restoreSubscriptions(snapshot.subscriptions, existing: subscriptions, at: instant)
@@ -90,7 +117,23 @@ extension OttoStore: DataTransferRepository {
         for absent in changes.absent(from: snapshot.priceChanges.map(\.id)) {
             tombstone(&absent.deletedAt, at: instant)
         }
-        try modelContext.save()
+        try commitRestore(markingDirty: markingDirty)
+    }
+
+    /// The first of the two saves. A failed save persists nothing, so the
+    /// stored watermarks still match the on-disk ledger and the flag is
+    /// retracted - without that, the heal would reconstruct over a ledger that
+    /// was never replaced, which can advance a deliberately rewound watermark
+    /// (§5.3's backwards-edit rule) past its stranded gap. Best-effort: the
+    /// retraction's own save failing right after succeeding moments ago is the
+    /// double-fault this accepts and documents.
+    private func commitRestore(markingDirty: Bool) throws {
+        do {
+            try modelContext.save()
+        } catch {
+            if markingDirty { try? clearRestoreDirtyFlag() }
+            throw error
+        }
     }
 
     /// The subscription half of the restore diff: upsert by id (children
@@ -125,18 +168,26 @@ extension OttoStore: DataTransferRepository {
         return parents
     }
 
-    /// The replace-import watermark reconstruction (spec §5.3, v2.1): each
-    /// live subscription's watermark becomes the latest expected date among
+    /// The watermark reconstruction (spec §5.3, v2.1): each live
+    /// subscription's watermark becomes the latest expected date among
     /// its LIVE ledger rows - what "materialized through" means - or its
     /// anchor when it has none, never today. Live rows only, because a
     /// tombstoned `.upcoming` row is an invalidation artifact of a sequence
     /// that no longer exists; excluding it can only pull the watermark
     /// EARLIER, and a regressed watermark re-observes idempotently while an
-    /// advanced one vouches for rows that may not exist. Ordered by the caller
-    /// AFTER a successful restore, so a refused or failed restore leaves
-    /// device state exactly as it was; the crash window between the two saves
-    /// is accepted and documented in docs/cloudkit-readiness.md.
+    /// advanced one vouches for rows that may not exist. Run by
+    /// `restore(_:at:watermarks: .reconstruct)` as its second save, and by
+    /// the dirty-flag heal on the first watermark access after an interrupted
+    /// one - the v2.2 crash window between the two saves self-heals here
+    /// instead of being accepted.
     public func reconstructMaterializationWatermarks() async throws {
+        try reconstructWatermarksNow()
+    }
+
+    /// The shared body: rebuilds every watermark from the ledger and clears
+    /// any §5.3 dirty flag IN THE SAME SAVE, so "reconstructed" and "no longer
+    /// dirty" commit together or not at all.
+    func reconstructWatermarksNow() throws {
         let subscriptions = try modelContext.fetch(
             FetchDescriptor<StoredSubscription>(predicate: #Predicate { $0.deletedAt == nil })
         )
@@ -159,9 +210,59 @@ extension OttoStore: DataTransferRepository {
             row.subscriptionID = id
             row.lastMaterializedThrough = day
         }
+        for flag in try deviceStateContext.fetch(FetchDescriptor<StoredRestoreDirtyFlag>()) {
+            deviceStateContext.delete(flag)
+        }
         if deviceStateContext.hasChanges {
             try deviceStateContext.save()
         }
+    }
+
+    // MARK: - The §5.3 restore dirty flag
+
+    /// Durably marks device state dirty before a replace-restore mutates the
+    /// main store. Idempotent - one flag row is enough for any number of
+    /// interrupted attempts.
+    private func markRestoreDirty(at instant: Date) throws {
+        var descriptor = FetchDescriptor<StoredRestoreDirtyFlag>()
+        descriptor.fetchLimit = 1
+        guard try deviceStateContext.fetch(descriptor).isEmpty else { return }
+        let flag = StoredRestoreDirtyFlag()
+        deviceStateContext.insert(flag)
+        flag.markedAt = instant
+        do {
+            try deviceStateContext.save()
+        } catch {
+            // The insert never committed; drop it so the context stays clean
+            // (a lone pending insert is safe to roll back).
+            deviceStateContext.rollback()
+            throw error
+        }
+    }
+
+    /// Retracts the flag without reconstructing - only correct when the main
+    /// store is known unchanged (a failed first save).
+    func clearRestoreDirtyFlag() throws {
+        for flag in try deviceStateContext.fetch(FetchDescriptor<StoredRestoreDirtyFlag>()) {
+            deviceStateContext.delete(flag)
+        }
+        if deviceStateContext.hasChanges {
+            try deviceStateContext.save()
+        }
+    }
+
+    /// The §5.3 heal, run before every watermark read or write: a present
+    /// dirty flag means an interrupted replace-restore may have left stored
+    /// watermarks ahead of the ledger - the one direction the design refuses -
+    /// so they are reconstructed from the ledger (which clears the flag)
+    /// before any pass can trust or advance them. Guarding the accessors
+    /// rather than app launch makes the ordering structural: there is no code
+    /// path to a stale-ahead watermark, whoever calls first.
+    func healInterruptedRestoreIfNeeded() throws {
+        var descriptor = FetchDescriptor<StoredRestoreDirtyFlag>()
+        descriptor.fetchLimit = 1
+        guard try !deviceStateContext.fetch(descriptor).isEmpty else { return }
+        try reconstructWatermarksNow()
     }
 
     /// Spec §8 (v2.1): `restore()` STRUCTURALLY requires the kill switch.

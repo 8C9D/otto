@@ -67,6 +67,7 @@ public actor OttoStore {
     // MARK: - The materialization watermark (spec §5.3, device state)
 
     func deviceWatermark(for subscriptionID: UUID) throws -> CalendarDay? {
+        try healInterruptedRestoreIfNeeded()
         let rows = try deviceStateContext.fetch(
             FetchDescriptor<StoredMaterializationWatermark>(
                 predicate: #Predicate { $0.subscriptionID == subscriptionID }
@@ -79,6 +80,7 @@ public actor OttoStore {
     /// Callers choose where this falls relative to the main store's save; see
     /// the actor comment for the ordering rule.
     func setDeviceWatermark(_ day: CalendarDay?, for subscriptionID: UUID) throws {
+        try healInterruptedRestoreIfNeeded()
         let rows = try deviceStateContext.fetch(
             FetchDescriptor<StoredMaterializationWatermark>(
                 predicate: #Predicate { $0.subscriptionID == subscriptionID }
