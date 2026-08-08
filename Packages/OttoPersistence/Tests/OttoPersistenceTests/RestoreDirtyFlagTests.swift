@@ -93,6 +93,48 @@ extension SerializedPersistenceTests {
             #expect(try storedFlags(in: containers).isEmpty)
         }
 
+        @Test("the double fault - flag written, main save and retraction failed - keeps a rewound watermark behind its gap")
+        func doubleFaultKeepsRewoundWatermarkBehindItsGap() async throws {
+            let (store, containers) = try makeStore()
+            let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+            try await store.save(subscription)
+            // A ledger through Dec 15 whose interior the backwards-edit rule
+            // (§5.3, v1.7) decided must be re-observed: the rewind to Oct 1
+            // strands the gap (Oct 1 .. Dec 15] behind rows that still exist,
+            // so a reconstruction from the ledger alone cannot see it.
+            try await store.save(try makeBillingEvent(
+                index: 101, subscriptionID: subscription.id, expectedDate: try day(2026, 12, 15)
+            ))
+            try await store.initializeMaterializationWatermark(
+                forSubscription: subscription.id, at: try day(2026, 12, 15)
+            )
+            try await store.rewindMaterializationWatermark(
+                forSubscription: subscription.id, to: try day(2026, 10, 1)
+            )
+
+            // The double fault's on-disk signature, driven through the
+            // production path: the flag written durably, the ledger left
+            // unreplaced (a failed main save persists nothing - which a
+            // content-identical restore's first save reproduces exactly), and
+            // the failed retraction leaving the flag standing.
+            let snapshot = try await store.completeSnapshot()
+            try await store.restoreThroughMainSave(
+                snapshot, at: Date(timeIntervalSince1970: 11_000), markingDirty: true
+            )
+            #expect(try storedFlags(in: containers).count == 1)
+
+            // Relaunch: the heal reconstructs over the unreplaced ledger. A
+            // bare reconstruction would answer Dec 15 - advancing past the
+            // stranded gap, the one direction the design refuses. The v2.5
+            // min keeps the rewind.
+            let relaunched = OttoStore(containers: containers)
+            #expect(
+                try await relaunched.materializationWatermark(forSubscription: try fixtureUUID(1))
+                    == (try day(2026, 10, 1))
+            )
+            #expect(try storedFlags(in: containers).isEmpty)
+        }
+
         @Test("a completed replace and a merge both end with no dirty flag - a merge never writes one")
         func completedRestoresLeaveNoFlag() async throws {
             let (store, containers) = try makeStore()

@@ -122,11 +122,12 @@ extension OttoStore: DataTransferRepository {
 
     /// The first of the two saves. A failed save persists nothing, so the
     /// stored watermarks still match the on-disk ledger and the flag is
-    /// retracted - without that, the heal would reconstruct over a ledger that
-    /// was never replaced, which can advance a deliberately rewound watermark
-    /// (§5.3's backwards-edit rule) past its stranded gap. Best-effort: the
-    /// retraction's own save failing right after succeeding moments ago is the
-    /// double-fault this accepts and documents.
+    /// retracted. Best-effort: the retraction's own save can fail right after
+    /// succeeding moments ago - the §5.3 double fault - which leaves the next
+    /// access reconstructing over a ledger that was never replaced. That path
+    /// is why reconstruction takes the MINIMUM of current and reconstructed
+    /// (v2.5): even then, a deliberately rewound watermark cannot be advanced
+    /// past its stranded gap.
     private func commitRestore(markingDirty: Bool) throws {
         do {
             try modelContext.save()
@@ -180,6 +181,17 @@ extension OttoStore: DataTransferRepository {
     /// the dirty-flag heal on the first watermark access after an interrupted
     /// one - the v2.2 crash window between the two saves self-heals here
     /// instead of being accepted.
+    ///
+    /// Since v2.5 the result is capped at the CURRENT stored watermark - the
+    /// min of current and reconstructed. This deviates from v2.1's literal
+    /// definition in the service of the principle the definition exists for
+    /// (watermarks err earlier, never later): in the double fault - flag
+    /// written, main save failed, retraction failed - the heal runs over a
+    /// ledger that was never replaced, where a bare reconstruction would
+    /// advance a deliberately rewound watermark (the backwards-edit rule)
+    /// past its stranded gap. The cap can only pull a watermark earlier,
+    /// which is always safe, so it applies to every reconstruction rather
+    /// than making the heal guess whether the ledger was replaced.
     public func reconstructMaterializationWatermarks() async throws {
         try reconstructWatermarksNow()
     }
@@ -200,15 +212,22 @@ extension OttoStore: DataTransferRepository {
             latestBySubscription[subscriptionID] = max(latestBySubscription[subscriptionID] ?? date, date)
         }
         let rows = try deviceStateContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
-        for row in rows { deviceStateContext.delete(row) }
+        var current: [UUID: Int] = [:]
+        for row in rows {
+            if let id = row.subscriptionID, let stored = row.lastMaterializedThrough {
+                current[id] = min(current[id] ?? stored, stored)
+            }
+            deviceStateContext.delete(row)
+        }
         for subscription in subscriptions {
             guard let id = subscription.id,
-                  let day = latestBySubscription[id] ?? subscription.cycleStartDay
+                  let reconstructed = latestBySubscription[id] ?? subscription.cycleStartDay
             else { continue }
             let row = StoredMaterializationWatermark()
             deviceStateContext.insert(row)
             row.subscriptionID = id
-            row.lastMaterializedThrough = day
+            // The v2.5 cap: never later than the watermark already stored.
+            row.lastMaterializedThrough = min(reconstructed, current[id] ?? reconstructed)
         }
         for flag in try deviceStateContext.fetch(FetchDescriptor<StoredRestoreDirtyFlag>()) {
             deviceStateContext.delete(flag)
