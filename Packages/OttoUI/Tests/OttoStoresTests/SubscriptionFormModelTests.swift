@@ -320,3 +320,77 @@ struct SubscriptionFormModelTests {
         #expect(!form.leadCoversWholeCycle)
     }
 }
+
+@MainActor
+@Suite("Edit form (Wave 9A defect 2)")
+struct SubscriptionFormEditModeTests {
+
+    @Test("the edit form never displays a start date equal to the next charge on a multi-month cycle")
+    func editNeverAssertsAStartDate() throws {
+        // The hands-on reproduction: an annual subscription entered via "My
+        // next charge" (anchor = the entered occurrence, 2026-10-06) reopened
+        // showing "Started on" and "Next charge" as the SAME date - impossible
+        // for a real start date. The edit form no longer has a start-date
+        // surface at all: no mode control, next-charge presentation only.
+        let annual = try makeSubscription(
+            index: 1, cycle: .annual, cycleStartDay: try day(2026, 10, 6)
+        )
+        let form = SubscriptionFormModel(editing: annual, dates: try fixedDates())
+
+        #expect(!form.offersEntryModeChoice)
+        #expect(form.entryMode == .nextCharge)
+        // The one date shown is the next charge, correctly derived...
+        #expect(form.nextChargeDate == (try day(2026, 10, 6)))
+        // ...and mode A's "Started on"/"Next charge" pairing cannot render:
+        // its live confirmation is nil outside mode A.
+        #expect(form.computedNextBillingDate == nil)
+
+        // An untouched save re-describes the stored anchor byte for byte.
+        let saved = try #require(form.buildSubscription())
+        #expect(saved.cycleStartDay == annual.cycleStartDay)
+    }
+
+    @Test("an untouched edit preserves a clamped month-end anchor and asks no §5.1 question")
+    func untouchedEditPreservesClampedAnchor() throws {
+        // Anchor Jan 31, monthly: today (Aug 6) derives Aug 31 as the next
+        // charge - itself a month-end date. Re-deriving from it would re-ask
+        // the last-day question the stored anchor already answers, and a wrong
+        // answer would silently move every future charge to the 31st-or-28th.
+        let clamped = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 31))
+        let form = SubscriptionFormModel(editing: clamped, dates: try fixedDates())
+
+        #expect(form.nextChargeDate == (try day(2026, 8, 31)))
+        #expect(form.preservesStoredAnchor)
+        #expect(!form.needsLastDayAnswer)
+        let saved = try #require(form.buildSubscription())
+        #expect(saved.cycleStartDay == (try day(2026, 1, 31)))
+    }
+
+    @Test("changing the next charge on edit re-derives the anchor with full §5.1 semantics")
+    func changedEditRederives() throws {
+        let clamped = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 31))
+        let form = SubscriptionFormModel(editing: clamped, dates: try fixedDates())
+
+        // A new asserted date is a new §5.1 Mode B entry: ambiguous dates ask.
+        form.nextChargeDate = try day(2026, 9, 30)
+        #expect(!form.preservesStoredAnchor)
+        #expect(form.needsLastDayAnswer)
+        #expect(form.canSave == false)
+
+        form.lastDayAnswer = .lastDayOfMonth
+        let monthEnd = try #require(form.buildSubscription())
+        #expect(monthEnd.anchorDay == 31)
+
+        form.lastDayAnswer = .enteredDay
+        let entered = try #require(form.buildSubscription())
+        #expect(entered.cycleStartDay == (try day(2026, 9, 30)))
+
+        // Dialing the field back to the prefill withdraws the assertion: the
+        // stored anchor is preserved again, deterministically on the visible
+        // state rather than on touch history.
+        form.nextChargeDate = try day(2026, 8, 31)
+        #expect(form.preservesStoredAnchor)
+        let restored = try #require(form.buildSubscription())
+        #expect(restored.cycleStartDay == (try day(2026, 1, 31)))
+    }
+}

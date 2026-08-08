@@ -10,6 +10,8 @@ import OttoDomain
 /// same field: mode A stores the entered start date as the anchor, mode B stores
 /// the entered next-charge date (a real occurrence anchors its own sequence), with
 /// the last-day-of-month question resolving the one input the date alone cannot.
+/// The modes exist only while adding; an edit re-describes the stored anchor
+/// through one "Next charge on" field (Wave 9A defect 2, `offersEntryModeChoice`).
 @MainActor
 @Observable
 public final class SubscriptionFormModel {
@@ -101,6 +103,13 @@ public final class SubscriptionFormModel {
 
     /// The subscription being edited, or nil when adding.
     public let original: Subscription?
+    /// What the edit form's "Next charge on" field was prefilled with - the
+    /// next occurrence the STORED anchor generates. While the field still shows
+    /// this value the form re-describes the stored anchor verbatim instead of
+    /// re-deriving it (Wave 9A defect 2): re-derivation would re-ask the §5.1
+    /// last-day question the anchor already answers, and a wrong answer would
+    /// silently shift a clamped month-end phase. Nil when adding.
+    private let editedNextChargePrefill: CalendarDay?
     private let newID: UUID
     private let trialID: UUID
     private let trialCreatedAt: Date
@@ -123,6 +132,7 @@ public final class SubscriptionFormModel {
     ) {
         let today = dates.today()
         self.original = nil
+        self.editedNextChargePrefill = nil
         self.newID = UUID()
         self.trialID = UUID()
         self.trialCreatedAt = dates.now()
@@ -167,12 +177,22 @@ public final class SubscriptionFormModel {
         self.amount = Decimal(subscription.amountCents) / 100
         self.customCycleDays = subscription.cycle.unit == .day ? subscription.cycle.interval : 30
         self.cyclePreset = Self.preset(for: subscription.cycle)
-        // Editing shows mode A prefilled with the stored anchor: the anchor is the
-        // one fact actually on record, and round-tripping it through mode B would
-        // re-derive what is already known.
-        self.entryMode = .startDate
+        // Editing shows ONE unambiguous "Next charge on" field (Wave 9A defect
+        // 2). The anchor may be a back-derived §5.1 Mode B occurrence, so
+        // labelling it "when it started" asserts a start date that never
+        // happened - and once a subscription exists, the next charge is the
+        // fact the user can check against reality. The prefill is what the
+        // stored anchor generates; an untouched field re-describes that anchor
+        // verbatim (see `preservesStoredAnchor`).
+        self.entryMode = .nextCharge
         self.startDate = subscription.cycleStartDay
-        self.nextChargeDate = dates.today()
+        let prefill = nextBillingDate(
+            after: dates.today().adding(days: -1),
+            anchor: subscription.cycleStartDay,
+            cycle: subscription.cycle
+        )
+        self.nextChargeDate = prefill
+        self.editedNextChargePrefill = prefill
         self.lastDayAnswer = nil
         self.isTrial = subscription.editsAsTrial
         self.trialStartDate = subscription.trial?.startDate ?? dates.today()
@@ -192,6 +212,21 @@ public final class SubscriptionFormModel {
     }
 
     // MARK: - Derived values, computed live
+
+    /// The §5.1 segmented control exists only while ADDING. Both modes answer
+    /// "how do you know the billing date?" - a question about entry, discarded
+    /// by design once the anchor is derived (§5.1's back-derivation), so an
+    /// edit has no mode to restore and must not pretend to (Wave 9A defect 2).
+    public var offersEntryModeChoice: Bool { original == nil }
+
+    /// True while the edit form's "Next charge on" field still shows what the
+    /// stored anchor generates: the user has asserted nothing new, so the form
+    /// re-describes the stored anchor byte for byte - no re-derivation, no
+    /// §5.1 question, no phase drift on clamped month-end cycles.
+    public var preservesStoredAnchor: Bool {
+        original != nil && entryMode == .nextCharge
+            && editedNextChargePrefill == nextChargeDate
+    }
 
     public var cycle: BillingCycle? {
         cyclePreset.named ?? BillingCycle(unit: .day, interval: customCycleDays)
@@ -216,9 +251,10 @@ public final class SubscriptionFormModel {
     }
 
     /// The month-end anchor the §5.1 question offers, when the entered next-charge
-    /// date is ambiguous - nil means no question is asked.
+    /// date is ambiguous - nil means no question is asked. An untouched edit
+    /// asks nothing: the stored anchor already answers it.
     public var lastDayAnchorCandidate: CalendarDay? {
-        guard entryMode == .nextCharge, let cycle else { return nil }
+        guard entryMode == .nextCharge, !preservesStoredAnchor, let cycle else { return nil }
         return lastDayOfMonthAnchor(forNextBillingDate: nextChargeDate, cycle: cycle)
     }
 
@@ -234,6 +270,7 @@ public final class SubscriptionFormModel {
         case .startDate:
             return startDate
         case .nextCharge:
+            if preservesStoredAnchor, let original { return original.cycleStartDay }
             guard let candidate = lastDayAnchorCandidate else { return nextChargeDate }
             switch lastDayAnswer {
             case .lastDayOfMonth: return candidate
@@ -270,7 +307,11 @@ public final class SubscriptionFormModel {
         return cycle.isCovered(byLeadDays: reminderLeadDays)
     }
 
-    // MARK: - Validation and building
+}
+
+// MARK: - Validation and building
+
+extension SubscriptionFormModel {
 
     public var canSave: Bool {
         buildSubscription() != nil

@@ -3,9 +3,10 @@ import OttoDomain
 import OttoStores
 
 /// Add/Edit (spec §7.1 item 3) - the screen that decides whether the app gets
-/// used. Both §5.1 entry modes sit in one segmented control, equally prominent;
-/// every derived date renders live as the user types, and the user is never asked
-/// to compute one.
+/// used. On ADD, both §5.1 entry modes sit in one segmented control, equally
+/// prominent; on EDIT there is one unambiguous "Next charge on" field (Wave 9A
+/// defect 2). Every derived date renders live as the user types, and the user
+/// is never asked to compute one.
 struct AddEditSubscriptionView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -139,14 +140,20 @@ struct AddEditSubscriptionView: View {
 
     private func billingDateSection(_ form: Bindable<SubscriptionFormModel>) -> some View {
         Section {
-            Picker(String(localized: "What do you know?"), selection: form.entryMode) {
-                Text(String(localized: "When it started"))
-                    .tag(SubscriptionFormModel.EntryMode.startDate)
-                Text(String(localized: "My next charge"))
-                    .tag(SubscriptionFormModel.EntryMode.nextCharge)
+            // The §5.1 mode control is an ADD-time question (Wave 9A defect 2):
+            // the entry mode is discarded once the anchor is derived, so an
+            // edit reopening in "When it started" was asserting a start date
+            // that - for a Mode B record - never happened.
+            if self.form.offersEntryModeChoice {
+                Picker(String(localized: "What do you know?"), selection: form.entryMode) {
+                    Text(String(localized: "When it started"))
+                        .tag(SubscriptionFormModel.EntryMode.startDate)
+                    Text(String(localized: "My next charge"))
+                        .tag(SubscriptionFormModel.EntryMode.nextCharge)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel(String(localized: "How do you want to enter the billing date?"))
             }
-            .pickerStyle(.segmented)
-            .accessibilityLabel(String(localized: "How do you want to enter the billing date?"))
 
             switch self.form.entryMode {
             case .startDate:
@@ -170,7 +177,7 @@ struct AddEditSubscriptionView: View {
         } header: {
             Text(String(localized: "Billing date"))
         } footer: {
-            if self.form.entryMode == .nextCharge {
+            if self.form.offersEntryModeChoice && self.form.entryMode == .nextCharge {
                 Text(String(localized: "Don't know when it started? The next charge date is all Otto needs."))
             }
         }
