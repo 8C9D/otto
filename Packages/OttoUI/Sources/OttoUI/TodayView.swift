@@ -3,6 +3,69 @@ import OttoDomain
 import OttoServices
 import OttoStores
 
+/// The sections Today's list composes, in render order - extracted from the
+/// view builder because Wave 9A defect 1 lived exactly there: the empty-database
+/// branch returned a bare placeholder and silently dropped the permission
+/// surface, a decision no store-level test could see.
+enum TodaySection: Hashable {
+    /// §6 constraint 3's surface: the denied banner, the not-yet-asked request
+    /// button, or the provisional note. Present for EVERY database state,
+    /// including an empty one - a first-launch user with nothing entered yet
+    /// must be able to reach the permission request from Today.
+    case notificationStatus
+    case unreadableRecords
+    case readRepairs
+    /// Spec §7.1's empty state, INSIDE the list so the surfaces above survive.
+    case noSubscriptionsYet
+    case needsAction
+    case next30Days
+    case later
+    /// The horizon, stated honestly (spec §6.1 point 4).
+    case coverage
+
+    /// Everything the composition depends on, in one value - so the test can
+    /// state a whole screen state in one place.
+    struct Input {
+        var subscriptionsEmpty = false
+        /// Nil when no notification engine exists at all.
+        var permission: NotificationPermission?
+        var unreadableCount = 0
+        var hasReadRepairs = false
+        var hasNext30Days = false
+        var hasLater = false
+        var hasScheduleOutcome = false
+    }
+
+    static func plan(_ input: Input) -> [TodaySection] {
+        var sections: [TodaySection] = []
+        if let permission = input.permission, permission != .authorized {
+            sections.append(.notificationStatus)
+        }
+        if input.unreadableCount > 0 {
+            sections.append(.unreadableRecords)
+        }
+        if input.hasReadRepairs {
+            sections.append(.readRepairs)
+        }
+        guard !input.subscriptionsEmpty else {
+            sections.append(.noSubscriptionsYet)
+            return sections
+        }
+        sections.append(.needsAction)
+        if input.hasNext30Days {
+            sections.append(.next30Days)
+        }
+        if input.hasLater {
+            sections.append(.later)
+        }
+        if input.hasScheduleOutcome,
+           input.permission == .authorized || input.permission == .provisional {
+            sections.append(.coverage)
+        }
+        return sections
+    }
+}
+
 /// The home screen (spec §7.1 item 1): Needs action, Next 30 days, Later.
 struct TodayView: View {
     @Environment(AppModel.self) private var model
@@ -29,68 +92,106 @@ struct TodayView: View {
             ProgressView(String(localized: "Loading…"))
         case .failed(let error):
             LoadFailedView(error: error) { await store.refresh() }
-        case .loaded(let subscriptions) where subscriptions.isEmpty:
-            ContentUnavailableView(
-                String(localized: "No subscriptions yet"),
-                systemImage: "creditcard",
-                description: Text(String(localized: "Add the ones you pay for from the Subscriptions tab."))
-            )
-        case .loaded:
+        case .loaded(let subscriptions):
+            // The empty database routes through the SAME list as a populated
+            // one (Wave 9A defect 1): a bare placeholder here swallowed the
+            // §6-constraint-3 permission surface exactly on first launch.
             if let overview = store.overview {
-                overviewList(overview)
+                overviewList(overview, subscriptionsEmpty: subscriptions.isEmpty)
             }
         }
     }
 
-    private func overviewList(_ overview: TodayOverview) -> some View {
-        List {
+    private func overviewList(_ overview: TodayOverview, subscriptionsEmpty: Bool) -> some View {
+        let sections = TodaySection.plan(TodaySection.Input(
+            subscriptionsEmpty: subscriptionsEmpty,
+            permission: model.notifications?.permission,
+            unreadableCount: model.subscriptionsStore.unreadableCount,
+            hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
+            hasNext30Days: !overview.next30Days.isEmpty,
+            hasLater: !overview.later.isEmpty,
+            hasScheduleOutcome: model.notifications?.outcome != nil
+        ))
+        return List {
+            ForEach(sections, id: \.self) { section in
+                self.section(section, overview: overview)
+            }
+        }
+        .refreshable { await model.subscriptionsStore.refresh() }
+    }
+
+    @ViewBuilder
+    private func section(_ section: TodaySection, overview: TodayOverview) -> some View {
+        switch section {
+        case .notificationStatus:
             // An app whose entire value is notifications must not fail silently
             // when it can't send them: denied is loud, at the top, permanently
             // (Wave 4 constraint 3).
             if let notifications = model.notifications {
                 notificationStatusSection(notifications)
             }
+        case .unreadableRecords:
             unreadableRecordsSection(count: model.subscriptionsStore.unreadableCount)
+        case .readRepairs:
             readRepairsSection(model.subscriptionsStore.readRepairs)
-            Section(String(localized: "Needs action")) {
-                if overview.needsAction.isEmpty {
-                    // Spec §7.1: when empty, say so plainly - never a blank section.
-                    Text(String(localized: "Nothing needs your attention."))
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(overview.needsAction) { entry in
-                        NavigationLink(value: entry) { TodayEntryRow(entry: entry) }
-                    }
-                }
-            }
-            if !overview.next30Days.isEmpty {
-                Section(String(localized: "Next 30 days")) {
-                    ForEach(overview.next30Days) { entry in
-                        NavigationLink(value: entry) { TodayEntryRow(entry: entry) }
-                    }
-                }
-            }
-            if !overview.later.isEmpty {
-                Section(String(localized: "Later")) {
-                    ForEach(overview.later) { entry in
-                        NavigationLink(value: entry) { TodayEntryRow(entry: entry) }
-                    }
-                }
-            }
-            // The horizon, stated honestly (spec §6.1 point 4): never let the
-            // user believe coverage extends further than it does.
-            if let outcome = model.notifications?.outcome,
-               model.notifications?.permission == .authorized
-                || model.notifications?.permission == .provisional {
-                Section {
-                    EmptyView()
-                } footer: {
-                    let coveredThrough = outcome.coveredThrough.displayText()
-                    Text(String(localized: "Reminders scheduled through \(coveredThrough)."))
+        case .noSubscriptionsYet:
+            noSubscriptionsSection
+        case .needsAction:
+            needsActionSection(overview.needsAction)
+        case .next30Days:
+            entriesSection(String(localized: "Next 30 days"), entries: overview.next30Days)
+        case .later:
+            entriesSection(String(localized: "Later"), entries: overview.later)
+        case .coverage:
+            coverageSection
+        }
+    }
+
+    private var noSubscriptionsSection: some View {
+        Section {
+            ContentUnavailableView(
+                String(localized: "No subscriptions yet"),
+                systemImage: "creditcard",
+                description: Text(String(localized: "Add the ones you pay for from the Subscriptions tab."))
+            )
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    private func needsActionSection(_ entries: [TodayEntry]) -> some View {
+        Section(String(localized: "Needs action")) {
+            if entries.isEmpty {
+                // Spec §7.1: when empty, say so plainly - never a blank section.
+                Text(String(localized: "Nothing needs your attention."))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(entries) { entry in
+                    NavigationLink(value: entry) { TodayEntryRow(entry: entry) }
                 }
             }
         }
-        .refreshable { await model.subscriptionsStore.refresh() }
+    }
+
+    private func entriesSection(_ title: String, entries: [TodayEntry]) -> some View {
+        Section(title) {
+            ForEach(entries) { entry in
+                NavigationLink(value: entry) { TodayEntryRow(entry: entry) }
+            }
+        }
+    }
+
+    /// The horizon, stated honestly (spec §6.1 point 4): never let the user
+    /// believe coverage extends further than it does.
+    @ViewBuilder
+    private var coverageSection: some View {
+        if let outcome = model.notifications?.outcome {
+            Section {
+                EmptyView()
+            } footer: {
+                let coveredThrough = outcome.coveredThrough.displayText()
+                Text(String(localized: "Reminders scheduled through \(coveredThrough)."))
+            }
+        }
     }
 
     /// Spec §5.2b (v1.4): unmappable records surface as ONE aggregate
