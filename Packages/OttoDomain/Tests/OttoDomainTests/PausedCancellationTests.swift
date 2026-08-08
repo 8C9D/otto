@@ -19,7 +19,7 @@ struct PausedCancellationCheckDateTests {
         let subscription = try makeSubscription(
             status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: try day(2026, 9, 1)
         )
-        #expect(verificationCheckDate(for: subscription, asOf: try day(2026, 8, 6)) == (try day(2026, 9, 15)))
+        #expect(verificationCheckDate(for: subscription, cancelledOn: try day(2026, 8, 6)) == (try day(2026, 9, 15)))
     }
 
     @Test("a resume day that IS an occurrence is itself the check date")
@@ -27,7 +27,7 @@ struct PausedCancellationCheckDateTests {
         let subscription = try makeSubscription(
             status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: try day(2026, 9, 15)
         )
-        #expect(verificationCheckDate(for: subscription, asOf: try day(2026, 8, 6)) == (try day(2026, 9, 15)))
+        #expect(verificationCheckDate(for: subscription, cancelledOn: try day(2026, 8, 6)) == (try day(2026, 9, 15)))
     }
 
     @Test("with no resume date there is no check date - nil, never a guess")
@@ -35,7 +35,7 @@ struct PausedCancellationCheckDateTests {
         let subscription = try makeSubscription(
             status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: nil
         )
-        #expect(verificationCheckDate(for: subscription, asOf: try day(2026, 8, 6)) == nil)
+        #expect(verificationCheckDate(for: subscription, cancelledOn: try day(2026, 8, 6)) == nil)
     }
 
     @Test("a pause already past its end date is effectively active and checks normally")
@@ -44,7 +44,17 @@ struct PausedCancellationCheckDateTests {
             status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: try day(2026, 7, 1)
         )
         // Derived active as of Aug 6 (spec §5.2a, v1.6): next charge Aug 15.
-        #expect(verificationCheckDate(for: subscription, asOf: try day(2026, 8, 6)) == (try day(2026, 8, 15)))
+        #expect(verificationCheckDate(for: subscription, cancelledOn: try day(2026, 8, 6)) == (try day(2026, 8, 15)))
+    }
+
+    @Test("cancelling a derived-resumed pause ON its charge day watches the next cycle (Wave 10, defect G)")
+    func resumedPauseCancelledOnChargeDay() throws {
+        // Resumed Jul 1, charged Aug 15, cancelled Aug 15: the Aug 15 charge
+        // landed legitimately before the cancellation - the check is Sep 15.
+        let subscription = try makeSubscription(
+            status: .paused, cycleStartDay: try day(2026, 1, 15), pauseEndsOn: try day(2026, 7, 1)
+        )
+        #expect(verificationCheckDate(for: subscription, cancelledOn: try day(2026, 8, 15)) == (try day(2026, 9, 15)))
     }
 }
 

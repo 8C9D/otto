@@ -22,6 +22,28 @@ func cycle(
     try #require(BillingCycle(unit: unit, interval: interval), sourceLocation: sourceLocation)
 }
 
+/// The UTC instant at a given wall-clock time, for timezone-conversion tests.
+func instantUTC(_ year: Int, _ month: Int, _ dayOfMonth: Int, hour: Int, minute: Int = 0) -> Date? {
+    var gregorian = Calendar(identifier: .gregorian)
+    guard let utc = TimeZone(identifier: "UTC") else { return nil }
+    gregorian.timeZone = utc
+    return gregorian.date(
+        from: DateComponents(year: year, month: month, day: dayOfMonth, hour: hour, minute: minute)
+    )
+}
+
+/// The calendar day an instant falls on in an EXPLICIT timezone - the
+/// instant-to-day conversion §4.1 forbids doing implicitly, spelled out for
+/// tests that prove timezone correctness.
+func calendarDay(of instant: Date, in timeZoneID: String) -> CalendarDay? {
+    guard let zone = TimeZone(identifier: timeZoneID) else { return nil }
+    var gregorian = Calendar(identifier: .gregorian)
+    gregorian.timeZone = zone
+    return CalendarDay(
+        dateComponents: gregorian.dateComponents([.year, .month, .day], from: instant)
+    )
+}
+
 /// A deterministic UUID so fixture failures reproduce identically run to run.
 func fixtureUUID(
     _ index: Int,

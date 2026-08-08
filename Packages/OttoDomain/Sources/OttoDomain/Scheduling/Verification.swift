@@ -27,25 +27,40 @@ public func nextWouldBeChargeDate(after day: CalendarDay, for subscription: Subs
     return nextBillingDate(after: day, anchor: subscription.cycleStartDay, cycle: subscription.cycle)
 }
 
-/// The check date a new `CancellationEpisode` stores (spec §5.4): the next date a
-/// charge would land - today included - if the cancellation silently failed.
+/// The check date a new `CancellationEpisode` stores (spec §5.4): the first
+/// occurrence in the billing sequence STRICTLY AFTER the cancellation day.
 /// Computed exactly once, at cancellation time, because `markedCancelledAt` is a
-/// UTC instant that §4.1 forbids turning into a calendar day later.
+/// UTC instant that §4.1 forbids turning into a calendar day later -
+/// `cancelledOn` is that instant already converted, by the caller, in an
+/// explicit timezone.
+///
+/// Strictly after, never on-or-after (Wave 10, defect G): an occurrence ON the
+/// cancellation day has already landed legitimately - cancelling a converted
+/// trial on its conversion day must watch the NEXT cycle, because "a charge
+/// arrived on the day I cancelled" proves nothing about whether the
+/// cancellation took, and the dispute summary built from it would be rejected
+/// by any bank. `>= today` is an unsafe default anywhere a past occurrence can
+/// be a legitimate already-settled event (spec §5.4, v2.6).
 ///
 /// Cancelling a PAUSED subscription (spec §5.4, v1.5) does not watch the plain
 /// anchor sequence - the vendor is not charging during the pause, so "no charge
 /// arrived" on one of those dates would prove nothing. With a `pauseEndsOn` the
-/// next would-be charge is the first occurrence on or after it. Without one
-/// there is no determinate date, and the answer is NIL: do not guess - a
-/// verification answered against a fabricated date produces false confidence in
-/// exactly the place the product promises certainty. The caller defers the
-/// check (`.awaitingResumeDate`) until the user supplies a resume date.
-public func verificationCheckDate(for subscription: Subscription, asOf today: CalendarDay) -> CalendarDay? {
-    if subscription.effectiveStatus(asOf: today) == .paused {
+/// check is the first occurrence both on or after it AND strictly after the
+/// cancellation day. Without one there is no determinate date, and the answer
+/// is NIL: do not guess - a verification answered against a fabricated date
+/// produces false confidence in exactly the place the product promises
+/// certainty. The caller defers the check (`.awaitingResumeDate`) until the
+/// user supplies a resume date.
+public func verificationCheckDate(
+    for subscription: Subscription, cancelledOn cancellationDay: CalendarDay
+) -> CalendarDay? {
+    if subscription.effectiveStatus(asOf: cancellationDay) == .paused {
         guard let resumes = subscription.pauseEndsOn else { return nil }
-        return nextWouldBeChargeDate(after: resumes.adding(days: -1), for: subscription)
+        return nextWouldBeChargeDate(
+            after: max(resumes.adding(days: -1), cancellationDay), for: subscription
+        )
     }
-    return nextWouldBeChargeDate(after: today.adding(days: -1), for: subscription)
+    return nextWouldBeChargeDate(after: cancellationDay, for: subscription)
 }
 
 /// What a would-be charge on `day` would cost. An unflipped trial's stored
@@ -282,7 +297,7 @@ extension Subscription {
         // (spec §5.4, v1.5): the check is deferred, never fabricated - the
         // episode waits in .awaitingResumeDate until the user supplies the
         // resume date.
-        let checkDate = verificationCheckDate(for: self, asOf: today)
+        let checkDate = verificationCheckDate(for: self, cancelledOn: today)
         return CancellationEpisode(
             id: episodeID,
             subscriptionID: id,

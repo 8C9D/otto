@@ -39,8 +39,8 @@ struct MutationOrderingTests {
         // The check date: Aug 31 from the conversion anchor - and the same
         // answer whether or not the status flip already happened, because the
         // derivation reads the trial term the overwrite cannot destroy.
-        let beforeDate = try #require(verificationCheckDate(for: before, asOf: today))
-        let afterDate = try #require(verificationCheckDate(for: after, asOf: today))
+        let beforeDate = try #require(verificationCheckDate(for: before, cancelledOn: today))
+        let afterDate = try #require(verificationCheckDate(for: after, cancelledOn: today))
         #expect(beforeDate == afterDate)
         #expect(afterDate == (try day(2026, 8, 31)))
 

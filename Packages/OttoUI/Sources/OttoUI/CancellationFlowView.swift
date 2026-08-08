@@ -57,7 +57,7 @@ struct CancellationFlowView: View {
                     }
                 } footer: {
                     if let checkDate = verificationCheckDate(
-                        for: subscription, asOf: model.subscriptionsStore.today
+                        for: subscription, cancelledOn: model.subscriptionsStore.today
                     ) {
                         Text(String(localized: """
                         Otto will check with you on \(checkDate.displayText()) - the \
