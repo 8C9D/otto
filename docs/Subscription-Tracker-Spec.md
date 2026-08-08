@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.1 — SCHEMA FROZEN (V3).** Revised Aug 7 against Claude Code's Wave 6B-Prep report. Waves 0–6B-Prep complete; HEAD `8e2ce53` **verified twice from clean clones** (**449 tests**). Remaining: **6B-Prep-2 (convergence polish)**, then **the four manual gates — which are now the only thing standing between this project and 6B**.
+**Status:** **v2.3 — SCHEMA FROZEN (V3).** ⭐ **Otto now runs on a real iPhone with three real subscriptions in it.** Revised Aug 7 after the first hands-on session. HEAD `d151122`, **460 tests**. Three defects found by hand that 460 tests did not catch (§9b).
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -299,6 +299,18 @@ Per your instruction, the user enters the two things they actually know (when it
 
 The **cancel-by buffer** exists because cancelling on the conversion day is already too late at some vendors, and because a reminder that fires while you're in a lecture needs slack. Default 2 days, adjustable per trial.
 
+### 5.0a One id, one record — **the merge violates it on purpose** *(added v2.2)*
+
+Wave 6B-Prep-2's fifth "can't fully articulate" flag: the rival-cancellation merge gives the winner **live copies** of the losers' evidence notes while each tombstoned loser keeps its own — so **one note id names records under two parents.** The report established it is deterministic, idempotent, lossless, and identical across both applier paths, and could not name the feature it breaks.
+
+**The feature is 6B.** CloudKit addresses records by name, and the SwiftData mirror derives that name from the record's identifier. **Two live records sharing an id is not a smell there — it is a collision**, in the exact subsystem being enabled next. The candidates the report listed (a global fetch-note-by-id, a note-level dedup pass) don't exist yet; **the one that does exist is the one about to be turned on.**
+
+> **Reparent, don't copy.** The losers' evidence notes are **moved** to the winner — one record, one id, one parent — and the loser is then tombstoned holding none.
+
+Losslessness is preserved, since the notes end up exactly where they are wanted, and §5.0's premise survives intact. *Fifth consecutive time the instinct was right, and the first time it named a hazard whose consequence was concrete rather than latent.*
+
+---
+
 ### 5.2a Trial conversion — **the founding failure, reproduced in the design** *(added v1.3)*
 
 **⚠ This is the most serious defect found in the spec so far, and it was found in Wave 3, three waves after the founding story was written down.**
@@ -438,7 +450,13 @@ The reasoning is that last-write-wins is the wrong merge for it in a dangerous d
 
 **Watermarks after a replace-import** *(resolved in v2.1)*. Wave 6B-Prep flagged a genuine contradiction: v2.0 says a nil watermark is the founding hazard with **no safe fallback**, yet replace-import deliberately nils every watermark — so the next pass observes from today and skips the window. The export correctly carries no watermark, so there is nothing to restore from. **But there is:**
 
-> **Reconstruct each watermark from the imported ledger** — the latest `expectedDate` among that subscription's imported rows. That *is* what "materialized through" means. Where a subscription has no imported rows, fall back to its **anchor**, never to today.
+> **Reconstruct each watermark from the imported ledger** — the latest **live** `expectedDate` among that subscription's imported rows (tombstoned rows are invalidation artifacts; excluding them only pulls the watermark *earlier*, which is the safe direction). Where a subscription has no imported rows, fall back to its **anchor**, never to today.
+
+**⚠ The crash window changed sides, and the new side is worse** *(v2.2 — caused by the v2.1 fix above)*. A crash between restore's two saves used to leave watermarks **nil**; it now leaves the **pre-import** watermarks, which can sit **ahead** of the imported ledger — vouching for rows the restored database does not have. **That is the one direction this whole design refuses**, and it is invisible where nil was merely known-bad.
+
+> **Restore writes a dirty flag before it begins.** On launch, a dirty flag forces watermark reconstruction from the ledger and clears itself.
+
+This is better than either option the report offered: rather than choosing between *hazardous-but-known* (nil) and *hazardous-and-invisible* (stale-ahead), the crash window becomes **self-healing**, reusing the reconstruction mechanism that already exists. **A fix that moves a hazard rather than removing it is worth re-examining** — this one did, and only landed because the report said so plainly.
 
 Both branches land on the safe side: re-materializing from the anchor is wasteful and harmless, while observing from today is the founding hazard. The contradiction was real and the fix removes it rather than documenting around it.
 
@@ -761,7 +779,9 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **8.5** ✅ | **Model lock**: `CancellationEpisode` + `PauseEpisode`, schema V2 with a custom migration, un-cancel, invalidation fix, export format v2, and the schema-freeze sweep | ✅ **Done** — HEAD `3a69893`, **414 tests**, `verify.sh` green twice from clean clones. `docs/schema-freeze-review.md` written |
 | **6A** ✅ | Watermark relocated to a **separate local-only `ModelContainer`** (`OttoDeviceState.store`), plus the §5.4 folding and `evidenceNotes` child table. CloudKit untouched | ✅ **Done** — HEAD `bc5b86d`, **420 tests**, verified twice from clean clones. Schema V3. Migration **refuses rather than degrades** if watermarks can't be carried |
 | **6B-Prep** ✅ | §4a's principles, ledger reconciliation, domain watermark removed, the four prerequisites, guard rebuilt to walk the schema the app actually opens | ✅ **Done** — HEAD `8e2ce53`, **449 tests**, verified twice from clean clones. Wholesale collection replace is now **inexpressible**, not merely unused |
-| **6B-Prep-2** | Convergence polish: unify on earliest-wins, clamp closure, watermark reconstruction on import, the describing constructor, `restore()` gated on the kill switch | ⛔ Last code before 6B |
+| **6B-Prep-2** ✅ | Convergence unified, closure clamped, watermarks reconstructed on import, the describing constructor, `restore()` gated on the kill switch | ✅ **Done** — HEAD `d151122`, **460 tests**. The nil-watermark state is now **inexpressible** from the import flow; `readingRepaired` is a **build error** in UI, repositories and the app target |
+| **⭐ DEVICE TESTING** | Install on the owner's iPhone; the four manual gates | ✅ **Unblocked — no code dependency remains** |
+| **6B-Prep-3** | Three small items: the restore dirty flag, `verify.sh`'s hand-maintained package list, evidence-note reparenting (§5.0a) | Before 6B |
 | **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
 
 **⛔ Hard prerequisites for enabling CloudKit** *(added v2.0; the audit answered "what is the rollback story" with **"there is no rollback story — there is a backup story," which is not the same thing**)*. `restore()` hard-deletes and re-inserts, which under mirroring is a **mass cloud deletion plus a resurrection vector for offline devices**; sync cannot be switched off without shipping a build; and nothing can purge the zone. All four must exist first:
@@ -769,6 +789,8 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 1. **An automatic pre-enable export snapshot** — taken before the first sync, unprompted. **Boundary:** it is a *floor, not a mirror* — nothing created after it is covered, it lives on the same device as the data it protects, and the user can delete it from Files.
 2. **A runtime kill switch** for sync, so disabling it never requires an App Store release. **Boundary:** takes effect at next launch, **not mid-flight**; does nothing on other devices; removes no data anywhere. It stops the bleeding, nothing more.
 3. **A zone-purge action.** **Boundary:** a cloud purge **deletes nothing on any device**, and an offline device re-enabling later can **re-create the zone from its own data**. Its cloud half is a seam whose real implementation cannot exist until 6B — **⛔ 6B must test it against a real CloudKit container before any real data exists.**
+4a. **⛔ Test the kill-switch refusal against the real mirrored mode on day one of 6B.** `mainSyncMode != .off` is currently a comparison that **cannot be true**, so the guard is unfireable and untestable until the enum grows a second case. Wave 6B-Prep-2 shipped it knowingly and named the flaw in its own defence: *"it becomes checkable the moment the enum grows — but 'supposed to' is doing work in that sentence."* Correct. **"It will be tested once the other case exists" is a promise about a future wave's diligence**, and this project has watched that promise fail at the watermark relocation, the version-pinned guard, and the enum freeze. Day one, not eventually.
+
 4. **A sync-aware `restore()`** that does not express a restore as a mass deletion — upsert by id plus an explicit tombstone diff. **Boundary:** it freezes nothing, so an offline device's post-snapshot edits still land on restored rows by last-writer-wins when it returns.
 
 **⭐ `restore()` must structurally require the kill switch** *(added v2.1)*. Wave 6B-Prep noted that "engage the kill switch before restoring during an incident" is **a documented rule, not a structure** — and observed, correctly, that *this project's history is documentation failing where structure holds*. **`restore()` refuses unless sync is disengaged.** A rule that must be remembered during an incident is a rule that will not be.
@@ -792,6 +814,29 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 - ⚠ <cite index="18-1">iOS 27 is in developer beta since June 8, 2026, with public release expected September 2026</cite> — which lands right in the middle of this build. **Develop against the iOS 26 SDK; test on an iOS 27 beta device before shipping to the second user.** Notification behaviour and Focus-mode handling are exactly the sort of thing that shifts in a major release.
 - Swift 6 language mode, strict concurrency on from Wave 0. Retrofitting it later is significantly worse.
 - Xcode's current release; **SwiftLint only** in CI. *(v1.0 named swift-format alongside it; the two overlap and the second earns nothing. Dropped so the spec and the repo agree.)*
+
+---
+
+## 9b. Findings from the first hands-on session *(Aug 7, 2026)*
+
+Otto was installed on the owner's iPhone and used for about two hours. Three real subscriptions entered: **Subscription A** ($A/mo), **Subscription B** ($B/yr), **Subscription C** ($C/yr) — $N/year now tracked. Export produced and read by a human for the first time.
+
+**Three defects, none caught by 460 tests:**
+
+| # | Defect | Evidence |
+|---|---|---|
+| **1** | **Today shows no notification banner when permission has never been asked.** A first-launch user sees only "No subscriptions yet"; iOS Settings had no Notifications row at all, proving the request had never fired. The request path *does* exist (Settings → "Turn on reminders…") and the granted state updates live — so this is a **missing surface, not missing logic**. ⚠ **§6 constraint 3 requires exactly this**: an app whose entire value is notifications must not fail silently when it cannot send them | Observed once, cleanly |
+| **2** | **The edit form always reopens in "When it started" mode**, displaying the stored anchor under that label regardless of how it was entered. For a Mode B subscription it asserts a start date that never happened — and shows `Started on` and `Next charge` as the **same date** on an annual cycle, which is impossible for a real start date. Root cause is §5.1's back-derivation: the entry mode is **discarded** after save, so the form has nothing to restore | Reproduced 3× |
+| **3** | **Export timestamps use Apple's 2001 reference epoch** (`"createdAt": 807839382.279346`) while `expectedDate` and `cycleStartDay` are proper ISO strings. Two conventions in one file — and **this breaks the file's whole purpose**: export/import is the CloudKit escape hatch (§3.5), the reason Waves 7–8 preceded 6, and the argument that settled §10 Decision 2. **A migration format encoded in a platform-specific epoch is not a migration format** — a Kotlin or TypeScript importer produces dates 31 years off unless it knows the offset | Verified in the exported file |
+
+**Fixes:** (1) surface the not-yet-asked state on Today; (2) either store the entry mode, or **drop the segmented control on edit entirely** and show one unambiguous "Next charge on" field — once a subscription exists, "when did it start" is no longer a question worth asking; (3) ISO 8601 UTC strings, `formatVersion` → 4 per §3.5's policy.
+
+### ⚠ Two candidate findings were withdrawn, and the pattern matters more than the findings
+
+- *"Next charge defaults to today, so a charge landing today is silently skipped."* **False.** The engine returns the first occurrence **on or after** today; entering today's date produces a next charge of today and materializes its ledger row. Correct behaviour, and it also explains why future anchors resolve to themselves with no special-casing.
+- *"The payment-method display is too generic."* **Not a defect** — the user typed "Credit card" as the label.
+
+**The pattern:** every confident assertion made *about* the app during the session — that the Claude anchor was nine days wrong, that a future anchor would compute a year late, that today's date would be skipped — **was wrong.** Every correction came from a screenshot. Three of three. **Reasoning about a running app is not evidence about it**, which is the same lesson as Wave 4's non-compiling HEAD, one level up: not just *a green report isn't the artifact*, but *a confident inference isn't an observation either.*
 
 ---
 
@@ -832,6 +877,19 @@ Wave 6 additionally remains blocked on §10 Decision 2, which reordering gives t
 ---
 
 ## Update log
+
+- **2026-08-07 (v2.3 — first hands-on session)** — ⭐ **Otto is installed on a physical iPhone and holds three real subscriptions**: Subscription A, Subscription B, Subscription C — **$N/year**. The device build succeeded with **nothing stripped** (all three entitlements verified present before install), and the working tree stayed clean at `d151122`.
+  - **⭐⭐ Two of the three subscriptions entered were ones the owner had lost track of.** Subscription B ($B/yr, auto-renew on) and Subscription C ($C/yr) appear **nowhere** in `Personal-Finance-Hub-v2` — the most carefully built financial record he has, with 21 reconciled statements — because both landed in the four statements that lack line detail. He could not remember the Proton amount and was unsure which card paid it. **Annual subscriptions are structurally unrememberable, and that is the product thesis confirmed against his own data rather than against a story.** Proton also renews **17% above** the promo price he paid, an increase he would never have seen coming.
+  - **Three defects found by hand, recorded in §9b**, none caught by 460 tests: the missing not-yet-asked notification banner; the edit form reopening in the wrong mode and misreporting its own stored state; and export timestamps in Apple's 2001 epoch, which **breaks the migration format that the entire CloudKit decision rests on**.
+  - **⚠ Two candidate findings were withdrawn as wrong** — both were assertions made by reasoning about the app rather than looking at it. **Every confident inference about running behaviour during the session was wrong; every correction came from a screenshot.** Logged as a lesson rather than quietly dropped, because it generalizes Wave 4's *a green report is not the artifact* one level further.
+  - **Also confirmed working in real use:** the honest horizon statement ("Reminders scheduled through Nov 5"), the expected-charges ledger matching `today + horizon + maxLead` exactly in both UI and export, the watermark correctly **absent** from the export, live date computation before save, and the cancelling copy — *"Otto never cancels anything for you. It opens the page, records what you did, and later checks that the money actually stopped"* — which states §1's boundary and the Failure-B thesis where the user actually needs it.
+
+- **2026-08-07 (v2.2 — revised against the Wave 6B-Prep-2 report)** — **460 tests** from a clean clone. All five fixes landed, several *structurally*: the nil-watermark state is now **inexpressible** from the import flow, and `readingRepaired` is a **build error** in UI sources, repository protocols and the app target — with the rule **probed to confirm it actually fires** before being trusted, which is the lesson from the guard that went green while checking nothing. ✅ **Device testing is unblocked; no code dependency remains.**
+  - **⭐ The fifth "can't articulate" flag has a concrete consequence the report couldn't name.** The rival-cancellation merge copies evidence notes to the winner while tombstoned losers keep their own, so **one note id names two records** — deterministic and lossless, but violating §5.0's premise on purpose. **The feature it breaks is 6B:** CloudKit addresses records by name derived from the identifier, so two live records sharing an id is **a collision in the subsystem about to be enabled.** Fixed by **reparenting rather than copying.** Five for five on that instinct, and the first with a non-latent consequence.
+  - **⚠ My v2.1 fix moved a hazard instead of removing it.** Watermark reconstruction changed restore's crash window from leaving **nil** watermarks to leaving **pre-import** ones — which can sit *ahead* of the imported ledger, vouching for rows the restored database doesn't have. **The one direction the design refuses, and invisible where nil was merely known-bad.** Resolved better than either offered option: **restore writes a dirty flag first**, so a crash self-heals via the reconstruction path that already exists. **A fix that relocates a hazard rather than removing it deserves re-examination** — this one got it only because the report said so plainly.
+  - **Three silent pins found hiding inside correct ones**, in a sweep specifically hunting stale guards: both new `Outcome` enums were **missing from the hand-maintained enum freeze** (added in v1.9 *after* the freeze was written); `SyncState`'s raw UserDefaults keys had only a round-trip test, so **renaming both sides stayed green while resetting every real device's switches**; the legacy evidence-note id was asserted rule-vs-rule. **A hand-maintained list of things to pin is itself the thing that goes stale.**
+  - **Flagged, deliberately not fixed:** `verify.sh`'s `PACKAGES` is a hand list, so a fourth package would be **silently untested**. Correctly left alone — *changing the harness in the same wave whose report depends on it* would undermine the report. Fix next wave by deriving it from `ls Packages`.
+  - **Knowingly shipped an unfireable guard and said so:** `mainSyncMode != .off` cannot be true until 6B adds the second case. Honest disclosure in the same wave whose sweep hunts guards that don't fire — 6B must test the refusal.
 
 - **2026-08-07 (v2.1 — revised against the Wave 6B-Prep report)** — **449 tests**, verified twice from clean clones. The three sync-safety principles are implemented **structurally**: delete-on-absence is *removed* rather than disabled, so **wholesale collection replace is inexpressible**; reads repair rather than throw, surfacing repairs into one aggregate needs-review card; the compatibility guard now walks `OttoContainerFactory.mainSchema` — **the schema the app actually opens** — so there is no version name left in it to forget. Four findings, all accepted:
   - **⭐ Two convergence rules pointed in opposite directions** — pause repair kept the *earliest* episode, cancellation reconciliation the *newest*. Each defensible alone; the asymmetry undocumented. **Unified on earliest-wins-and-merge**, matching the ledger rule so all three share one shape. Earliest is also the safer direction for a verification product: an earlier cancellation yields an earlier check date, so the error is watching sooner, never too late.
