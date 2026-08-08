@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.4 — SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** Wave 9A complete: HEAD `ab52879`, **475 tests**, all three hands-on defects fixed and verified **on device**. ⚠ **Wave 6B-Prep-3 was specified in v2.2 and never run** — it is the next wave and two of its three items are CloudKit blockers.
+**Status:** **v2.5 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** Wave 6B-Prep-3 complete: HEAD `5790167`, **481 tests**. Remaining before 6B: **6B-Prep-4** (four small items, §8) plus the manual gates.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -115,6 +115,12 @@ Cheap now, expensive to retrofit. Non-negotiable on every persisted record:
 **⚠ The wire format is the `Exported*` types, and nothing else** *(added v2.4)*. Wave 9A's sweep found a latent second instance of the epoch problem: **the domain models' own `Codable` conformance** (`Subscription`, `TrialTerm`, and siblings) encodes `Date` with whatever strategy the encoder happens to carry — so a default `JSONEncoder` reaching any wire brings Apple's 2001 epoch straight back. Test-only today.
 
 > **Only the `Exported*` types may cross a wire.** Domain `Codable` conformance is for tests and in-process use; if it ever needs to serialize outward, that is a signal to add an `Exported*` type rather than reuse it.
+
+**Enforcement, and its honest limit** *(v2.5)*. A SwiftLint rule (`wire_coder_outside_export`) makes it an error for any production source outside `OttoDomain/Export/` to name `JSONEncoder`, `JSONDecoder`, `PropertyListEncoder/Decoder`, `JSONSerialization` or `NSKeyedArchiver`. Tests are exempt by design — *"domain `Codable` is for tests and in-process use"* is precisely that boundary.
+
+**It is a tripwire, not a proof.** A regex cannot catch an aliased coder (`typealias E = JSONEncoder`), a third-party serializer, or anything constructed reflectively. Same power class as the `storedStatus` and `readingRepaired` rules — all three raise the cost of the mistake without making it impossible, and **recording that limit here matters more than the rule does**, because a rule mistaken for a guarantee is worse than no rule.
+
+**⚠ The freeze applies to the main synced schema (V3) only** *(clarified in v2.5)*. The device-state store (§5.3) is outside the migration plan, never synced, and evolves additively — SwiftData lightweight-migrates it locally at next launch, so there is no migration cost to freeze against. v2.4's constraint said "the schema is frozen" without saying which, and Wave 6B-Prep-3 had to interpret it. It interpreted correctly and **flagged the judgment rather than burying it**, which is the behaviour worth keeping.
 
 This is the same *one-mechanism-two-authorities* shape flagged five times already, and the same lesson as the watermark: **a representation that is device-local by convention will eventually leave the device.**
 
@@ -460,7 +466,13 @@ The reasoning is that last-write-wins is the wrong merge for it in a dangerous d
 
 **⚠ The crash window changed sides, and the new side is worse** *(v2.2 — caused by the v2.1 fix above)*. A crash between restore's two saves used to leave watermarks **nil**; it now leaves the **pre-import** watermarks, which can sit **ahead** of the imported ledger — vouching for rows the restored database does not have. **That is the one direction this whole design refuses**, and it is invisible where nil was merely known-bad.
 
-> **Restore writes a dirty flag before it begins.** On launch, a dirty flag forces watermark reconstruction from the ledger and clears itself.
+> **Restore writes a dirty flag before it begins.** A dirty flag forces watermark reconstruction from the ledger and clears itself.
+
+**"On launch" is implemented as "before any watermark access"** *(recorded in v2.5 so a future reader does not "fix" it back)*. The heal is guarded at the watermark accessors rather than at app launch, so **there is no code path to a stale-ahead watermark regardless of who reads first after a crash.** Strictly stronger than the spec's original wording and requiring no app-layer wiring — the equivalence is recorded here precisely because it *looks* like a deviation.
+
+**⚠ The heal takes the minimum of current and reconstructed** *(added v2.5 — Wave 6B-Prep-3 correctly flagged that "both branches land safe" overclaimed)*. There is a residual double fault: flag written → main save fails (nothing persisted) → the flag *retraction* also fails → the next watermark access reconstructs over a ledger that was never replaced. Against an untouched ledger, reconstruction can **advance** a deliberately rewound watermark (the backwards-edit rule above) past its stranded gap. Two consecutive device-store save failures is vanishingly narrow, but **it is the one path where the heal itself points the wrong direction.**
+
+Taking the minimum deviates from v2.1's literal definition of reconstruction. That is the correct trade: **the principle the definition serves is that watermarks err earlier, never later**, and v2.1's wording was written before this case was known. Where a definition and the principle behind it disagree, the principle wins.
 
 This is better than either option the report offered: rather than choosing between *hazardous-but-known* (nil) and *hazardous-and-invisible* (stale-ahead), the crash window becomes **self-healing**, reusing the reconstruction mechanism that already exists. **A fix that moves a hazard rather than removing it is worth re-examining** — this one did, and only landed because the report said so plainly.
 
@@ -788,7 +800,16 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **6B-Prep-2** ✅ | Convergence unified, closure clamped, watermarks reconstructed on import, the describing constructor, `restore()` gated on the kill switch | ✅ **Done** — HEAD `d151122`, **460 tests**. The nil-watermark state is now **inexpressible** from the import flow; `readingRepaired` is a **build error** in UI, repositories and the app target |
 | **⭐ DEVICE TESTING** | Install on the owner's iPhone; the four manual gates | ✅ **Unblocked — no code dependency remains** |
 | **9A** ✅ | Hands-on fixes: Today permission surface, edit-form mode, export format v4 (ISO 8601 UTC) | ✅ **Done** — HEAD `ab52879`, **475 tests**; all three verified on the physical device |
-| **6B-Prep-3** ⬅ **NEXT** | ⚠ **Specified in v2.2 and skipped.** Restore dirty flag (§5.3), `verify.sh`'s hand-maintained package list, evidence-note reparenting (§5.0a), plus the `Codable`-`Date` wire hazard found by Wave 9A's sweep | ⛔ **All four before 6B** |
+| **6B-Prep-3** ✅ | Restore dirty flag, evidence-note reparenting, derived package list, `wire_coder_outside_export` lint rule | ✅ **Done** — HEAD `5790167`, **481 tests**. Crash window **interrupted for real** in test; package-list derivation verified by **actually adding a throwaway package** and observing pickup |
+| **6B-Prep-4** ⬅ **NEXT, and should be the last** | Min-of-current-and-reconstructed heal; `docs/next-wave.md` + `verify.sh` banner; remove the unasserted `watermarkReconstructions` counter | ⛔ Last code before 6B |
+
+**⭐ `docs/next-wave.md` — the skipped-wave fix** *(adopted v2.5)*. 6B-Prep-3 was recorded correctly in this table and skipped anyway across several sessions. The fix, proposed by Wave 6B-Prep-3 itself:
+
+> A one-line `docs/next-wave.md` naming the next wave and where it is specified. **`verify.sh` prints it at the end of every run and fails if it is missing or empty.** Each wave's closing session updates the line as part of landing.
+
+The reasoning is the general lesson restated: the wave table already recorded the truth; what was missing was **a surface inside the loop you never skip.** Same structural move as gating `restore()` on the kill switch.
+
+**What deliberately is not built:** any attempt to have `verify.sh` validate that a wave was actually *done*. It cannot know, and **a checklist that lies is worse than none.** This wave was lost *between* sessions, not within one — a per-run banner is exactly the right grain.
 | **6B** | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
 
 **⛔ Hard prerequisites for enabling CloudKit** *(added v2.0; the audit answered "what is the rollback story" with **"there is no rollback story — there is a backup story," which is not the same thing**)*. `restore()` hard-deletes and re-inserts, which under mirroring is a **mass cloud deletion plus a resurrection vector for offline devices**; sync cannot be switched off without shipping a build; and nothing can purge the zone. All four must exist first:
@@ -892,6 +913,13 @@ Otto was installed on the owner's iPhone and used for about two hours. Three rea
 ---
 
 ## Update log
+
+- **2026-08-08 (v2.5 — Wave 6B-Prep-3 complete)** — **481 tests**, HEAD `5790167`. All four items landed, and two were verified by **actually doing the thing rather than asserting it**: the crash window was **interrupted for real** (production path driven through the first save, stopped before the reconstruction save, a fresh store built over the same files — which answered the restored ledger's edge, not the pre-import date), and the package-list derivation was proven by **committing a throwaway fourth package, observing `verify.sh` pick it up, then dropping it**. The lint rule got the same treatment: probe violations injected, confirmed firing, removed.
+  - **⭐ The report flagged its own judgment call rather than burying it.** The dirty flag needed a durable device-local home, which meant adding a model to the *device-state* store while my constraint said "the schema is frozen, stop on model changes." It proceeded and said so. **The judgment was right** — the freeze exists because of CloudKit migration cost, and the device-state store never syncs — and §3.5 now says *which* schema is frozen, since v2.4's wording forced an interpretation.
+  - **⚠ "Both branches land safe" overclaimed, and the heal now takes the minimum.** A residual double fault — flag written, main save fails, flag retraction *also* fails — leaves the next access reconstructing over an unreplaced ledger, which can **advance a deliberately rewound watermark past its stranded gap.** Vanishingly narrow, and **the one path where the heal itself points the wrong direction.** Taking the min deviates from v2.1's literal definition; that is correct, because **where a definition and the principle behind it disagree, the principle wins** — watermarks err earlier, never later.
+  - **"On launch" was implemented as "before any watermark access"**, guarded at the accessors so there is *no code path* to a stale-ahead watermark regardless of who reads first. Strictly stronger; **recorded in §5.3 precisely because it looks like a deviation and would otherwise get "fixed" back.**
+  - **The lint rule's limit is now in the spec, not just the report.** A regex cannot catch an aliased coder, a third-party serializer, or reflective construction — same power class as the two precedent rules. **A rule mistaken for a guarantee is worse than no rule.**
+  - **⭐ `docs/next-wave.md` adopted** as the skipped-wave fix, with its own explicit non-goal: `verify.sh` must never claim to validate that a wave was *done*, because it cannot know and **a checklist that lies is worse than none.** The insight underneath is sharp — the wave table recorded the truth all along; what was missing was **a surface inside the loop you never skip.**
 
 - **2026-08-07 (v2.4 — Wave 9A complete, verified on device)** — **475 tests**, HEAD `ab52879`; all three §9b defects fixed and **confirmed on the physical iPhone**, with the three real subscriptions surviving the reinstall intact.
   - **⭐ The empty-database gate was worse than the reported bug.** It hid not just the notification banner but the **"N subscriptions couldn't be read" and read-repair cards** — an entirely unreadable database would have shown "No subscriptions yet" while suppressing the explanation. **A UI gate defeating §4a principle 2**, found only because the fix required diagnosing *why* rather than patching the symptom. Recorded because the general form is worth carrying: **an early return that skips a list can skip everything that renders alongside it.**
