@@ -58,4 +58,19 @@ struct DisplayFormattingTests {
         let every45 = try #require(BillingCycle(unit: .day, interval: 45))
         #expect(cycleText(every45) == "Every 45 days")
     }
+
+    @Test("⛔ the count phrase RESOLVES its inflection - no morphology markup reaches the screen (Wave 10)")
+    func subscriptionCountResolvesInflection() {
+        // Payment methods rendered the literal string
+        // "^[3 subscription](inflect: true) bill to this card" because
+        // Text(String(localized:)) performs no inflection; nothing in the
+        // suite read a RENDERED string, so it shipped. These are rendered.
+        #expect(subscriptionCountText(1) == "1 subscription")
+        #expect(subscriptionCountText(3) == "3 subscriptions")
+        for count in 0...4 {
+            let rendered = subscriptionCountText(count)
+            #expect(!rendered.contains("^["))
+            #expect(!rendered.contains("inflect"))
+        }
+    }
 }

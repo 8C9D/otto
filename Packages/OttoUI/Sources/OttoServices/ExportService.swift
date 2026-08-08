@@ -4,7 +4,9 @@ import OttoRepositories
 
 /// What an import needs the user to decide before it runs: whether anything is
 /// already here (an empty database needs no merge-or-replace question), and
-/// what the file would bring in.
+/// what the file would bring in. The counts are LIVE records only (Wave 10,
+/// defect H): tombstones ride along for sync correctness but are not data the
+/// user would recognize as "in the file".
 public struct ImportPreview: Hashable, Sendable {
     public let databaseIsEmpty: Bool
     public let subscriptionCount: Int
@@ -51,9 +53,9 @@ public actor ExportService {
         let current = try await transfer.completeSnapshot()
         return ImportPreview(
             databaseIsEmpty: current.isEmpty,
-            subscriptionCount: incoming.subscriptions.count,
-            billingEventCount: incoming.billingEvents.count,
-            paymentMethodCount: incoming.paymentMethods.count
+            subscriptionCount: incoming.subscriptions.count { $0.deletedAt == nil },
+            billingEventCount: incoming.billingEvents.count { $0.deletedAt == nil },
+            paymentMethodCount: incoming.paymentMethods.count { $0.deletedAt == nil }
         )
     }
 

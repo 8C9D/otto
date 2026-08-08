@@ -156,6 +156,54 @@ struct NotificationSchedulerTests {
         #expect(announcement.body == "Your FoodApp trial converted today. You're now being charged $11.00/month.")
     }
 
+    @Test("⭐ the HARD case: trial entered ON the cancel-by day at 10:03 - the whole remaining ladder lands in one run")
+    func gateHardCaseCreatedOnCancelByDayAfterFireHour() async throws {
+        // The field scenario the gate fixture never modeled (Wave 10, defect
+        // D): cancel-by IS today and the first scheduler pass runs AFTER the
+        // fire hour. The easy fixture (cancel-by 12 days out, 08:00) shipped
+        // defect A through a green gate; this fixture is why it cannot again.
+        let fixture = SchedulerFixture()
+        let (scheduler, client, subscriptions) = (fixture.scheduler, fixture.client, fixture.subscriptions)
+        let today = try day(2026, 8, 6)
+        let trial = try makeTrialTerm(startDate: try day(2026, 7, 25), lengthDays: 14, bufferDays: 2)
+        #expect(trial.cancelByDate == today)
+        try await subscriptions.seed([
+            makeSubscription(index: 1, status: .trial, cycleStartDay: try day(2026, 7, 25), trial: trial)
+        ])
+
+        // The ONLY scheduler run happens at entry, 10:03 - an hour past the
+        // morning rung. The app is then never foregrounded again.
+        let entry = try #require(Calendar.gregorianDate(
+            year: 2026, month: 8, day: 6, hour: 10, in: torontoZone
+        ))
+        _ = try await scheduler.reschedule(now: entry, today: today, timeZone: torontoZone)
+        let pending = await client.pendingRequests()
+
+        // The morning warning fires NOW - its hour is gone but the deadline is
+        // tonight - and it breaks through Focus.
+        let morning = try #require(pending.first {
+            NotificationPlanIdentifier.kind(of: $0.identifier) == .trialDayOfMorning
+        })
+        #expect(morning.catchUpIntervalSeconds == NotificationScheduler.catchUpIntervalSeconds)
+        #expect(morning.isTimeSensitive)
+        // The evening last-call is still ahead as an ordinary calendar rung.
+        let evening = try #require(pending.first {
+            NotificationPlanIdentifier.kind(of: $0.identifier) == .trialDayOfEvening
+        })
+        #expect(evening.catchUpIntervalSeconds == nil)
+        #expect((evening.hour, evening.minute) == (19, 0))
+        // The daily escalation and the announcement are pre-scheduled; money
+        // moves Aug 8 and the statement of that fact needs no further run.
+        #expect(pending.contains { NotificationPlanIdentifier.kind(of: $0.identifier) == .trialDaily })
+        let announcement = try #require(pending.first {
+            NotificationPlanIdentifier.kind(of: $0.identifier) == .conversionAnnouncement
+        })
+        #expect(CalendarDay(year: announcement.year, month: announcement.month, day: announcement.day)
+            == trial.conversionDate)
+        #expect(announcement.catchUpIntervalSeconds == nil)
+        #expect(announcement.isTimeSensitive)
+    }
+
     @Test("⭐ the announcement survives a conversion-morning reschedule with the status flip never persisted")
     func conversionAnnouncementSurvivesDerivedPath() async throws {
         let fixture = SchedulerFixture()

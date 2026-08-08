@@ -78,6 +78,18 @@ extension DisputeSummary {
     }
 }
 
+/// "1 subscription" / "3 subscriptions" - the count phrase with its
+/// `^[...](inflect: true)` morphology markup actually RESOLVED (Wave 10,
+/// defect I). `Text(String(localized:))` performs no inflection - the raw
+/// markup rendered literally on the Payment-methods screen - so every
+/// count-inflected phrase routes through here, where `AttributedString`'s
+/// localized initializer runs the grammar engine, and a test asserts the
+/// rendered string carries no markup residue. Nouns only: the engine does not
+/// conjugate English verbs, so surrounding copy must stay number-invariant.
+public func subscriptionCountText(_ count: Int) -> String {
+    String(AttributedString(localized: "^[\(count) subscription](inflect: true)").characters)
+}
+
 /// The friendly cadence name for a cycle, e.g. "Monthly" or "Every 45 days".
 public func cycleText(_ cycle: BillingCycle) -> String {
     switch (cycle.unit, cycle.interval) {

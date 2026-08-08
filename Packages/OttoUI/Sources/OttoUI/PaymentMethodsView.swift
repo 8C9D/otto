@@ -144,7 +144,10 @@ struct PaymentMethodRow: View {
             expiryLabel
                 .font(.subheadline)
             if let load {
-                Text(String(localized: "^[\(load.subscriptionCount) subscription](inflect: true) bill to this card"))
+                // "Billed", not "bill(s)": the inflection engine pluralizes
+                // the noun but does not conjugate English verbs (Wave 10,
+                // defect I), so the copy stays number-invariant around it.
+                Text(String(localized: "\(subscriptionCountText(load.subscriptionCount)) billed to this card"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {

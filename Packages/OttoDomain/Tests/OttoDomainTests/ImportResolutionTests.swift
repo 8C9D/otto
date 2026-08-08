@@ -127,11 +127,13 @@ struct ImportResolutionTests {
         // Moved, not copied (spec §5.0a): the loser is tombstoned holding
         // none, so one note id never names records under two parents.
         #expect(tombstoned.evidenceNotes.isEmpty)
-        #expect(resolved.summary.cancellationEpisodes.removed == 0)
-        // Added (the incoming episode) plus updated twice: the merged winner
-        // and the tombstoned loser.
+        // Added (the incoming episode arrived live), updated (the merged
+        // winner), and removed (the loser stopped being visible when it was
+        // tombstoned - a live-record transition, counted as what the user
+        // sees; Wave 10, defect H).
         #expect(resolved.summary.cancellationEpisodes.added == 1)
-        #expect(resolved.summary.cancellationEpisodes.updated == 2)
+        #expect(resolved.summary.cancellationEpisodes.updated == 1)
+        #expect(resolved.summary.cancellationEpisodes.removed == 1)
 
         // The other device resolves the mirrored import - ITS copy is current,
         // the other side's arrives - and reaches the same live state.
@@ -171,5 +173,136 @@ struct ImportResolutionTests {
         #expect(throws: ExportFormatError.self) {
             try resolveImport(current: OttoDataSnapshot(), incoming: incoming, strategy: .replace, at: importInstant)
         }
+    }
+}
+
+// Wave 10, defect H: the summary counts LIVE records. The field run restored a
+// backup and read "Subscriptions: 4 added, 7 charges added" while three
+// subscriptions existed anywhere in the app - the export's fourth carried
+// `deletedAt`, plus four tombstoned charge rows. The data was correct
+// (per-record sync needs tombstones, §4a); the count vouched for records the
+// user cannot see, in the one summary whose job is saying a restore worked.
+@Suite("Import counts describe live records (Wave 10, defect H)")
+struct ImportTombstoneCountTests {
+
+    private let older = Date(timeIntervalSinceReferenceDate: 100)
+    private let newer = Date(timeIntervalSinceReferenceDate: 200)
+    private let importInstant = Date(timeIntervalSinceReferenceDate: 900)
+
+    private func subscription(
+        _ index: Int, updatedAt: Date, deletedAt: Date? = nil
+    ) throws -> Subscription {
+        Subscription(
+            id: try fixtureUUID(index),
+            name: "Sub \(index)",
+            category: .other,
+            status: .active,
+            amountCents: 1099,
+            currencyCode: "CAD",
+            cycle: .monthly,
+            cycleStartDay: try day(2026, 1, 15),
+            reminderLeadDays: 3,
+            createdAt: older,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt
+        )
+    }
+
+    private func event(
+        _ index: Int, subscription subIndex: Int, deletedAt: Date? = nil
+    ) throws -> BillingEvent {
+        BillingEvent(
+            id: try fixtureUUID(100 + index), subscriptionID: try fixtureUUID(subIndex),
+            expectedDate: try day(2026, 1, 15).adding(days: index), expectedAmountCents: 1099,
+            state: .upcoming, createdAt: older, updatedAt: older, deletedAt: deletedAt
+        )
+    }
+
+    @Test("⛔ the field case: a fresh-install restore counts 3 subscriptions and 7 charges, not the tombstones")
+    func restoreCountsLiveRecordsOnly() throws {
+        // The export: four subscriptions, one tombstoned; eleven charge rows,
+        // four tombstoned. Restored onto a fresh install (empty database).
+        let incoming = OttoDataSnapshot(
+            subscriptions: [
+                try subscription(1, updatedAt: older),
+                try subscription(2, updatedAt: older),
+                try subscription(3, updatedAt: older),
+                try subscription(4, updatedAt: older, deletedAt: older)
+            ],
+            billingEvents: try (0..<11).map { index in
+                try event(index, subscription: 1 + index % 3, deletedAt: index < 4 ? older : nil)
+            }
+        )
+
+        let resolved = try resolveImport(
+            current: OttoDataSnapshot(), incoming: incoming, strategy: .replace, at: importInstant
+        )
+
+        // Everything lands in the database - tombstones are sync bookkeeping
+        // and must survive the trip - but the summary states what the user
+        // actually recovered.
+        #expect(resolved.snapshot.subscriptions.count == 4)
+        #expect(resolved.snapshot.billingEvents.count == 11)
+        #expect(resolved.summary.subscriptions == ImportCounts(added: 3))
+        #expect(resolved.summary.billingEvents == ImportCounts(added: 7))
+    }
+
+    @Test("replace: a live record the file carries only as a tombstone counts as removed")
+    func replaceCountsTombstonedLocalAsRemoved() throws {
+        let current = OttoDataSnapshot(subscriptions: [try subscription(1, updatedAt: older)])
+        let incoming = OttoDataSnapshot(
+            subscriptions: [try subscription(1, updatedAt: newer, deletedAt: newer)]
+        )
+
+        let resolved = try resolveImport(
+            current: current, incoming: incoming, strategy: .replace, at: importInstant
+        )
+
+        #expect(resolved.summary.subscriptions == ImportCounts(removed: 1))
+    }
+
+    @Test("merge: an unknown incoming tombstone is applied but counted nowhere")
+    func mergeAppliesUnknownTombstoneSilently() throws {
+        let current = OttoDataSnapshot(subscriptions: [try subscription(1, updatedAt: older)])
+        let incoming = OttoDataSnapshot(
+            subscriptions: [try subscription(2, updatedAt: newer, deletedAt: newer)]
+        )
+
+        let resolved = try resolveImport(
+            current: current, incoming: incoming, strategy: .merge, at: importInstant
+        )
+
+        #expect(resolved.snapshot.subscriptions.count == 2)
+        #expect(resolved.summary.subscriptions == ImportCounts())
+    }
+
+    @Test("merge: a newer tombstone over a live record counts as removed - a deletion propagated")
+    func mergeCountsPropagatedDeletionAsRemoved() throws {
+        let current = OttoDataSnapshot(subscriptions: [try subscription(1, updatedAt: older)])
+        let incoming = OttoDataSnapshot(
+            subscriptions: [try subscription(1, updatedAt: newer, deletedAt: newer)]
+        )
+
+        let resolved = try resolveImport(
+            current: current, incoming: incoming, strategy: .merge, at: importInstant
+        )
+
+        #expect(resolved.snapshot.subscriptions.first?.deletedAt == newer)
+        #expect(resolved.summary.subscriptions == ImportCounts(removed: 1))
+    }
+
+    @Test("merge: a newer live copy over a local tombstone counts as added - the record reappears")
+    func mergeCountsResurrectionAsAdded() throws {
+        let current = OttoDataSnapshot(
+            subscriptions: [try subscription(1, updatedAt: older, deletedAt: older)]
+        )
+        let incoming = OttoDataSnapshot(subscriptions: [try subscription(1, updatedAt: newer)])
+
+        let resolved = try resolveImport(
+            current: current, incoming: incoming, strategy: .merge, at: importInstant
+        )
+
+        #expect(resolved.snapshot.subscriptions.first?.deletedAt == nil)
+        #expect(resolved.summary.subscriptions == ImportCounts(added: 1))
     }
 }

@@ -202,7 +202,7 @@ struct TodayView: View {
             Section(String(localized: "Needs review")) {
                 Label {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(String(localized: "^[\(count) subscription](inflect: true) couldn't be read"))
+                        Text(String(localized: "\(subscriptionCountText(count)) couldn't be read"))
                             .font(.headline)
                         Text(String(localized: "The records exist but Otto can't display them. Nothing was deleted."))
                             .font(.subheadline)
@@ -227,7 +227,7 @@ struct TodayView: View {
             Section(String(localized: "Needs review")) {
                 Label {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(String(localized: "^[\(reports.count) subscription](inflect: true) repaired on read"))
+                        Text(String(localized: "\(subscriptionCountText(reports.count)) repaired on read"))
                             .font(.headline)
                         Text(reports.map(\.name).joined(separator: ", "))
                             .font(.subheadline)

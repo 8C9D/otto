@@ -156,6 +156,51 @@ struct PhoneInADrawerTests {
         #expect(!kinds.contains(.pauseEnding))
     }
 
+    @Test("catch-up delivery: the drawer past conversion resurrects nothing - no rung fires about a dead deadline")
+    func catchUpAfterDrawer() async throws {
+        // Wave 10's new subsystems - diff reconciliation and §6.2 immediate
+        // delivery - tested against the founding scenario rather than assumed
+        // to inherit it. The trial is entered the HARD way (on its cancel-by
+        // day, after the fire hour), then the phone goes in the drawer past
+        // conversion. On wake, nothing may fire immediately about the dead
+        // trial deadlines, and the stale announcement - "converted today"
+        // about a day long gone - must be reconciled away, not resurrected.
+        let fixture = SchedulerFixture()
+        let trial = try makeTrialTerm(
+            startDate: try day(2026, 7, 25), lengthDays: 14, bufferDays: 2
+        )
+        let subscription = try makeSubscription(
+            index: 1, status: .trial, cycleStartDay: try day(2026, 7, 25), trial: trial
+        )
+        await fixture.subscriptions.seed([subscription])
+        await fixture.billingEvents.seedWatermark(try day(2026, 7, 25), forSubscription: subscription.id)
+        let entryDay = trial.cancelByDate
+        var components = DateComponents()
+        components.year = entryDay.year
+        components.month = entryDay.month
+        components.day = entryDay.day
+        components.hour = 10
+        components.minute = 3
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = torontoZone
+        let entry = try #require(gregorian.date(from: components))
+        _ = try await fixture.scheduler.reschedule(now: entry, today: entryDay, timeZone: torontoZone)
+
+        // The drawer: nothing executes until Sep 20, six weeks past conversion.
+        _ = try await wake(fixture, on: try day(2026, 9, 20))
+
+        let pending = await fixture.client.pendingRequests()
+        let trialKinds: Set<PlannedReminder.Kind> = [
+            .trialLead, .trialDayOfMorning, .trialDayOfEvening, .trialDaily, .conversionAnnouncement
+        ]
+        #expect(!pending.contains {
+            NotificationPlanIdentifier.kind(of: $0.identifier).map(trialKinds.contains) ?? false
+        })
+        #expect(pending.allSatisfy { $0.catchUpIntervalSeconds == nil })
+        // The paid sequence is what remains, planned forward as usual.
+        #expect(pending.contains { NotificationPlanIdentifier.kind(of: $0.identifier) == .renewal })
+    }
+
     @Test("verification roll-forward: three checks missed in the drawer escalate on wake, exactly once")
     func verificationRollForward() async throws {
         let fixture = SchedulerFixture()

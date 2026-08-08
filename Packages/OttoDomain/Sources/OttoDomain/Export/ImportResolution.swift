@@ -16,16 +16,28 @@ public enum ImportStrategy: String, Hashable, Sendable, CaseIterable {
 
 /// What an import did, per entity: the numbers the UI states so nothing about
 /// the outcome is left to inference.
+///
+/// The counts describe LIVE records only (Wave 10, defect H): a tombstone is
+/// sync bookkeeping, not recovered data, and a restore summary that counts
+/// tombstones as "added" overstates - which is worse than understating,
+/// because it produces confidence in data that was never recovered. Each
+/// count is a visibility transition: added = not-live before, live after;
+/// updated = live before and after with the file's copy winning; removed =
+/// live before, not live after. Pure tombstone movements count nowhere.
 public struct ImportCounts: Hashable, Sendable {
-    /// Records from the file that did not exist in the database.
+    /// Live records from the file that were not live in the database -
+    /// including a record the file resurrects over a local tombstone.
     public var added = 0
-    /// Existing records overwritten by a newer copy from the file - including
-    /// rival open cancellation episodes a merge reconciled (spec §4a principle
-    /// 2a): the earliest carrying the merged state, the rest tombstoned.
+    /// Live records overwritten by a newer live copy from the file - including
+    /// the surviving winner of rival open cancellation episodes a merge
+    /// reconciled (spec §4a principle 2a).
     public var updated = 0
-    /// File records skipped because the database copy was newer or equal.
+    /// Live file records skipped because the live database copy was newer or
+    /// equal.
     public var skippedOlder = 0
-    /// Existing records removed (replace strategy only - merge never discards).
+    /// Previously-live records that are no longer live: everything a replace
+    /// drops, a newer tombstone winning a merge (a deletion propagating), and
+    /// the tombstoned losers of a rival-cancellation reconciliation.
     public var removed = 0
 
     public init(added: Int = 0, updated: Int = 0, skippedOlder: Int = 0, removed: Int = 0) {
@@ -114,10 +126,11 @@ public func resolveImport(
 
 // MARK: - Record identity
 
-/// The two facts resolution needs from every record type.
+/// The three facts resolution needs from every record type.
 private protocol ImportableRecord {
     var id: UUID { get }
     var updatedAt: Date { get }
+    var deletedAt: Date? { get }
 }
 
 extension Subscription: ImportableRecord {}
@@ -138,17 +151,26 @@ private func merge<Record: ImportableRecord>(
     var result = current
     for record in incoming {
         guard let existing = currentByID[record.id] else {
-            counts.added += 1
+            // A tombstone the file carries and the database lacks is applied
+            // but not counted - it is sync bookkeeping, not recovered data
+            // (Wave 10, defect H).
+            if record.deletedAt == nil { counts.added += 1 }
             result.append(record)
             continue
         }
         if record.updatedAt > existing.updatedAt {
-            counts.updated += 1
+            // Count the visibility transition the winning copy causes.
+            switch (existing.deletedAt == nil, record.deletedAt == nil) {
+            case (true, true): counts.updated += 1
+            case (true, false): counts.removed += 1
+            case (false, true): counts.added += 1
+            case (false, false): break
+            }
             let winner = resolvingConflict(existing, record)
             if let index = result.firstIndex(where: { $0.id == record.id }) {
                 result[index] = winner
             }
-        } else {
+        } else if existing.deletedAt == nil && record.deletedAt == nil {
             counts.skippedOlder += 1
         }
     }
@@ -158,12 +180,19 @@ private func merge<Record: ImportableRecord>(
 private func replaceCounts<Record: ImportableRecord>(
     current: [Record], incoming: [Record]
 ) -> ImportCounts {
-    let currentIDs = Set(current.map(\.id))
-    let incomingIDs = Set(incoming.map(\.id))
+    // Live sets only (Wave 10, defect H): the field run reported "4 added"
+    // while three subscriptions existed anywhere in the app, because the
+    // export's fourth carried `deletedAt`. The DATA was right - per-record
+    // sync needs tombstones (§4a) - but the count vouched for a record the
+    // user cannot see, in the one summary whose job is saying a restore
+    // worked. Computing every count over live ids also makes a live record
+    // the file carries only as a tombstone count as removed, which it is.
+    let currentLive = Set(current.filter { $0.deletedAt == nil }.map(\.id))
+    let incomingLive = Set(incoming.filter { $0.deletedAt == nil }.map(\.id))
     return ImportCounts(
-        added: incomingIDs.subtracting(currentIDs).count,
-        updated: incomingIDs.intersection(currentIDs).count,
-        removed: currentIDs.subtracting(incomingIDs).count
+        added: incomingLive.subtracting(currentLive).count,
+        updated: incomingLive.intersection(currentLive).count,
+        removed: currentLive.subtracting(incomingLive).count
     )
 }
 
@@ -175,11 +204,12 @@ private func replaceCounts<Record: ImportableRecord>(
 /// post-sync reconciliation pass, one shape with the ledger merge (spec §4a
 /// principle 2a) - keeps the earliest, MOVES the losers' notes and folds
 /// their progress into it, and tombstones the emptied losers at `instant`,
-/// each write COUNTED as updated so nothing about the outcome is silent
-/// (spec §5.0a: the loser is tombstoned holding none, so no note id ever
-/// names records under two parents). The tombstone carries a fresh
-/// `updatedAt` so it outranks any still-live copy of the loser under
-/// last-write-wins rather than being resurrected by one.
+/// each write COUNTED so nothing about the outcome is silent: the winner as
+/// updated, each tombstoned loser as removed, since a live episode stopped
+/// being visible (Wave 10, defect H). (Spec §5.0a: the loser is tombstoned
+/// holding none, so no note id ever names records under two parents.) The
+/// tombstone carries a fresh `updatedAt` so it outranks any still-live copy
+/// of the loser under last-write-wins rather than being resurrected by one.
 private func resolveSingleOpenCancellation(
     in snapshot: inout OttoDataSnapshot, counts: inout ImportCounts, at instant: Date
 ) {
@@ -204,7 +234,7 @@ private func resolveSingleOpenCancellation(
             stamped.deletedAt = instant
             stamped.updatedAt = instant
             snapshot.cancellationEpisodes[index] = stamped
-            counts.updated += 1
+            counts.removed += 1
         }
     }
 }

@@ -75,25 +75,44 @@ struct SubscriptionsView: View {
         }
     }
 
+    @ViewBuilder
     private func list(_ subscriptions: [Subscription]) -> some View {
         let rows = listModel.rows(
             subscriptions: subscriptions,
             cancellations: model.subscriptionsStore.cancellations,
             today: model.subscriptionsStore.today
         )
-        return List {
-            ForEach(rows) { row in
-                NavigationLink(value: row) {
-                    SubscriptionRowView(row: row)
+        if rows.isEmpty, let filter = listModel.statusFilter {
+            // §7.1: say so plainly rather than showing a blank list - the
+            // unfiltered empty case always had this; the filtered one rendered
+            // nothing at all (Wave 10, defect J).
+            ContentUnavailableView {
+                Label(
+                    String(localized: "No \(statusText(filter)) subscriptions"),
+                    systemImage: "line.3.horizontal.decrease.circle"
+                )
+            } description: {
+                Text(String(localized: "Nothing matches this status filter."))
+            } actions: {
+                Button(String(localized: "Show All Statuses")) {
+                    listModel.statusFilter = nil
                 }
-                .swipeActions(edge: .trailing) {
-                    Button(String(localized: "Delete"), systemImage: "trash", role: .destructive) {
-                        pendingDelete = row.subscription
+            }
+        } else {
+            List {
+                ForEach(rows) { row in
+                    NavigationLink(value: row) {
+                        SubscriptionRowView(row: row)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(String(localized: "Delete"), systemImage: "trash", role: .destructive) {
+                            pendingDelete = row.subscription
+                        }
                     }
                 }
             }
+            .refreshable { await model.subscriptionsStore.refresh() }
         }
-        .refreshable { await model.subscriptionsStore.refresh() }
     }
 
     @ToolbarContentBuilder
