@@ -6,10 +6,18 @@ import OttoStores
 /// monthly-equivalent cost so a $120/yr and a $10/mo compare at a glance.
 struct SubscriptionsView: View {
     @Environment(AppModel.self) private var model
-    @State private var listModel = SubscriptionListModel()
+    @State private var listModel: SubscriptionListModel
     @State private var isAdding = false
     @State private var pendingDelete: Subscription?
     @State private var deleteFailure: String?
+
+    /// The list model is injectable so the render suite can drive the status
+    /// filter and observe the clear-filter action (Wave 10, defect J - the
+    /// filtered empty state shipped unrendered because nothing could reach
+    /// this state from a test). The app takes the default.
+    init(listModel: SubscriptionListModel = SubscriptionListModel()) {
+        _listModel = State(initialValue: listModel)
+    }
 
     var body: some View {
         NavigationStack {

@@ -37,6 +37,13 @@ A deletion that *propagates* (a newer tombstone winning a merge over a live reco
 Reconciliation refuses to remove a pending conversion announcement dated today.
 Rejected: protecting every pending announcement - a trial cancelled before conversion must take its future announcement down (no money will move), and a stale past-dated announcement saying "converted today" about yesterday is the dead-deadline dishonesty v1.4 legislated against.
 
+### Defect J's tests live in the render suite, reading the accessibility tree (Verify-J follow-up)
+
+The filtered/unfiltered empty states and the clear-filter behavior are tested in `OttoUITests` (simulator-hosted) by hosting the real `SubscriptionsView` in a `UIWindow` and asserting on the accessibility tree - the rendered strings a VoiceOver user hears - plus activating the clear-filter button through `accessibilityActivate()` and observing the injected `SubscriptionListModel`.
+`SubscriptionsView` gained an injectable list model (defaulted, so the app is unchanged) because the filter was unreachable `@State` - the reason J shipped "verify by hand".
+Rejected: a dedicated XCUITest target (heavier scaffolding, slower, and the render suite already exists as the simulator home); ViewInspector (a new dependency for what the accessibility tree already provides); pixel-only blankness assertions (an empty `List` is not uniformly blank, so the label assertions are load-bearing and the pixel check is a supplement).
+Harness fact worth keeping: a DETACHED `UIHostingController` vends an empty hierarchy for a full screen - no accessibility elements, blank render - indistinguishable from defect J itself; the window plus main-actor suspension (`Task.sleep`, not `RunLoop.run`, which is unavailable in async contexts) is what makes the render real.
+
 ### Payment-methods copy: "billed to this card"
 
 The inflection engine pluralizes English nouns but does not conjugate English verbs (verified empirically: "1 subscription bill to this card" survives inflection of the old copy).
