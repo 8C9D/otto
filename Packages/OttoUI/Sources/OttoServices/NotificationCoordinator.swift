@@ -144,11 +144,23 @@ public final class NotificationCoordinator: NSObject {
         // This line is the §6.3 claim the spec has been unable to make since
         // Wave 4: not that the task registered, but that its handler BODY ran.
         OttoLog.background.notice("launched id=\(Self.refreshTaskIdentifier, privacy: .public)")
+        // Before the work, so a pass that is cancelled or killed has already
+        // asked for the next wake-up rather than depending on reaching its own
+        // end to do so.
         scheduleNextBackgroundRefresh()
+        let completion = CompletionLatch()
         let work = Task { [scheduler, now, today, timeZone] in
             let outcome = try? await scheduler.reschedule(
                 now: now(), today: today(), timeZone: timeZone(), trigger: .backgroundRefresh
             )
+            guard completion.claim() else {
+                // Expiration already ended the task. Say so rather than going
+                // quiet: this line means the pass outlived its expiration, and
+                // if it ever appears far behind the expiration timestamp, the
+                // checkpoints are too sparse for the work between them.
+                OttoLog.background.notice("pass returned after expiration had already completed the task")
+                return
+            }
             OttoLog.background.notice("""
                 completing path=normal success=\(outcome != nil, privacy: .public) \
                 scheduled=\(outcome?.scheduledCount ?? -1, privacy: .public)
@@ -156,12 +168,39 @@ public final class NotificationCoordinator: NSObject {
             task.setTaskCompleted(success: outcome != nil)
         }
         task.expirationHandler = {
-            // Both paths must reach setTaskCompleted or iOS throttles future
-            // launches; which one ran is exactly what the log has to say.
-            OttoLog.background.notice("completing path=expiration success=false")
+            // Cancel FIRST, then claim: the pass must be told to stop before
+            // the task is handed back, never after.
             work.cancel()
+            guard completion.claim() else { return }
+            OttoLog.background.notice("completing path=expiration success=false")
             task.setTaskCompleted(success: false)
         }
+    }
+}
+
+/// Makes `setTaskCompleted` happen exactly once.
+///
+/// iOS treats a second `setTaskCompleted` as API misuse, and both paths can
+/// reach it: expiration fires while the pass is in flight, then the pass
+/// finishes and completes the task again. Observed on device (Gate 2, Aug
+/// 2026) before this existed - `path=expiration` at 22:02:05.985 followed by
+/// `path=normal` at 22:02:06.028, on a task the OS had already reclaimed.
+///
+/// A lock rather than main-actor confinement, because `BGTask` does not
+/// document which queue it calls `expirationHandler` on, and correctness here
+/// must not rest on an assumption the SDK never made - which is the same
+/// assumption that produced the isolation crash this gate began with.
+private final class CompletionLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    /// True for exactly one caller, ever.
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
     }
 }
 

@@ -893,6 +893,21 @@ Otto was installed on the owner's iPhone and used for about two hours. Three rea
 
 **The pattern:** every confident assertion made *about* the app during the session — that the Claude anchor was nine days wrong, that a future anchor would compute a year late, that today's date would be skipped — **was wrong.** Every correction came from a screenshot. Three of three. **Reasoning about a running app is not evidence about it**, which is the same lesson as Wave 4's non-compiling HEAD, one level up: not just *a green report isn't the artifact*, but *a confident inference isn't an observation either.*
 
+### ⭐ The third instance, and the strongest: `dasd` scheduled a handler that could not survive being called *(Aug 2026, Gate 2)*
+
+`BGAppRefreshTask` had been registered since Wave 4 and never once run. When it was finally made to run, it **crashed the app on every attempt** — a `@MainActor` launch handler registered with `using: nil`, which the SDK documents as a background queue.
+
+The part worth remembering is what the system was saying the whole time it was dead:
+
+```
+dasd [duetactivityscheduler] Submitted: bgRefresh-com.arthurzhang.otto.refresh:041399
+     at priority 10 (Sun Aug  9 21:57:42 2026 - Mon Aug 10 21:57:42 2026)
+```
+
+Registration returned `true`. Submission succeeded. **iOS's own scheduler daemon accepted the activity, priced it, windowed it over 24 hours, and replaced the stale one** — for a handler that would trap on its first instruction. Every signal short of running the body said the feature worked.
+
+This is why §6.3's caveat was written as *"it does not exist until it is observed"* rather than *"until it is scheduled"*. **A subsystem reporting that it accepted your work is evidence about the subsystem, never about your code** — a rule that applies directly to Wave 6B, where CloudKit's acknowledgements will be just as reassuring and just as uninformative.
+
 ---
 
 ## 9a. Known issues
@@ -903,7 +918,7 @@ Otto was installed on the owner's iPhone and used for about two hours. Three rea
 | **§5.4 paused-cancellation is specified but not implemented** — the defer-and-ask path needs UI, which Wave 5.5 forbade | **The one place code and spec knowingly disagree.** Must be reconciled; now assigned to Wave 7, which has the UI budget |
 | **SwiftData's `rollback()` crashes** on a context with pending deletes | Discovered in Wave 8. Import atomicity is therefore structured with **no failure path between the first mutation and the single `save()`** — atomicity by construction rather than by rollback. Worth carrying to any other SwiftData work, Kept included |
 | **Test counting has no single command** — 5 Dynamic Type tests are `#if canImport(UIKit)` and compile to nothing under `swift test` on a Mac | Resolved by `verify.sh`, which prints what it can see and **explicitly names what it cannot.** The historical "252" was arithmetically honest; the counting method had simply never been written down |
-| **⛔ The `BGAppRefreshTask` expiration path does not stop the work it expires** | **Open, found Aug 2026** by the Gate 2 run — and only findable *because* the isolation crash was fixed first, since expiration was unreachable while the handler trapped on entry. `expirationHandler` calls `work.cancel()`, but `NotificationScheduler.reschedule` has **no cancellation checkpoints**: it never checks `Task.isCancelled` and its awaits do not propagate cancellation. Observed on device: `path=expiration success=false` logged at 22:02:05.985, then the pass ran to completion and logged `path=normal success=true` at 22:02:06.028. **`setTaskCompleted` is therefore called twice, and the app keeps doing work after the OS has reclaimed the task** — on a real background launch that is precisely what expiration exists to prevent, and iOS may suspend or kill the process mid-write. Two things to fix, not one: make completion idempotent (call `setTaskCompleted` exactly once), and give the pass real cancellation checkpoints so cancelling means something |
+| **The `BGAppRefreshTask` expiration path did not stop the work it expired** | ✅ **Fixed Aug 2026**, same session it was found. Completion now goes through a lock-guarded latch so `setTaskCompleted` fires exactly once, and the pass has real cancellation checkpoints (between ledger subscriptions, and before planning and reconciling). Re-verified on device, Debug and Release: `path=expiration success=false` → `ledger pass cancelled` → `CancellationError` → `pass returned after expiration had already completed the task`, in **0.9 ms**, with no `path=normal` and no reconcile. Pinned by `cancelledPassReconcilesNothing`. Original finding below | **Found Aug 2026** by the Gate 2 run — and only findable *because* the isolation crash was fixed first, since expiration was unreachable while the handler trapped on entry. `expirationHandler` calls `work.cancel()`, but `NotificationScheduler.reschedule` has **no cancellation checkpoints**: it never checks `Task.isCancelled` and its awaits do not propagate cancellation. Observed on device: `path=expiration success=false` logged at 22:02:05.985, then the pass ran to completion and logged `path=normal success=true` at 22:02:06.028. **`setTaskCompleted` is therefore called twice, and the app keeps doing work after the OS has reclaimed the task** — on a real background launch that is precisely what expiration exists to prevent, and iOS may suspend or kill the process mid-write. Two things to fix, not one: make completion idempotent (call `setTaskCompleted` exactly once), and give the pass real cancellation checkpoints so cancelling means something |
 
 ---
 

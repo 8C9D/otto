@@ -14,7 +14,46 @@ The trap landed **before the first line of the handler body**, so `setTaskComple
 Checked and rejected as the cause: an SDK annotation mismatch. `BGTaskScheduler.h` carries no `NS_SWIFT_UI_ACTOR`, so the isolation was inferred from Otto's own type. This was Otto's defect.
 Rejected fix: keeping `nil` and hopping to the main actor inside the closure — more code to say what the `queue` parameter already says, and it leaves the trap one careless edit away.
 
-**The generalizable lesson is about what "observed" is allowed to mean.** Registration succeeding, submission succeeding, and `dasd` accepting the activity were all true the entire time this path was dead — the archive shows `dasd` faithfully scheduling `bgRefresh-com.arthurzhang.otto.refresh` in a 24-hour window for a handler that could not survive being called. Every available signal short of running the body said the feature worked.
+### ⭐ `dasd` scheduled a handler that could not survive being called
+
+The strongest case this project has produced for the observed-not-inferred standard, and it deserves to be quotable.
+
+While the background path was **completely dead**, the device's own scheduler daemon was doing everything right. From the unified log archive:
+
+```
+Otto  [BackgroundTasks:Framework] submitTaskRequest: <BGAppRefreshTaskRequest:
+        com.arthurzhang.otto.refresh, earliestBeginDate: 2026-08-10 01:57:42 +0000>
+dasd  [duetactivityscheduler] CANCELED: bgRefresh-com.arthurzhang.otto.refresh:94ED7E at priority 10
+dasd  [duetactivityscheduler] Submitted: bgRefresh-com.arthurzhang.otto.refresh:041399
+        at priority 10 (Sun Aug  9 21:57:42 2026 - Mon Aug 10 21:57:42 2026)
+```
+
+`dasd` **accepted** the activity, **priced** it at priority 10, **windowed** it across 24 hours, and **replaced** the stale one — for a launch handler that would trap on its first instruction.
+
+Registration returned `true`. Submission succeeded. The daemon agreed and scheduled it. **Every available signal short of running the body said the feature worked**, and every one of them was worthless.
+The spec's standard — *"it does not exist until it is observed"* — is usually read as pedantry about proof. This is the case that shows it is not: the difference between "the system accepted our request" and "our code ran" was the difference between a working feature and one that had never once worked, on the path the entire product depends on when the phone sits in a drawer.
+**Corollary for anything later, CloudKit included: a subsystem reporting that it accepted your work is evidence about the subsystem, never about your code.**
+
+### Expiration: a latch for completion, checkpoints for the work - both, because they fix different things
+
+`setTaskCompleted` is now guarded by a lock-held latch that returns true for exactly one caller, and the pass checks cancellation between ledger subscriptions and before planning and reconciling.
+Neither alone is sufficient: the latch stops the double completion but would leave the app writing after the OS reclaimed the task; the checkpoints stop the work but still race the latch on who completes.
+A lock rather than main-actor confinement, because `BGTask` does not document which queue `expirationHandler` runs on - resting correctness on an undocumented queue assumption is exactly what produced the isolation crash this gate opened with.
+
+**Aborting mid-pass is safe, and this was verified from the source rather than assumed** (the claim arrived as a prompt assertion, and the actual reason is stronger than the one offered):
+
+- `materializeEvents` calls `modelContext.save()` **before** `setDeviceWatermark`, per subscription - so a watermark can never vouch for rows that were not written, which is the property that makes an interrupted loop safe. "Materialization is idempotent" is true but is not the load-bearing reason.
+- Finished subscriptions are consistent; unstarted ones are merely behind and are caught up by the next pass's window, which reaches back to the stored watermark.
+- `reconcile` never removes an identifier that is in the desired set, so stopping partway leaves a superset or a subset, never the empty set Wave 10's defect B produced.
+- `scheduleNextBackgroundRefresh()` runs **before** the cancellable work, so a cancelled pass has already re-armed. Confirmed in code and in the device log: `launched` → `re-armed` → `pass begin`.
+
+Checkpoints are placed at subscription boundaries rather than inside a subscription's invalidate-then-materialize pair, because the boundary is the only point the loop is consistent by construction.
+
+**The scale ceiling, since today's numbers prove nothing about tomorrow's.**
+The whole pass is 33-45 ms at three subscriptions, so it was never in danger of hitting the ~30 s background budget, and main-queue occupancy is not the concern people expect: `using: .main` holds the main queue only for the handler prologue (log, re-arm, spawn) - about 2.7 ms, constant, since the pass itself runs on the scheduler actor's executor (visibly a different thread in the log).
+What scales is the ledger, at roughly 3-4 ms per subscription, and the planning phase with it.
+The remaining uninterruptible stretch is `reconcile` itself: once entered it runs to completion, bounded by the 64-slot limit rather than by subscription count, which is why it is acceptable without an inner checkpoint.
+**The reason expiration could not interrupt the pass was never that the pass was short - it was that it never yielded**, and a 45 ms pass simply made the consequence invisible. At a few hundred subscriptions the ledger alone approaches a second, and the log line `pass returned after expiration had already completed the task` is the tripwire: if its timestamp drifts far from the expiration's, the checkpoints have gone too sparse.
 
 ### Expiration was not a separate step; it was hidden behind the crash
 

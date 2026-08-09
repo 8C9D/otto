@@ -2,47 +2,6 @@ import Foundation
 import OttoDomain
 import OttoRepositories
 
-/// What a scheduling pass produced - the facts Today needs to state honestly:
-/// whether anything can be delivered at all, and through which day coverage
-/// actually extends (spec §6.1 point 4).
-public struct ScheduleOutcome: Hashable, Sendable {
-    public let permission: NotificationPermission
-    /// Planned requests now pending (snoozes not included).
-    public let scheduledCount: Int
-    /// The last day with complete coverage when the budget truncated the plan,
-    /// nil when nothing was dropped.
-    public let truncatedAfter: CalendarDay?
-    /// The day through which the UI may claim coverage: the truncation point if
-    /// one exists, the horizon end otherwise. Never let the user believe coverage
-    /// extends further than it does.
-    public let coveredThrough: CalendarDay
-    /// Subscriptions whose ledger reconciliation failed this pass - scheduling
-    /// continued without them rather than aborting, but the failure is not
-    /// swallowed.
-    public let ledgerFailures: [UUID]
-
-    public init(
-        permission: NotificationPermission,
-        scheduledCount: Int,
-        truncatedAfter: CalendarDay?,
-        coveredThrough: CalendarDay,
-        ledgerFailures: [UUID] = []
-    ) {
-        self.permission = permission
-        self.scheduledCount = scheduledCount
-        self.truncatedAfter = truncatedAfter
-        self.coveredThrough = coveredThrough
-        self.ledgerFailures = ledgerFailures
-    }
-}
-
-/// The store layer talks to the scheduler through this seam so store tests can
-/// substitute a spy.
-public protocol ReminderScheduling: Sendable {
-    @discardableResult
-    func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome
-}
-
 /// Layer 4 (spec §3.4): translates the domain's pure reminder plan into pending
 /// notification requests. It computes NOTHING - which days, which priorities,
 /// which identifiers, and where the budget cuts are all domain decisions already
@@ -134,6 +93,25 @@ public actor NotificationScheduler: ReminderScheduling {
         let live = try await subscriptions.subscriptions()
         let ledgerFailures = await reconcileLedger(for: live, today: today, now: now)
 
+        // Cancellation checkpoints (Gate 2, Aug 2026). A `BGAppRefreshTask`
+        // expiration cancels this task, and before these existed the pass ran
+        // on regardless - completing the task twice and writing after the OS
+        // had reclaimed it. Aborting here is safe by construction, which is
+        // the only reason it is allowed to abort at all:
+        //   - the ledger advances a subscription's watermark only AFTER
+        //     saving its rows, and per subscription, so a half-finished loop
+        //     leaves finished subscriptions consistent and untouched ones
+        //     merely behind - never a watermark vouching for absent rows;
+        //   - materialization is idempotent, so the next pass re-does the
+        //     remainder rather than duplicating the part already done;
+        //   - the reconcile below is a diff that never removes a desired
+        //     rung, so stopping partway leaves a superset or a subset of the
+        //     plan, never the empty set Wave 10's defect B produced;
+        //   - and the next wake-up is submitted BEFORE this work starts (see
+        //     `handleBackgroundRefresh`), so a cancelled pass is already
+        //     re-armed and loses nothing but this cycle.
+        try Task.checkCancellation()
+
         // The pure plan, budgeted beneath whatever snoozes already occupy.
         let records = try await caughtUpCancellationEpisodes(for: live, today: today, now: now)
         let acknowledged = try await acknowledgedChargeDays(for: live)
@@ -155,6 +133,7 @@ public actor NotificationScheduler: ReminderScheduling {
             delivered: delivered, now: now, timeZone: timeZone, locale: locale()
         ))
 
+        try Task.checkCancellation()
         try await reconcile(desired: specs, pending: pending, today: today)
 
         return ScheduleOutcome(
@@ -277,6 +256,13 @@ public actor NotificationScheduler: ReminderScheduling {
         let maxLead = live.map(\.reminderLeadDays).max() ?? 0
         var failures: [UUID] = []
         for subscription in live {
+            // Per subscription, not mid-subscription: each iteration saves its
+            // rows before advancing its watermark, so a boundary here is the
+            // one place the loop is consistent by construction.
+            if Task.isCancelled {
+                OttoLog.scheduling.notice("ledger pass cancelled, \(failures.count, privacy: .public) failures so far")
+                break
+            }
             // Before AND after, not only on change: "correctly did not
             // advance" is as much an observation as an advance, and omitting
             // the no-op cannot be told from never reaching this subscription.

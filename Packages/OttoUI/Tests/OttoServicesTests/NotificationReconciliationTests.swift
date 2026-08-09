@@ -247,4 +247,51 @@ struct NotificationReconciliationTests {
 
         #expect(await !pendingKinds(fixture).contains(.conversionAnnouncement))
     }
+
+    // MARK: - Cancellation (Gate 2, Aug 2026)
+
+    /// Lets the test cancel a task while it is parked, so the pass begins with
+    /// cancellation ALREADY set. Cancelling a running pass would race the
+    /// checkpoints and make this test flaky rather than deterministic.
+    private actor Gate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var opened = false
+
+        func wait() async {
+            if opened { return }
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func open() {
+            opened = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    @Test("⛔ a cancelled pass stops at its checkpoint and touches no pending request")
+    func cancelledPassReconcilesNothing() async throws {
+        // A BGAppRefreshTask expiration cancels the pass. Before Gate 2 the
+        // pass ran on regardless, so the task was completed twice and the app
+        // kept writing after the OS had reclaimed it.
+        let (fixture, _) = try await trialWorld()
+        let gate = Gate()
+        let task = Task { [scheduler = fixture.scheduler] in
+            await gate.wait()
+            return try await scheduler.reschedule(
+                now: try at(try day(2026, 8, 6), hour: 8), today: try day(2026, 8, 6),
+                timeZone: torontoZone
+            )
+        }
+        task.cancel()
+        await gate.open()
+
+        var thrown: (any Error)?
+        do { _ = try await task.value } catch { thrown = error }
+        #expect(thrown is CancellationError)
+        // The pass is abandoned, not half-applied: nothing was added or removed.
+        #expect(await fixture.client.addCalls.isEmpty)
+        #expect(await fixture.client.removeCalls.isEmpty)
+        #expect(await fixture.client.pendingRequests().isEmpty)
+    }
 }

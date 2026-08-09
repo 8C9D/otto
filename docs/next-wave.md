@@ -6,5 +6,6 @@ Gate 1 (Aug 2026) landed the GitHub remote and the first CI run; see `DECISIONS.
 Standing consequence for every later wave: **CI, not `verify.sh`, is now the gate.**
 `verify.sh` clones the committed code into the same locale on the same hardware, so it cannot see a host-environment dependency - which is exactly what CI's first run found twice.
 Gate 2 (`BGAppRefreshTask`) is **met** as of Aug 2026: the handler was observed executing on device in both Debug and Release after a one-line isolation fix, having crashed on every attempt before it.
-**It left one ⛔ open defect behind — the expiration path does not stop the work it expires (§9a) — which should be fixed before 6B**, because CloudKit adds writes to exactly the pass that currently keeps running after the OS has reclaimed the task.
+Fixing the crash exposed a second defect it had been hiding - expiration completed the task while the pass ran on and completed it again - and that is fixed too (§9a), with both a completion latch and real cancellation checkpoints.
+Carry into 6B: **a subsystem reporting that it accepted your work is evidence about the subsystem, never about your code.** `dasd` scheduled the dead background task for months; CloudKit's acknowledgements will be exactly as reassuring.
 One device gate remains: data surviving delete-and-reinstall.
