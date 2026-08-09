@@ -58,15 +58,22 @@ public final class NotificationCoordinator: NSObject {
         client.registerCategories()
         UNUserNotificationCenter.current().delegate = self
 
-        BGTaskScheduler.shared.register(
+        let registered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: Self.refreshTaskIdentifier, using: nil
         ) { [weak self] task in
             guard let self, let refreshTask = task as? BGAppRefreshTask else {
+                OttoLog.background.error("launch rejected: coordinator gone or wrong task class")
                 task.setTaskCompleted(success: false)
                 return
             }
             self.handleBackgroundRefresh(refreshTask)
         }
+        // Registration and execution are different claims (spec §6.3). This
+        // records only the first; the handler below records the second.
+        OttoLog.background.notice("""
+            registered id=\(Self.refreshTaskIdentifier, privacy: .public) \
+            accepted=\(registered, privacy: .public)
+            """)
 
         let timezoneObserver = NotificationCenter.default.addObserver(
             forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main
@@ -74,12 +81,12 @@ public final class NotificationCoordinator: NSObject {
             // A timezone change moves fire INSTANTS, never calendar days
             // (spec §4.1) - the full reschedule recomputes every instant in the
             // new zone.
-            MainActor.assumeIsolated { self?.rescheduleSoon() }
+            MainActor.assumeIsolated { self?.rescheduleSoon(.timeZoneChange) }
         }
         let timeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rescheduleSoon() }
+            MainActor.assumeIsolated { self?.rescheduleSoon(.significantTimeChange) }
         }
         // The coordinator lives for the app's entire lifetime (the composition
         // root retains it), so the tokens are held but never need removing.
@@ -88,14 +95,14 @@ public final class NotificationCoordinator: NSObject {
 
     /// The foreground trigger - the scene phase change calls this.
     public func appDidBecomeActive() {
-        rescheduleSoon()
+        rescheduleSoon(.foreground)
         scheduleNextBackgroundRefresh()
     }
 
-    private func rescheduleSoon() {
+    private func rescheduleSoon(_ trigger: RescheduleTrigger) {
         Task { [scheduler, now, today, timeZone, onOutcome] in
             if let outcome = try? await scheduler.reschedule(
-                now: now(), today: today(), timeZone: timeZone()
+                now: now(), today: today(), timeZone: timeZone(), trigger: trigger
             ) {
                 onOutcome?(outcome)
             }
@@ -111,20 +118,37 @@ public final class NotificationCoordinator: NSObject {
         let request = BGAppRefreshTaskRequest(identifier: Self.refreshTaskIdentifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 24 * 60 * 60)
         // Failure here is expected in the simulator and when Background App
-        // Refresh is off; the app must not depend on it, so it is logged by the
-        // system and deliberately not surfaced.
-        try? BGTaskScheduler.shared.submit(request)
+        // Refresh is off; the app must not depend on it, so it stays unsurfaced
+        // in the UI - but it is no longer unsurfaced everywhere, because "the
+        // next wake-up was never armed" is the first thing an investigation
+        // into a missed reminder needs to rule out.
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            OttoLog.background.notice("re-armed earliestBegin=+24h")
+        } catch {
+            OttoLog.background.error("re-arm failed error=\(String(describing: error), privacy: .public)")
+        }
     }
 
     private func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+        // This line is the §6.3 claim the spec has been unable to make since
+        // Wave 4: not that the task registered, but that its handler BODY ran.
+        OttoLog.background.notice("launched id=\(Self.refreshTaskIdentifier, privacy: .public)")
         scheduleNextBackgroundRefresh()
         let work = Task { [scheduler, now, today, timeZone] in
             let outcome = try? await scheduler.reschedule(
-                now: now(), today: today(), timeZone: timeZone()
+                now: now(), today: today(), timeZone: timeZone(), trigger: .backgroundRefresh
             )
+            OttoLog.background.notice("""
+                completing path=normal success=\(outcome != nil, privacy: .public) \
+                scheduled=\(outcome?.scheduledCount ?? -1, privacy: .public)
+                """)
             task.setTaskCompleted(success: outcome != nil)
         }
         task.expirationHandler = {
+            // Both paths must reach setTaskCompleted or iOS throttles future
+            // launches; which one ran is exactly what the log has to say.
+            OttoLog.background.notice("completing path=expiration success=false")
             work.cancel()
             task.setTaskCompleted(success: false)
         }
@@ -144,7 +168,7 @@ extension NotificationCoordinator: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await MainActor.run { self.rescheduleSoon() }
+        await MainActor.run { self.rescheduleSoon(.notificationDelivered) }
         return [.banner, .sound, .list]
     }
 
@@ -169,7 +193,7 @@ extension NotificationCoordinator: UNUserNotificationCenterDelegate {
             if let followUp, followUp != .none {
                 self.onFollowUp?(followUp)
             }
-            self.rescheduleSoon()
+            self.rescheduleSoon(.notificationAction)
         }
     }
 }

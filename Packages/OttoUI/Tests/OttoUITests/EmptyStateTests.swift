@@ -26,21 +26,48 @@ struct EmptyStateTests {
     /// controller vends an empty hierarchy (no accessibility elements, blank
     /// render), which is indistinguishable from defect J itself. The window is
     /// returned so callers keep it alive across assertions.
-    private func host(_ view: some View) async -> UIWindow {
+    ///
+    /// `until` names the content the caller is about to assert on. Waiting for
+    /// "any label at all" is not enough: a navigation bar vends labels before
+    /// the list body exists, so the generic condition can return while the
+    /// screen under test is still empty.
+    private func host(
+        _ view: some View,
+        until isReady: ([String]) -> Bool = { !$0.isEmpty }
+    ) async -> UIWindow {
         let window = UIWindow(frame: CGRect(origin: .zero, size: screen))
         window.rootViewController = UIHostingController(rootView: AnyView(view))
         window.makeKeyAndVisible()
-        await settle(window)
+        await settle(window, until: isReady)
         return window
     }
 
     /// Lets SwiftUI build and lay out the hosted hierarchy: suspending on the
     /// main actor lets the main run loop turn, which is what the hosting view
     /// needs to materialize its subtree.
-    private func settle(_ window: UIWindow) async {
-        window.rootViewController?.view.layoutIfNeeded()
-        for _ in 0..<8 { await Task.yield() }
-        try? await Task.sleep(nanoseconds: 300_000_000)
+    ///
+    /// Polls until the tree vends something rather than sleeping a fixed 300ms.
+    /// The fixed wait was tuned on this project's Mac and failed every test in
+    /// this suite on a GitHub `macos-26` runner, which took roughly 3x as long
+    /// to render - a fixed budget encodes the speed of one machine.
+    ///
+    /// ⚠ This lowers the probability of a spurious failure; it does NOT resolve
+    /// the ambiguity recorded in DECISIONS.md. A hierarchy that never
+    /// materializes still vends no accessibility elements, which is
+    /// indistinguishable from defect J having returned. On timeout the suite
+    /// reports a failure it cannot attribute - that limit is structural, and
+    /// the timeout only decides how long it waits before hitting it.
+    private func settle(
+        _ window: UIWindow,
+        until isReady: ([String]) -> Bool = { !$0.isEmpty }
+    ) async {
+        let deadline = Date().addingTimeInterval(10)
+        repeat {
+            window.rootViewController?.view.layoutIfNeeded()
+            for _ in 0..<8 { await Task.yield() }
+            if isReady(accessibilityLabels(in: window)) { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        } while Date() < deadline
         window.rootViewController?.view.layoutIfNeeded()
     }
 
@@ -111,7 +138,9 @@ struct EmptyStateTests {
         let listModel = SubscriptionListModel()
         listModel.statusFilter = .archived
 
-        let window = await host(SubscriptionsView(listModel: listModel).environment(model))
+        let window = await host(SubscriptionsView(listModel: listModel).environment(model)) { labels in
+            labels.contains { $0.contains("No Archived subscriptions") }
+        }
         let labels = accessibilityLabels(in: window)
 
         #expect(labels.contains { $0.contains("No Archived subscriptions") })
@@ -134,7 +163,9 @@ struct EmptyStateTests {
         }
         await model.subscriptionsStore.refresh()
 
-        let window = await host(SubscriptionsView().environment(model))
+        let window = await host(SubscriptionsView().environment(model)) { labels in
+            labels.contains { $0.contains("No subscriptions yet") }
+        }
         let labels = accessibilityLabels(in: window)
 
         #expect(labels.contains { $0.contains("No subscriptions yet") })
@@ -147,7 +178,9 @@ struct EmptyStateTests {
         let listModel = SubscriptionListModel()
         listModel.statusFilter = .archived
 
-        let window = await host(SubscriptionsView(listModel: listModel).environment(model))
+        let window = await host(SubscriptionsView(listModel: listModel).environment(model)) { labels in
+            labels.contains { $0.contains("Show All Statuses") }
+        }
         let button = try #require(elements(in: window).first {
             ($0.accessibilityLabel?.contains("Show All Statuses") ?? false)
                 && $0.accessibilityTraits.contains(.button)
@@ -156,8 +189,13 @@ struct EmptyStateTests {
         #expect(button.accessibilityActivate())
         #expect(listModel.statusFilter == nil)
 
-        // Re-render with the cleared filter: the rows are back.
-        await settle(window)
+        // Re-render with the cleared filter: the rows are back. The default
+        // "any label at all" condition would return instantly here - the
+        // filtered-empty labels are still on screen - so this waits for the
+        // specific change the assertion is about.
+        await settle(window) { labels in
+            labels.contains { $0.contains("Claude") || $0.contains("Netflix") }
+        }
         let relabelled = accessibilityLabels(in: window)
         #expect(relabelled.contains { $0.contains("Claude") || $0.contains("Netflix") })
         #expect(!relabelled.contains { $0.contains("No Archived subscriptions") })
@@ -177,7 +215,9 @@ struct EmptyStateTests {
             load: PaymentMethodLoad(subscriptionCount: 3, monthlyCents: 29866),
             currencyCode: "CAD",
             today: PreviewData.today
-        ))
+        )) { labels in
+            labels.contains { $0.contains("billed to this card") }
+        }
         let labels = accessibilityLabels(in: window)
 
         #expect(labels.contains { $0.contains("3 subscriptions billed to this card") })

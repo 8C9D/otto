@@ -71,19 +71,25 @@ public actor NotificationScheduler: ReminderScheduling {
     /// reach background passes too, and a provider does that without the
     /// scheduler knowing where settings live.
     private let fireTimes: @Sendable () -> FireTimePolicy
+    /// Same shape as `fireTimes`, same reason: this pass writes money into
+    /// notification copy, money renders per locale, and a test that cannot pin
+    /// the locale asserts about its host rather than about the app.
+    private let locale: @Sendable () -> Locale
 
     public init(
         subscriptions: any SubscriptionRepository,
         cancellations: any CancellationRepository,
         billingEvents: any BillingEventRepository,
         client: any NotificationClient,
-        fireTimes: @escaping @Sendable () -> FireTimePolicy = { .standard }
+        fireTimes: @escaping @Sendable () -> FireTimePolicy = { .standard },
+        locale: @escaping @Sendable () -> Locale = { .autoupdatingCurrent }
     ) {
         self.subscriptions = subscriptions
         self.cancellations = cancellations
         self.billingEvents = billingEvents
         self.client = client
         self.fireTimes = fireTimes
+        self.locale = locale
     }
 
     /// The idempotent full pass (spec §6.2): recompute the plan, then RECONCILE
@@ -146,7 +152,7 @@ public actor NotificationScheduler: ReminderScheduling {
         let delivered = Set(await client.deliveredIdentifiers())
         let specs = requestSpecs(for: scheduled, translating: SpecInputs(
             subscriptions: live, cancellations: records,
-            delivered: delivered, now: now, timeZone: timeZone
+            delivered: delivered, now: now, timeZone: timeZone, locale: locale()
         ))
 
         try await reconcile(desired: specs, pending: pending, today: today)
@@ -191,9 +197,21 @@ public actor NotificationScheduler: ReminderScheduling {
             await client.removePendingRequests(withIdentifiers: stale.map(\.identifier))
         }
         let pendingByID = Dictionary(uniqueKeysWithValues: planned.map { ($0.identifier, $0) })
+        var added: [String] = []
         for spec in specs where pendingByID[spec.identifier] != spec {
             try await client.add(spec)
+            added.append(spec.identifier)
         }
+        // The evidence that this is a diff and not the old remove-all: over an
+        // unchanged plan both lists are empty while `pending` is not.
+        // Identifiers, never counts - a count cannot tell a correct three-rung
+        // replacement from a wipe.
+        OttoLog.scheduling.notice("""
+            reconcile pending=\(planned.count, privacy: .public) desired=\(specs.count, privacy: .public) \
+            snoozesSpared=\(pending.count - planned.count, privacy: .public) \
+            removed=[\(OttoLog.list(stale.map(\.identifier)), privacy: .public)] \
+            added=[\(OttoLog.list(added), privacy: .public)]
+            """)
     }
 
     private func isTodaysAnnouncement(_ spec: NotificationRequestSpec, today: CalendarDay) -> Bool {
@@ -259,17 +277,29 @@ public actor NotificationScheduler: ReminderScheduling {
         let maxLead = live.map(\.reminderLeadDays).max() ?? 0
         var failures: [UUID] = []
         for subscription in live {
+            // Before AND after, not only on change: "correctly did not
+            // advance" is as much an observation as an advance, and omitting
+            // the no-op cannot be told from never reaching this subscription.
+            let before = try? await billingEvents.materializationWatermark(forSubscription: subscription.id)
+            var created = 0
             do {
                 _ = try await billingEvents.invalidateOutdatedUpcomingEvents(
                     for: subscription, asOf: today, at: now
                 )
-                _ = try await billingEvents.materializeEvents(
+                created = try await billingEvents.materializeEvents(
                     for: subscription, from: today, horizonDays: Self.horizonDays,
                     maxReminderLeadDays: maxLead, at: now
-                )
+                ).count
             } catch {
                 failures.append(subscription.id)
             }
+            let after = try? await billingEvents.materializationWatermark(forSubscription: subscription.id)
+            OttoLog.scheduling.notice("""
+                ledger \(subscription.id.uuidString, privacy: .public) \
+                watermark=\(OttoLog.dayText(before), privacy: .public)->\(OttoLog.dayText(after), privacy: .public) \
+                created=\(created, privacy: .public) \
+                failed=\(failures.last == subscription.id, privacy: .public)
+                """)
         }
         return failures
     }
@@ -296,14 +326,14 @@ public actor NotificationScheduler: ReminderScheduling {
         let delivered: Set<String>
         let now: Date
         let timeZone: TimeZone
+        let locale: Locale
     }
 
     private func requestSpecs(
         for scheduled: [PlannedReminder],
         translating inputs: SpecInputs
     ) -> [NotificationRequestSpec] {
-        let (records, delivered) = (inputs.cancellations, inputs.delivered)
-        let (now, timeZone) = (inputs.now, inputs.timeZone)
+        let (delivered, now, timeZone) = (inputs.delivered, inputs.now, inputs.timeZone)
         let subscriptionsByID = Dictionary(
             uniqueKeysWithValues: inputs.subscriptions.map { ($0.id, $0) }
         )
@@ -314,13 +344,7 @@ public actor NotificationScheduler: ReminderScheduling {
                   let fireDate = policy.fireDate(for: reminder, in: timeZone)
             else { continue }
             let identifier = NotificationPlanIdentifier.planned(reminder)
-            let body = reminder.kind == .verification
-                ? NotificationContent.verificationBody(
-                    subscription: subscription,
-                    cancelledAt: records[subscription.id]?.markedCancelledAt,
-                    timeZone: timeZone
-                )
-                : NotificationContent.body(for: reminder, subscription: subscription)
+            let body = body(for: reminder, subscription: subscription, inputs: inputs)
             if fireDate > now {
                 let time = policy.fireTime(for: reminder.kind)
                 specs.append(NotificationRequestSpec(
@@ -352,5 +376,25 @@ public actor NotificationScheduler: ReminderScheduling {
             }
         }
         return specs
+    }
+
+    /// The verification rung needs the cancellation date the record carries;
+    /// every other kind is a pure function of the reminder.
+    private func body(
+        for reminder: PlannedReminder,
+        subscription: Subscription,
+        inputs: SpecInputs
+    ) -> String {
+        guard reminder.kind == .verification else {
+            return NotificationContent.body(
+                for: reminder, subscription: subscription, locale: inputs.locale
+            )
+        }
+        return NotificationContent.verificationBody(
+            subscription: subscription,
+            cancelledAt: inputs.cancellations[subscription.id]?.markedCancelledAt,
+            timeZone: inputs.timeZone,
+            locale: inputs.locale
+        )
     }
 }

@@ -22,45 +22,53 @@ enum NotificationContent {
         }
     }
 
-    static func body(for reminder: PlannedReminder, subscription: Subscription) -> String {
+    static func body(
+        for reminder: PlannedReminder,
+        subscription: Subscription,
+        locale: Locale = .autoupdatingCurrent
+    ) -> String {
         let name = subscription.name
         switch reminder.kind {
         case .renewal:
-            let amount = money(subscription.billingAmountCents(asOf: reminder.day), subscription.currencyCode)
+            let amount = money(subscription.billingAmountCents(asOf: reminder.day), subscription.currencyCode, locale)
             let billing = reminder.day.adding(days: subscription.reminderLeadDays)
-            return String(localized: "\(name) charges \(amount) on \(displayDate(billing)).")
+            return String(localized: "\(name) charges \(amount) on \(displayDate(billing, locale)).")
         case .renewalDayOf:
-            let amount = money(subscription.billingAmountCents(asOf: reminder.day), subscription.currencyCode)
+            let amount = money(subscription.billingAmountCents(asOf: reminder.day), subscription.currencyCode, locale)
             return String(localized: "\(name) charges \(amount) today.")
         case .trialLead, .trialDayOfMorning, .trialDayOfEvening, .trialDaily:
-            return trialBody(kind: reminder.kind, subscription: subscription)
+            return trialBody(kind: reminder.kind, subscription: subscription, locale: locale)
         case .conversionAnnouncement:
             // Not a request to act - a statement that money started moving
             // (spec §5.2a). The FoodApp sentence, verbatim in shape.
-            let amount = subscription.trial.map { perCycle($0.convertsToAmountCents, subscription) }
-                ?? perCycle(subscription.amountCents, subscription)
+            let amount = subscription.trial.map { perCycle($0.convertsToAmountCents, subscription, locale) }
+                ?? perCycle(subscription.amountCents, subscription, locale)
             return String(localized: "Your \(name) trial converted today. You're now being charged \(amount).")
         case .verification:
-            return verificationBody(subscription: subscription, cancelledAt: nil, timeZone: nil)
+            return verificationBody(subscription: subscription, cancelledAt: nil, timeZone: nil, locale: locale)
         case .usageCheckIn:
             return String(localized: "Have you used \(name) lately? If not, it may be money moving for nothing.")
         case .pauseEnding:
-            let amount = money(subscription.amountCents, subscription.currencyCode)
-            let resumes = subscription.pauseEndsOn.map(displayDate) ?? String(localized: "soon")
+            let amount = money(subscription.amountCents, subscription.currencyCode, locale)
+            let resumes = subscription.pauseEndsOn.map { displayDate($0, locale) } ?? String(localized: "soon")
             return String(localized: "\(name) resumes billing \(resumes) at \(amount).")
         }
     }
 
-    private static func trialBody(kind: PlannedReminder.Kind, subscription: Subscription) -> String {
+    private static func trialBody(
+        kind: PlannedReminder.Kind,
+        subscription: Subscription,
+        locale: Locale
+    ) -> String {
         let name = subscription.name
         guard let trial = subscription.trial else {
             return String(localized: "The \(name) trial is near its deadline.")
         }
-        let price = perCycle(trial.convertsToAmountCents, subscription)
-        let conversion = displayDate(trial.conversionDate)
+        let price = perCycle(trial.convertsToAmountCents, subscription, locale)
+        let conversion = displayDate(trial.conversionDate, locale)
         switch kind {
         case .trialLead:
-            let deadline = displayDate(trial.cancelByDate)
+            let deadline = displayDate(trial.cancelByDate, locale)
             return String(localized: "Cancel \(name) by \(deadline) or it converts to \(price) on \(conversion).")
         case .trialDayOfMorning:
             return String(localized: "Today is the last safe day to cancel \(name). It converts to \(price) on \(conversion).")
@@ -80,7 +88,8 @@ enum NotificationContent {
     static func verificationBody(
         subscription: Subscription,
         cancelledAt: Date?,
-        timeZone: TimeZone?
+        timeZone: TimeZone?,
+        locale: Locale = .autoupdatingCurrent
     ) -> String {
         let name = subscription.name
         guard let cancelledAt, let timeZone else {
@@ -89,7 +98,7 @@ enum NotificationContent {
             )
         }
         let cancelled = cancelledAt.formatted(
-            Date.FormatStyle(timeZone: timeZone).month(.abbreviated).day()
+            Date.FormatStyle(locale: locale, timeZone: timeZone).month(.abbreviated).day()
         )
         return String(
             localized: "You cancelled \(name) on \(cancelled). A charge was due today - check your statement. Did it stop?"
@@ -97,15 +106,26 @@ enum NotificationContent {
     }
 
     /// "$11.00" - notification copy formats money exactly once, here.
-    static func money(_ cents: Int, _ currencyCode: String) -> String {
+    ///
+    /// The locale is a parameter for the same reason `currencyText` in
+    /// `DisplayFormatting` takes one: `.currency` renders CAD as "$11.00" in
+    /// en_CA and "CA$11.00" in en_US, so a hard-coded expectation is really an
+    /// assertion about the machine running the test. Defaulting to
+    /// `.autoupdatingCurrent` keeps the app localized for whoever reads the
+    /// notification; passing an explicit locale is what makes the copy testable.
+    static func money(_ cents: Int, _ currencyCode: String, _ locale: Locale = .autoupdatingCurrent) -> String {
         let amount = Decimal(cents) / 100
-        return amount.formatted(.currency(code: currencyCode))
+        return amount.formatted(.currency(code: currencyCode).locale(locale))
     }
 
     /// "$11.00/month" - the price with its cadence, because the cadence is the
     /// half of the number that makes it real.
-    static func perCycle(_ cents: Int, _ subscription: Subscription) -> String {
-        "\(money(cents, subscription.currencyCode))\(cycleSuffix(subscription.cycle))"
+    static func perCycle(
+        _ cents: Int,
+        _ subscription: Subscription,
+        _ locale: Locale = .autoupdatingCurrent
+    ) -> String {
+        "\(money(cents, subscription.currencyCode, locale))\(cycleSuffix(subscription.cycle))"
     }
 
     private static func cycleSuffix(_ cycle: BillingCycle) -> String {
@@ -121,7 +141,10 @@ enum NotificationContent {
         }
     }
 
-    private static func displayDate(_ day: CalendarDay) -> String {
+    /// Carries the locale for the same reason `money` does: `.month(.abbreviated)`
+    /// is "Aug" in English and something else everywhere ambient locale can
+    /// wander to.
+    private static func displayDate(_ day: CalendarDay, _ locale: Locale = .autoupdatingCurrent) -> String {
         var components = DateComponents()
         components.year = day.year
         components.month = day.month
@@ -130,7 +153,7 @@ enum NotificationContent {
         gregorian.timeZone = TimeZone(identifier: "UTC") ?? .current
         guard let date = gregorian.date(from: components) else { return day.description }
         return date.formatted(
-            Date.FormatStyle(timeZone: gregorian.timeZone).month(.abbreviated).day()
+            Date.FormatStyle(locale: locale, timeZone: gregorian.timeZone).month(.abbreviated).day()
         )
     }
 }

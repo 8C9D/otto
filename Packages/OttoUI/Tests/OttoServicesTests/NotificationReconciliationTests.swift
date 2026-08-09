@@ -128,7 +128,16 @@ struct NotificationReconciliationTests {
         #expect(await fixture.client.addCalls.map(\.identifier) == before.map(\.identifier))
         let replaced = await fixture.client.pendingRequests()
         #expect(replaced.map(\.identifier) == before.map(\.identifier))
-        #expect(replaced.allSatisfy { $0.body.contains("$15.99") })
+        // The full sentence, not `contains("$15.99")`: that substring survives
+        // inside "CA$15.99" too, so the old assertion passed under BOTH the
+        // en_CA and en_US renderings and could not have caught either one
+        // changing. The fixture pins en_CA, so this is now a statement about
+        // the copy rather than about the machine.
+        let renewal = try #require(replaced.first {
+            NotificationPlanIdentifier.kind(of: $0.identifier) == .renewal
+        })
+        #expect(renewal.body == "FoodApp charges $15.99 on Aug 25.")
+        #expect(replaced.allSatisfy { $0.body.contains("$15.99") && !$0.body.contains("CA$") })
     }
 
     @Test("⛔ a reschedule at 09:01 on conversion day: the announcement survives")

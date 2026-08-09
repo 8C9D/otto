@@ -918,7 +918,7 @@ Otto was installed on the owner's iPhone and used for about two hours. Three rea
 
 **On the name.** The bundle ID is permanent; the App Store display name is not, and can be changed at any time. So the durable half of this decision is the identifier, and it was chosen to be a proper noun carrying no feature description — a bundle ID like `com.arthurzhang.subtracker` would strand the app the moment it did anything beyond subscriptions. **Otto** additionally echoes *auto*-renewal without stating it, and follows the one naming strategy that has actually worked in this category (§7.4).
 
-| 6 | Add a remote and verify CI | ⏸ Open — `runs-on: macos-26` is unverified until the first push; adjust the runner label if GitHub's differs |
+| 6 | Add a remote and verify CI | ⏳ **Partly closed (Aug 2026).** Remote exists (`8C9D/otto`, private) and CI has executed. **The runner label question is settled: `macos-26` is correct, unchanged.** CI's coverage is a strict superset of `verify.sh`, and CI is proven able to fail (a deliberate stale-call-site break went red on exactly the Wave 4 error). **Not** closable as "CI verified": the first run found two host-environment test defects, fixed at Gate 1, and no green run on a second machine had yet been observed when this line was written. Close it when CI is green on `main`. |
 
 **On Decision 2, and what changed.** The v1.0 framing treated this as a coin-flip on the owner's future intentions. Two things since have made it lopsided:
 

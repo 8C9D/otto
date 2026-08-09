@@ -16,3 +16,8 @@ xcuserdata/
 # Swift Package Manager
 .build/
 .swiftpm/
+
+# verify.sh copies a failing package's log here for inspection. One reached a
+# commit already (verify-OttoPersistence-failure.log, added in c8cf3f8 and
+# removed in 3a69893) - it is a build artifact, not a record.
+verify-*-failure.log

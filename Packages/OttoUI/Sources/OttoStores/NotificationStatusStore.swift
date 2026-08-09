@@ -36,7 +36,8 @@ public final class NotificationStatusStore {
     public func reschedule() async {
         do {
             let outcome = try await scheduler.reschedule(
-                now: dates.now(), today: dates.today(), timeZone: dates.timeZone()
+                now: dates.now(), today: dates.today(), timeZone: dates.timeZone(),
+                trigger: .stateChange
             )
             apply(outcome)
         } catch {

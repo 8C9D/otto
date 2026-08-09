@@ -252,6 +252,12 @@ struct SchedulerFixture {
     let billingEvents: FakeBillingEventRepository
     let priceChanges: FakePriceChangeRepository
 
+    /// Every assertion about notification COPY is made against this locale.
+    /// Without it the expectations describe the machine, not the app: CAD
+    /// renders "$11.00" in en_CA and "CA$11.00" in en_US, which is how a green
+    /// local suite met a red CI on the first push to a remote.
+    static let locale = Locale(identifier: "en_CA")
+
     init() {
         client = FakeNotificationClient()
         subscriptions = FakeSubscriptionRepository()
@@ -262,7 +268,8 @@ struct SchedulerFixture {
             subscriptions: subscriptions,
             cancellations: cancellations,
             billingEvents: billingEvents,
-            client: client
+            client: client,
+            locale: { Self.locale }
         )
     }
 

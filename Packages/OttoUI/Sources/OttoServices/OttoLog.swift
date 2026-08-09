@@ -1,0 +1,98 @@
+import Foundation
+import OSLog
+import OttoDomain
+
+/// Otto's unified-log channels.
+///
+/// The app is judged almost entirely on what it does while nobody is watching:
+/// a background pass that misfires leaves no screen to inspect afterwards, and
+/// the Aug 2026 trial gate was settled by a device log archive after a static
+/// trace had backed the wrong hypothesis. So the background and scheduling
+/// paths write to the unified log, where `log collect --device` can pull them
+/// off the phone days later.
+///
+/// **Privacy.** This is a financial app and a sysdiagnose is readable by anyone
+/// holding the device. Nothing here logs an amount, a vendor name, a payment
+/// method, or any other subscription content. What is marked `.public` is
+/// deliberately limited to opaque identifiers (`<uuid>|<day>|<kind>`),
+/// calendar days, and control-flow outcomes - the facts an investigation needs,
+/// none of which say what the user pays for. Anything richer must stay out, not
+/// merely be marked private: `.private` redaction is a display rule, not a
+/// guarantee about what was written.
+public enum OttoLog {
+    public static let subsystem = "com.arthurzhang.otto"
+
+    /// `BGAppRefreshTask` lifecycle: launch, which completion path was taken,
+    /// and whether the next wake-up was re-armed.
+    public static let background = Logger(subsystem: subsystem, category: "background")
+
+    /// Reschedule passes: which trigger started one, the §6.2 reconciliation
+    /// diff it produced, and what the ledger watermarks did across it.
+    public static let scheduling = Logger(subsystem: subsystem, category: "scheduling")
+
+    /// A `CalendarDay?` as log text - "none" reads better than an empty slot
+    /// when the question being asked is whether a watermark exists at all.
+    static func dayText(_ day: CalendarDay?) -> String {
+        day.map(String.init(describing:)) ?? "none"
+    }
+
+    /// Identifier lists are logged in full rather than counted: the whole point
+    /// of the §6.2 diff is WHICH rungs moved, and a count cannot distinguish a
+    /// correct three-rung replacement from a remove-all.
+    static func list(_ identifiers: [String]) -> String {
+        identifiers.isEmpty ? "-" : identifiers.sorted().joined(separator: " ")
+    }
+}
+
+/// Which §6.2 trigger started a scheduling pass. Logged so a later
+/// investigation can tell a background wake-up from a foreground open without
+/// inferring it from timestamps - the distinction the `BGAppRefreshTask` gate
+/// exists to observe.
+public enum RescheduleTrigger: String, Sendable {
+    case foreground
+    case backgroundRefresh
+    case notificationDelivered
+    case notificationAction
+    case timeZoneChange
+    case significantTimeChange
+    /// A create, edit, delete, or notification-time change routed through the
+    /// store layer.
+    case stateChange
+}
+
+extension ReminderScheduling {
+
+    /// The trigger-tagged entry point every production caller uses.
+    ///
+    /// The protocol requirement deliberately keeps its three parameters: Swift
+    /// forbids default arguments in a protocol requirement, so widening it
+    /// would rewrite ~70 test call sites to carry a value only the log reads.
+    /// Tagging here instead puts the trigger name immediately before the pass
+    /// it names, in the same log stream, at no cost to the seam.
+    @discardableResult
+    public func reschedule(
+        now: Date,
+        today: CalendarDay,
+        timeZone: TimeZone,
+        trigger: RescheduleTrigger
+    ) async throws -> ScheduleOutcome {
+        OttoLog.scheduling.notice("pass begin trigger=\(trigger.rawValue, privacy: .public)")
+        do {
+            let outcome = try await reschedule(now: now, today: today, timeZone: timeZone)
+            OttoLog.scheduling.notice("""
+                pass end trigger=\(trigger.rawValue, privacy: .public) \
+                permission=\(String(describing: outcome.permission), privacy: .public) \
+                scheduled=\(outcome.scheduledCount, privacy: .public) \
+                coveredThrough=\(String(describing: outcome.coveredThrough), privacy: .public) \
+                ledgerFailures=\(outcome.ledgerFailures.count, privacy: .public)
+                """)
+            return outcome
+        } catch {
+            OttoLog.scheduling.error("""
+                pass threw trigger=\(trigger.rawValue, privacy: .public) \
+                error=\(String(describing: type(of: error)), privacy: .public)
+                """)
+            throw error
+        }
+    }
+}

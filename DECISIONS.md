@@ -3,6 +3,54 @@
 Rulings made during implementation, with rationale and the alternatives they displaced.
 Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records the calls a wave made where the spec left room.
 
+## Gate 1 — the GitHub remote and the first CI run
+
+### The runner label was never the risk; the host environment was
+
+`runs-on: macos-26` is correct and needed no change - the label that three documents called "the ONLY unverified thing" in the workflow.
+What the first run actually found, in about six minutes, was two tests that depended on the machine rather than on the app: a currency string pinned to this Mac's `en_CA`, and a fixed 300 ms render wait tuned to this Mac's speed.
+The generalizable lesson is about `verify.sh`'s limits, not about CI's: **a clean clone proves the committed *code* builds and passes, and says nothing about the *environment* it passed in.**
+Seventeen sessions of clean-clone discipline could not have caught either defect, because every one of them cloned into the same locale on the same hardware.
+Rejected: treating both as CI configuration problems and pinning the runner's locale - that would have made CI agree with this Mac instead of making the tests independent of both.
+
+### Notification copy takes a locale, the same way display copy already did
+
+`NotificationContent.money` called `.formatted(.currency(code:))` against the ambient locale, so CAD rendered `$11.00` here and `CA$11.00` on a US runner.
+`DisplayFormatting.currencyText` already had the seam (`.locale(locale)`, default supplied, tests pinning `en_CA`); notification copy was the one money-formatting site that never got it.
+The scheduler now carries a `locale` provider defaulting to `.autoupdatingCurrent`, mirroring the `fireTimes` provider exactly and for the same stated reason - a background pass must see the current setting.
+`displayDate` and `verificationBody` got the same parameter: `.month(.abbreviated)` is equally locale-dependent, and fixing only the money half would have left the identical defect one line away.
+Rejected: computing the expected string in the test from the same formatter (tautological - it would pass even if `money` broke); asserting only on a substring (see below).
+
+### `contains("$15.99")` was passing for the wrong reason
+
+`NotificationReconciliationTests` asserted `body.contains("$15.99")`, which is satisfied by `CA$15.99` too - so it passed under **both** renderings and could not have detected either one changing.
+It now asserts the full sentence against the pinned locale, plus an explicit `!contains("CA$")`.
+This is the same class as a guard that stays green while asserting a dead schema version: a test that cannot fail is not evidence, and a test that passes for the wrong reason is worse than a missing one, because it is counted.
+Verified by construction: flipping only the fixture's locale to `en_US` reproduces CI's exact failure on this `en_CA` machine, and both new assertions catch it.
+
+### Poll-until-rendered, and what it does NOT fix
+
+`EmptyStateTests.settle` waited a fixed 300 ms; GitHub's runner took roughly 3× as long to render and every test in the suite failed with an empty accessibility tree.
+It now polls up to 10 s for a caller-supplied condition naming the content that test is about to assert on - "any label at all" is insufficient, because a navigation bar vends labels before the list body exists.
+**This lowers the probability of a spurious failure. It does NOT resolve the ambiguity recorded under Wave 10's defect-J entry.**
+A hierarchy that never materializes still vends no accessibility elements, which stays indistinguishable from defect J having actually returned; on timeout the suite reports a failure it cannot attribute.
+That limit is structural to hosting a view and reading its accessibility tree - the timeout only decides how long the suite waits before hitting it. Any future "the empty-state suite went red" must be diagnosed, never retried.
+
+### `verify-*-failure.log` is now ignored
+
+`verify.sh` copies a failing package's log to the repo root, and `.gitignore` did not cover it - which is how `verify-OttoPersistence-failure.log` reached a commit (added in `c8cf3f8`, removed in `3a69893`).
+It is a build artifact, not a record. The pattern is ignored rather than the script changed, because writing the log where a human will find it is the useful behaviour.
+
+### Otto logs to the unified log, deliberately, in a financial app
+
+The app previously emitted **nothing** - no `os_log`, no `Logger`, no `print` anywhere in the app target or the service layer.
+That made the `BGAppRefreshTask` gate unmeetable as specified: there was no log output to capture, only a debugger transcript, and the spec's standard for that gate is observation rather than inference.
+Logging is therefore a real change rather than temporary instrumentation, so the gate observes the committed artifact instead of a one-off build - and so a missed reminder in the field stays diagnosable, which is the whole product.
+What is logged: which §6.2 trigger began a pass, the reconciliation diff as **identifiers** (a count cannot distinguish a correct three-rung replacement from a remove-all), each subscription's watermark before and after, and which of `setTaskCompleted`'s two paths ran.
+What is deliberately **not** logged: amounts, vendor names, payment methods, any subscription content.
+A sysdiagnose is readable by anyone holding the phone, so the rule is that sensitive values stay out of the log entirely rather than being marked `.private` - redaction is a display rule, not a guarantee about what was written.
+Rejected: temporary instrumentation reverted after the gate (the observed binary would not be the committed one, which is precisely the Wave 4 failure shape); LLDB-only observation (a transcript is real evidence, but it expires with the session and does nothing for a field failure).
+
 ## Wave 10 — Notification Delivery & Check-Date Fixes
 
 ### Catch-up interval: 5 seconds

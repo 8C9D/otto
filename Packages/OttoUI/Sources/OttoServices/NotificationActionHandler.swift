@@ -58,13 +58,13 @@ public actor NotificationActionHandler {
         switch NotificationAction(rawValue: actionIdentifier) {
         case .keepingIt:
             try await flows.acknowledgeCurrentCharge(subscriptionID: subscriptionID, now: now, today: today)
-            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
             return .none
         case .cancelling:
             guard let start = try await flows.startCancellation(
                 subscriptionID: subscriptionID, now: now, today: today
             ) else { return .none }
-            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
             return .openCancellation(subscriptionID: subscriptionID, url: start.cancellationURL)
         case .chargesStopped:
             // The verification yes-path (spec §5.4): verify and archive, all
@@ -72,7 +72,7 @@ public actor NotificationActionHandler {
             _ = try await flows.answerVerification(
                 subscriptionID: subscriptionID, chargesStopped: true, now: now, today: today
             )
-            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
             return .none
         case .stillCharging:
             // The no-path: the state work is background-safe, and the action is
@@ -81,13 +81,13 @@ public actor NotificationActionHandler {
             _ = try await flows.answerVerification(
                 subscriptionID: subscriptionID, chargesStopped: false, now: now, today: today
             )
-            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
             return .openDetail(subscriptionID: subscriptionID)
         case .stillUsing:
             // The §7.3 yes-path: record the use, background-safe, and let the
             // reschedule move the next check-in a cadence out.
             try await flows.recordUsage(subscriptionID: subscriptionID, on: today, now: now)
-            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone)
+            _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
             return .none
         case .notUsing:
             // The other path opens the facts; deciding what to do with an

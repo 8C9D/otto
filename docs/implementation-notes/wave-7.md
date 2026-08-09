@@ -65,3 +65,4 @@ The Wave 5.5 segfault did not recur in this wave's runs.
 1. The Android-or-public-distribution decision - Wave 6 remains blocked on it, and the reorder bought Waves 7 and 8 of time, not more.
 2. The three manual device checks in `docs/manual-verification.md`; the compressed-timeline trial test is still the unmet ⛔ gate.
 3. The GitHub remote - CI has still never executed, and the only genuinely unverified thing in it is the `macos-26` runner label.
+   ⚠ **Corrected at Gate 1 (Aug 2026): wrong on the second half.** `macos-26` was correct; the first run found two test defects that depended on the host machine rather than on the app. See `DECISIONS.md`, "Gate 1".
