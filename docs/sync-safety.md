@@ -43,6 +43,62 @@ It is safe to run at any time (on an unsynced store it does nothing), idempotent
 
 What it does NOT do: it never resurrects a tombstone, never touches watermarks, and never merges records that are individually valid and distinct - it only resolves the three shapes above.
 
+## ⛔ Wall-clock timestamps are a merge input, and the device clock is not monotonic
+
+**Found Aug 2026, in real exported data.** The export carries records whose `deletedAt` PRECEDES their `createdAt`:
+
+| Record | createdAt | deletedAt |
+|---|---|---|
+| `cancellationEpisode 9ACC5DC0` | 2026-08-10T14:11:05Z | 2026-08-08T17:32:09Z |
+| `billingEvent EC133708` | 2026-08-10T14:17:32Z | 2026-08-08T17:32:09Z |
+
+Both belong to the "Gate Test" subscription, written under the advanced clock of procedure 1 (the compressed-timeline trial test) and tombstoned after the clock was restored.
+**This is not hypothetical drift: clock manipulation is a documented step in this project's own verification procedure, and it has now reached persisted data.**
+A user can set the device clock by hand for their own reasons; nothing in the app can prevent it, and nothing currently detects it.
+
+### Q1. What does "earliest `createdAt` wins" do with a future-clocked stamp?
+
+`BillingEvent.reconcilingDuplicates` (`SyncReconciliation.swift:32`) sorts `(createdAt, id)` ascending and keeps `.first`.
+
+- A row written under an **advanced** clock sorts LATE and **loses**.
+- A row written under a **restored or rewound** clock sorts EARLY and **wins** - *even though it was written later in real time.*
+
+The trial-gate procedure produces exactly both populations in one session, so the two orders genuinely disagree.
+**Convergence is not at risk** - every device sorts the same stored data identically and reaches the same answer, which is the property the rule was designed for.
+What breaks is the correspondence between timestamp order and causal order: **the rule means "smallest timestamp", and only means "the original" while the clock is honest.**
+
+The stakes are not limited to which row survives, because the winner absorbs the losers' state: `acknowledgedAt` is the `min` over losers (itself a clock comparison), and `state`, `userConfirmedAt` and `actualAmountCents` are donated by the earliest-created non-`.upcoming` twin.
+A wrong winner can therefore adopt the wrong confirmed amount - a money field.
+Today's artifacts are tombstones and this rule reads live rows only, so nothing is currently mis-merged; **the mechanism does not know that, and the next occurrence need not be a tombstone.**
+
+### Q2. What else decides on `createdAt` / `updatedAt`?
+
+Seven places. Ordered by how much damage a bad timestamp does:
+
+| Where | Rule | Effect of a dishonest clock |
+|---|---|---|
+| `ImportResolution.swift:161` | `record.updatedAt > existing.updatedAt` - **last-writer-wins**, the merge rule for every imported record | ⛔ **The worst case.** A future stamp is *sticky*: it wins every merge until real time catches up. The Aug 10 stamps above would have beaten every honest edit for two days |
+| `SyncReconciliation.swift:32` | duplicate ledger twins, earliest `createdAt` | ⛔ Q1 above - wrong winner donates state and `actualAmountCents` |
+| `ImportResolution.swift:247` | multiple live default payment methods: `max(updatedAt, id)` | Picks which card is default |
+| `SubscriptionReadRepair.swift` | last-resort close day for a degenerate pause episode = **the UTC day of its `createdAt`** | A future `createdAt` becomes a future calendar day - a clock value promoted into billing-relevant data |
+| `SubscriptionMapping.swift:38`, `CancellationEpisodeMapping.swift:89` | `(createdAt, id)` ordering when mapping stored children | Chooses which child is canonical |
+| `Insights.swift:248,331`, `OttoStore+PriceChanges.swift:47` | `(effectiveDate, createdAt)` | `createdAt` breaks ties *within one effective date* - a same-day price change can order wrongly |
+| `CancellationEpisode.swift:233` | `liveEvidenceNotes` by `(createdAt, id)` | Display order of dispute evidence only |
+
+### Why this matters specifically for 6B
+
+CloudKit mirroring resolves field-level conflicts by last-writer-wins, and the app's own import merge is the same rule at record level.
+**Both assume the clock only moves forward.** A record stamped in the future wins every conflict until the world catches up; a record stamped in the past can never win one, so a genuine later edit is silently discarded.
+Note also that §8 prerequisite 4 already documents "last-writer-wins still applies field-by-field" as its residual risk - **this finding is that risk's input being untrustworthy**, which is a level below where the audit had been looking.
+
+**Not fixed here, and deliberately so** - the fix is a design decision for 6B, not a patch. The options:
+
+1. **Reject the premise**: order by something monotonic per device - a Lamport/hybrid-logical clock or a per-record version counter - and keep wall-clock stamps for display only. Correct, and the largest change.
+2. **Clamp on write**: never let a record's `updatedAt` go backwards, and never let `createdAt` exceed the write instant. Cheap, local, and does not help across devices whose clocks disagree.
+3. **Detect and refuse**: treat `deletedAt < createdAt` (and any backwards `updatedAt`) as a §4a read-repair shape - surface it rather than merging on it. Cheapest, and at minimum makes the condition visible instead of silent.
+
+**Whatever 6B chooses, the standing rule is that a device clock the user can set is not a monotonic source, and no merge rule may assume it is.**
+
 ## The four §8 prerequisites, and what each does NOT protect against
 
 All four exist and are tested with sync off - the only time they can be tested honestly - because they exist to be used on the worst day.

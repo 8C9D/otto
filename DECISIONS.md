@@ -3,6 +3,29 @@
 Rulings made during implementation, with rationale and the alternatives they displaced.
 Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records the calls a wave made where the spec left room.
 
+## Gate 3 — delete-and-reinstall
+
+### The import summary is correct, and was re-derived rather than screenshotted
+
+The summary screenshot was missed, so the numbers were re-derived by running the real export through `importedSnapshot` and `resolveImport(strategy: .replace)`: **`subscriptions.added = 3`, `billingEvents.added = 3`, `paymentMethods.added = 1`**, against a file carrying 5 subscriptions (2 tombstoned), 12 charges (9 tombstoned), 1 payment method and 1 tombstoned cancellation episode.
+That is the Wave 10 defect-H rule working exactly as specified: counts computed over LIVE ids only, tombstones counted nowhere.
+
+### ⚠ The restored device does not match the verified export, and the code is not the reason
+
+The device container holds 4 subscriptions / 7 billing events / 0 cancellation episodes; the verified export carries 5 / 12 / 1.
+Subscription `42CE4448` ("Gate Test") and its entire tree - 5 events and 1 episode - are absent, while `FBB14FCE` ("Test"), also tombstoned, restored with all four of its events. Tombstone-ness is therefore not the discriminator.
+
+**The code was cleared by reproduction, not by reading it.** Running the actual export file through the real domain and the real persistence layer:
+
+- `decodeExport` / `importedSnapshot`: 5 / 12 / 1 - "Gate Test" present.
+- `resolveImport(strategy: .replace)`: 5 / 12 / 1 - present.
+- `OttoStore.restore(_:at:watermarks: .reconstruct)` into a real empty store: 5 / 12 / 1, **missing subs `[]`, missing events 0, missing episodes 0**.
+
+So this build, given this file, preserves the record. The container re-pull was consistent, ruling out a torn read.
+**The only remaining explanation is that the file imported on the phone was not the file that was verified on the Mac** - most likely an earlier export predating "Gate Test". Recorded as an open question for the owner rather than as a defect, because attributing it to the code would contradict the reproduction.
+
+**The process lesson is the one worth keeping: verifying an artifact on the Mac does not verify the artifact that was used on the phone.** Same shape as Wave 4 (a report about a different tree than the one committed) and as `verify.sh` versus CI (the same code in a different environment). The gate should name the file by hash on both sides.
+
 ## Gate 2 — `BGAppRefreshTask` observed running
 
 ### `using: .main`, because `nil` means a background queue and the handler is main-actor isolated
