@@ -10,6 +10,23 @@ Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records 
 The summary screenshot was missed, so the numbers were re-derived by running the real export through `importedSnapshot` and `resolveImport(strategy: .replace)`: **`subscriptions.added = 3`, `billingEvents.added = 3`, `paymentMethods.added = 1`**, against a file carrying 5 subscriptions (2 tombstoned), 12 charges (9 tombstoned), 1 payment method and 1 tombstoned cancellation episode.
 That is the Wave 10 defect-H rule working exactly as specified: counts computed over LIVE ids only, tombstones counted nowhere.
 
+### ⛔ The recovery path silently picks the one strategy that skips watermark reconstruction
+
+`SettingsView.preview(_:)` runs an import against an empty database as `.merge` without asking, on the reasoning that *"an empty database has no merge-or-replace question to ask"*.
+That reasoning is correct about RECORDS - against an empty database the two strategies produce identical record sets - and **wrong about watermarks**, because `ExportService.performImport` gives the strategy a second meaning the branch does not account for:
+
+```swift
+watermarks: strategy == .replace ? .reconstruct : .keep
+```
+
+So `.merge` leaves every watermark nil, and `materializeEvents` computes `windowStart = min(storedWatermark ?? today, today)` - **a nil watermark materializes from TODAY and skips the window between the last real charge and now.**
+That is the v2.0/v2.1 founding hazard, reached by the default path.
+
+**The empty database is not an edge case: it is the recovery case.** Fresh install after data loss is precisely when a user imports, so the branch that skips reconstruction is the branch a real recovery takes, and an empty watermark table is not a neutral starting state.
+Observed live in the Gate 3 run: the device restored with three correct subscriptions and an entirely empty `ZSTOREDMATERIALIZATIONWATERMARK`.
+
+Recommended fix (not applied here - recorded for the wave that owns it): run an empty-database import as `.replace`. The record outcome is identical by construction, and it is the only branch that reconstructs. Better still, decouple the watermark policy from the merge strategy, since they answer different questions and only one of them is the user's to decide.
+
 ### ⚠ The restored device does not match the verified export, and the code is not the reason
 
 The device container holds 4 subscriptions / 7 billing events / 0 cancellation episodes; the verified export carries 5 / 12 / 1.

@@ -120,6 +120,31 @@ The basic product loop, by hand, on the device - unsigned-off since Wave 3.
 6. Toggle a Dynamic Type size at the largest accessibility setting (Settings → Accessibility → Display & Text Size → Larger Text, max). Pass: the list rows and Today cards grow without truncating any label.
 7. Delete both subscriptions. Pass: Today returns to empty with no orphaned reminders firing later (spot-check: no Otto notification arrives the next morning).
 
+## 4. Data survives delete-and-reinstall (⛔ the 6B floor)
+
+Proves a manual export/restore floor exists before CloudKit does. It destroys the container deliberately, so the ordering below is not optional.
+
+**⚠ The export must be on the DEVICE THAT WILL IMPORT IT.**
+The Aug 2026 run lost an hour to this: the fresh export was AirDropped to the *Mac* for verification, so it was never in the *phone's* file picker, and the import silently used an older export already sitting in Files.
+Verifying a file on the Mac verifies nothing about the file the phone will offer you. **AirDrop to the phone, and separately copy to the Mac if you want to verify it there.**
+
+**⚠ Name the file by `sha256` on both sides.** Take the hash on the Mac, and confirm the phone is importing a file of that same name and size before tapping import. "The export" is not an identifier; a hash is.
+
+1. Export from the app (Share → Save to Files ON THE PHONE), then AirDrop a copy to the Mac. Record `shasum -a 256 <file>`. Pass: the hash is written down.
+2. Verify the Mac copy parses: `formatVersion` 4, the expected number of LIVE subscriptions, amounts, anchors, and a monthly burn that reconciles by hand. Pass: every number matches what the app shows.
+3. Take a raw container backup as an independent second copy - `xcrun devicectl device copy from --domain-type appDataContainer --domain-identifier com.arthurzhang.otto --source "/Library"`. Pass: `default.store` and `OttoDeviceState.store` arrive.
+   Copying `/` fails on a metadata plist; copy `/Library` instead. **Read the copy, never the original** - `sqlite3` checkpoints and truncates a WAL-mode database's `-wal` on open, so querying a backup mutates it.
+4. `xcrun devicectl device uninstall app`. Pass: a container copy afterwards fails with `ContainerLookupErrorDomain error -1` and retrieves zero files. An app that merely vanished from the home screen is not proof.
+5. Reinstall and launch. Pass: `[scheduling] pass end ... permission=notDetermined scheduled=0` with **no ledger lines at all**, and the container reads 0 subscriptions. Confirm on screen: "No subscriptions yet" and the Wave 9A permission banner.
+6. Import the hashed export **with Replace**. Pass: the summary states live records only (3 subscriptions / 3 charges / 1 payment method for the Aug 2026 data).
+   ⚠ **Do not accept the default.** An import into an empty database runs `.merge` without asking, and `.merge` skips watermark reconstruction (§9a). Since the empty database IS the recovery case, the default path is the wrong one until that is fixed.
+7. Verify the data: correct amounts, correct next-charge anchors, monthly burn reconciling to the pre-uninstall figure, and the payment method reading "N subscriptions billed to this card".
+8. **Verify the watermarks reconstructed from the LEDGER, never from today.** Pass: `ZSTOREDMATERIALIZATIONWATERMARK` holds one row per live subscription, each equal to the latest live expected date for that subscription or its anchor when it has none. An empty table is a FAIL, not a neutral state. An annual subscription showing a next charge near today is the failure signature.
+9. Grant notification permission, then reopen. Pass: `permission=authorized`, one `[scheduling] ledger <uuid> watermark=…` line per live subscription, and `getPendingNotificationRequests` listing real identifiers with their trigger dates - report the identifiers, never a count.
+   **Note the honest boundary: the uninstall clears the notification permission, so reminders do NOT return with the data.** They return only after the user re-grants and a pass runs. "My data came back" and "my reminders came back" are different promises.
+
+**What this gate proves and does not.** It establishes a MANUAL export/restore floor. It does not prove any automatic protection, and §8's first CloudKit prerequisite - an automatic pre-enable export snapshot - is a different thing this does not satisfy.
+
 ## Run log
 
 | Date | Procedure | Device / iOS | Result | Notes |
