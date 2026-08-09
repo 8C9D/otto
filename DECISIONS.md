@@ -28,13 +28,28 @@ It now asserts the full sentence against the pinned locale, plus an explicit `!c
 This is the same class as a guard that stays green while asserting a dead schema version: a test that cannot fail is not evidence, and a test that passes for the wrong reason is worse than a missing one, because it is counted.
 Verified by construction: flipping only the fixture's locale to `en_US` reproduces CI's exact failure on this `en_CA` machine, and both new assertions catch it.
 
-### Poll-until-rendered, and what it does NOT fix
+### The empty-state suite: the accessibility tree needs a client, and the pixels do not
 
-`EmptyStateTests.settle` waited a fixed 300 ms; GitHub's runner took roughly 3× as long to render and every test in the suite failed with an empty accessibility tree.
-It now polls up to 10 s for a caller-supplied condition naming the content that test is about to assert on - "any label at all" is insufficient, because a navigation bar vends labels before the list body exists.
-**This lowers the probability of a spurious failure. It does NOT resolve the ambiguity recorded under Wave 10's defect-J entry.**
-A hierarchy that never materializes still vends no accessibility elements, which stays indistinguishable from defect J having actually returned; on timeout the suite reports a failure it cannot attribute.
-That limit is structural to hosting a view and reading its accessibility tree - the timeout only decides how long the suite waits before hitting it. Any future "the empty-state suite went red" must be diagnosed, never retried.
+Two hypotheses were wrong before the evidence settled this, and the sequence is the point.
+
+1. *"The runner is slow and the 300 ms `settle` is too short."* **Wrong.** After switching to poll-until-rendered, each test burned the full 10 s deadline and still found nothing.
+2. *"A scene-less `UIWindow` does not render on a headless runner."* **Wrong.** Quitting Simulator.app, `simctl shutdown all`, and re-running locally passed in 1.6 s.
+
+So the suite was made to report its own environment on timeout, and one run answered it: `scenes=0 elements=45 labels=0 blank=false`.
+**The screen renders on CI.** Forty-five elements materialize and the pixels are non-uniform; not one element vends an `accessibilityLabel`, because UIKit populates the accessibility tree only when a client is listening and a fresh CI simulator has none.
+
+**This supersedes the pessimism written earlier in this section and the "indistinguishable from defect J itself" line in the Wave 10 defect-J entry below.** That claim was disproved by the diagnostic: `isVisuallyBlank` and the element count **do** discriminate "this host cannot vend labels" from "defect J is back", because defect J was a screen with nothing drawn on it and this is a screen that drew 45 elements. **Only the label assertions are ambiguous.** The suite already computed `isVisuallyBlank` - it simply asserted it in one of four tests.
+
+The resolution is both halves, not a choice between them:
+
+- **Signals always.** Every test asserts `!isVisuallyBlank`, which needs no accessibility client and directly targets defect J's failure mode.
+- **Labels where available.** The string assertions still run everywhere, but on a host with no accessibility client they run inside `withKnownIssue` carrying the diagnosis, so they are reported rather than silently skipped and cannot turn the job red for a reason that is not about the app.
+
+Rejected: dropping the string assertions for pixel and element counts alone - that surrenders the **defect-I class entirely**, where the right number of elements renders with the wrong words in them, which no pixel check can see.
+Rejected: `simctl spawn ... defaults write com.apple.Accessibility ApplicationAccessibilityEnabled` in CI - an undocumented write that becomes an unexplained four-test failure the day a runner image changes, and it makes CI agree with this Mac instead of making the suite independent of both.
+
+The `settle` helper gives up early once pixels are present and labels are absent, so an accessibility-less host costs about 2 s per test rather than the full deadline.
+**Standing rule: pixels present with labels absent is the accessibility-client diagnosis, never a product defect.** The failure text says so, so the next person does not re-derive it.
 
 ### `verify-*-failure.log` is now ignored
 
@@ -91,6 +106,7 @@ The filtered/unfiltered empty states and the clear-filter behavior are tested in
 `SubscriptionsView` gained an injectable list model (defaulted, so the app is unchanged) because the filter was unreachable `@State` - the reason J shipped "verify by hand".
 Rejected: a dedicated XCUITest target (heavier scaffolding, slower, and the render suite already exists as the simulator home); ViewInspector (a new dependency for what the accessibility tree already provides); pixel-only blankness assertions (an empty `List` is not uniformly blank, so the label assertions are load-bearing and the pixel check is a supplement).
 Harness fact worth keeping: a DETACHED `UIHostingController` vends an empty hierarchy for a full screen - no accessibility elements, blank render - indistinguishable from defect J itself; the window plus main-actor suspension (`Task.sleep`, not `RunLoop.run`, which is unavailable in async contexts) is what makes the render real.
+⚠ **Superseded in part at Gate 1 (Aug 2026):** "indistinguishable from defect J itself" was too strong and was disproved by a CI diagnostic. A detached or unrenderable host is blank with almost no elements; a host that renders but has no accessibility client shows `elements=45, labels=0, blank=false`. The pixel and element signals discriminate the two - only the label assertions are ambiguous. See "The empty-state suite" under Gate 1 above.
 
 ### Payment-methods copy: "billed to this card"
 
