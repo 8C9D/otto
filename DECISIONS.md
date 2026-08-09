@@ -3,6 +3,25 @@
 Rulings made during implementation, with rationale and the alternatives they displaced.
 Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records the calls a wave made where the spec left room.
 
+## Gate 2 — `BGAppRefreshTask` observed running
+
+### `using: .main`, because `nil` means a background queue and the handler is main-actor isolated
+
+The spec had carried *"`BGAppRefreshTask` not yet observed to run — by this spec's own standard it does not exist until it is"* since Wave 4.
+When it was finally made to run, it **crashed the app on every attempt**: `register(forTaskWithIdentifier:using:)` was passed `nil`, which the SDK header documents as *"a default background queue"*, while the launch closure is formed inside a `@MainActor` type and calls main-actor state — so Swift 6 emits a runtime isolation check that traps the moment the system runs it off-main.
+Three system-generated crash reports, faulting queue `com.apple.BGTaskScheduler (com.arthurzhang.otto.refresh)`, stack `_dispatch_assert_queue_fail ← dispatch_assert_queue ← _swift_task_checkIsolatedSwift ← closure #1 in NotificationCoordinator.start`.
+The trap landed **before the first line of the handler body**, so `setTaskCompleted` was never reached on any path — which on a real launch is also what teaches iOS to stop granting the app wake-ups.
+Checked and rejected as the cause: an SDK annotation mismatch. `BGTaskScheduler.h` carries no `NS_SWIFT_UI_ACTOR`, so the isolation was inferred from Otto's own type. This was Otto's defect.
+Rejected fix: keeping `nil` and hopping to the main actor inside the closure — more code to say what the `queue` parameter already says, and it leaves the trap one careless edit away.
+
+**The generalizable lesson is about what "observed" is allowed to mean.** Registration succeeding, submission succeeding, and `dasd` accepting the activity were all true the entire time this path was dead — the archive shows `dasd` faithfully scheduling `bgRefresh-com.arthurzhang.otto.refresh` in a 24-hour window for a handler that could not survive being called. Every available signal short of running the body said the feature worked.
+
+### Expiration was not a separate step; it was hidden behind the crash
+
+Forcing expiration was impossible while the handler trapped on entry, because `task.expirationHandler` is assigned *inside* the body that never ran.
+Fixing the isolation bug is what made the second defect observable at all, and it is recorded in §9a rather than fixed here: `work.cancel()` does not stop the pass, so expiration and normal completion both fire and `setTaskCompleted` is called twice.
+Worth keeping as a rule: **a defect that makes a path unreachable also hides every defect on that path**, so "fixed the crash" is the beginning of testing that path, not the end.
+
 ## Gate 1 — the GitHub remote and the first CI run
 
 ### The runner label was never the risk; the host environment was

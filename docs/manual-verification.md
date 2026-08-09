@@ -65,24 +65,48 @@ Proves the full trial lifecycle on a device in about an hour by backdating the t
 The gate is met only if every step above passed in one uninterrupted run.
 A partial pass is a fail; note which step broke and file it against the wave.
 
+## Device tooling notes (Aug 2026 run)
+
+The whole procedure below can run from the command line; Xcode's GUI is not required.
+Two failures in this session named nothing about their actual cause, and both were the same thing - **the phone was locked**:
+
+- `devicectl device process launch` fails with `FBSOpenApplicationErrorDomain error 7`, which at least says "was not, or could not be, unlocked".
+- **`log collect` fails with `Operation not supported (45)`, which names nothing at all.** If either appears, unlock the phone before diagnosing anything else. Set Auto-Lock to Never for the duration.
+
+Other facts worth not rediscovering:
+
+- `log collect --device-udid <udid>` needs **root** (`sudo`); without it you get "Must be root to collect logs from attached device". `log stream --device-name` does not exist on macOS 15.
+- Otto's `os_log` output can be read WITHOUT root by launching through `xcrun devicectl device process launch --console` with `DEVICECTL_CHILD_OS_ACTIVITY_DT_MODE=enable` in the environment, which mirrors the unified log to the console. Use the archive when you need the SYSTEM's side (`dasd`, `BackgroundTasks`) as well as Otto's.
+- `zsh` has its own `log` builtin - use `/usr/bin/log`.
+- LLDB attaches over CoreDevice with `device select "<device name>"` then `device process attach -p <pid>`. Attaching STOPS the process, so `process interrupt` afterwards errors. Quitting LLDB without `detach` kills the app.
+
 ## 2. BGAppRefreshTask observation under LLDB
 
 Proves the background refresh task actually registers, runs, completes, and re-arms - the path that keeps reminders honest when the app is never opened.
-`_simulateLaunchForTaskWithIdentifier:` is a private debugger-only hook; this procedure only works on a device attached to Xcode, in a debug build.
+`_simulateLaunchForTaskWithIdentifier:` is a private debugger-only hook; this procedure only works on a device attached to a debugger.
+
+⚠ **Registration is not execution, and this procedure exists because the difference was load-bearing.**
+Before Aug 2026 the task had only ever been observed to REGISTER. It had never run, and when it was finally made to run it **crashed the app every time** (see the run log). A step that stops at "the identifier was accepted" would have passed on a completely dead path.
+**The pass criterion for step 4 is a log line from inside the handler body, not the absence of an error.**
 
 1. Run Otto on the device from Xcode with the debugger attached. Pass: the app launches with the console visible.
 2. Set a breakpoint in `NotificationCoordinator.handleBackgroundRefresh(_:)`. Pass: the breakpoint resolves (solid blue).
 3. Background the app (home swipe), then pause execution in Xcode (Debug → Pause). Pass: LLDB prompt appears.
 4. In LLDB, run:
    `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.arthurzhang.otto.refresh"]`
-   then resume. Pass: the identifier is accepted (no "unregistered identifier" error in the console) and the breakpoint from step 2 hits.
-5. Continue past the breakpoint. Pass: the console shows the pass completing and `setTaskCompleted(success:)` is reached - no expiration warning is logged.
-6. Pause again and run:
+   then resume.
+   Pass: **`[background] launched id=com.arthurzhang.otto.refresh` appears in the log.** Acceptance of the identifier is NOT the criterion - the identifier was accepted on every crashing run too.
+5. Read the rest of the pass in the log. Pass, all four:
+   - `[scheduling] pass begin trigger=backgroundRefresh` - the trigger is named, so a background wake cannot be confused with a foreground open;
+   - one `[scheduling] ledger <uuid> watermark=<before>-><after>` line per live subscription;
+   - `[scheduling] reconcile pending=N desired=N ... removed=[...] added=[...]` - **over an unchanged plan both lists must be empty while `pending` is not.** A remove-all would list every pending identifier as removed, which is how this line distinguishes Wave 10's diff from the shape it replaced;
+   - `[background] completing path=normal success=true`.
+6. Force expiration mid-pass. A breakpoint is needed because the pass finishes in ~40 ms, far faster than two hand-typed commands: set one inside the pass (`breakpoint set -r "reconcileLedger"`), simulate the launch, continue until it hits, then run
    `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateExpirationForTaskWithIdentifier:@"com.arthurzhang.otto.refresh"]`
-   Pass: the expiration handler runs without crashing and the task still ends via `setTaskCompleted`.
-7. Verify re-arming: after step 5, pause and inspect pending requests:
-   `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] getPendingTaskRequestsWithCompletionHandler:^(NSArray *r){ NSLog(@"pending: %@", r); }]`
-   Pass: the log lists a pending `com.arthurzhang.otto.refresh` request - each run schedules the next.
+   and continue.
+   Pass: `[background] completing path=expiration success=false` appears **and no `path=normal` line follows it.**
+   ⚠ As of Aug 2026 this step FAILS: both lines appear, because the reschedule pass has no cancellation checkpoints, so `work.cancel()` does not stop it. See §9a.
+7. Verify re-arming. Pass: `[background] re-armed earliestBegin=+24h` is logged from inside the handler, and the system side agrees - in a `log collect` archive, `dasd` records `Submitted: bgRefresh-com.arthurzhang.otto.refresh:<id> at priority 10 (<24h window>)`.
 
 ## 3. Hands-on add-a-subscription pass
 
@@ -100,4 +124,5 @@ The basic product loop, by hand, on the device - unsigned-off since Wave 3.
 
 | Date | Procedure | Device / iOS | Result | Notes |
 |---|---|---|---|---|
+| 2026-08-08 | 2 (BGAppRefreshTask) | a physical iPhone, iOS 26.x | ⛔ **FAIL, then PASS after a one-line fix** | First observation of the handler ever running. It crashed, every time: `register(using: nil)` puts the launch handler on a background queue, the closure is `@MainActor`-isolated, and Swift 6's runtime isolation check trapped in `_dispatch_assert_queue_fail` before the first line of the body - so `setTaskCompleted` was never reached on any path. Three system crash reports, faulting queue `com.apple.BGTaskScheduler (com.arthurzhang.otto.refresh)`. Fixed by `using: .main`; re-verified in **both Debug and Release**: handler body runs, `trigger=backgroundRefresh`, watermarks steady, `removed=[] added=[]` over 7 pending, `path=normal success=true`. Expiration is now reachable and still defective - see §9a. |
 | 2026-08-08..10 (device days) | 1 (compressed trial) | physical iPhone | ⛔ gate PASS on 2nd attempt | 1st attempt failed on the procedure (old step 8 jumped past fire times; rules above added). Gate criterion met: conversion announcement fired 09:00 on a locked screen, app never opened since entry two device-days earlier. Four code defects found in the same run (G, B, A, C) plus fixture/display gaps (D, H, I, J) - all fixed in Wave 10. |

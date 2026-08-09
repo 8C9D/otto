@@ -5,4 +5,6 @@ Carry-over candidates for a later wave: simulator-hosted `NotificationCoordinato
 Gate 1 (Aug 2026) landed the GitHub remote and the first CI run; see `DECISIONS.md`, "Gate 1".
 Standing consequence for every later wave: **CI, not `verify.sh`, is now the gate.**
 `verify.sh` clones the committed code into the same locale on the same hardware, so it cannot see a host-environment dependency - which is exactly what CI's first run found twice.
-Two device gates from the same session remain: `BGAppRefreshTask` observed running, and data surviving delete-and-reinstall.
+Gate 2 (`BGAppRefreshTask`) is **met** as of Aug 2026: the handler was observed executing on device in both Debug and Release after a one-line isolation fix, having crashed on every attempt before it.
+**It left one ⛔ open defect behind — the expiration path does not stop the work it expires (§9a) — which should be fixed before 6B**, because CloudKit adds writes to exactly the pass that currently keeps running after the OS has reclaimed the task.
+One device gate remains: data surviving delete-and-reinstall.

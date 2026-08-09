@@ -58,8 +58,18 @@ public final class NotificationCoordinator: NSObject {
         client.registerCategories()
         UNUserNotificationCenter.current().delegate = self
 
+        // `using: .main`, NOT nil. The SDK is explicit that nil means "a
+        // default BACKGROUND queue", and this launch handler is formed inside
+        // a `@MainActor` type and calls main-actor state - so Swift 6 emits a
+        // runtime isolation check that traps the instant the system runs it
+        // off-main. Observed on device (Gate 1/2, Aug 2026): every simulated
+        // launch died in `_dispatch_assert_queue_fail` on the
+        // `com.apple.BGTaskScheduler` queue, BEFORE the first line of the
+        // handler body, so the task never reached `setTaskCompleted` on any
+        // path. The handler only starts the work here; the async pass runs in
+        // its own Task, so the main queue is not held.
         let registered = BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: Self.refreshTaskIdentifier, using: nil
+            forTaskWithIdentifier: Self.refreshTaskIdentifier, using: .main
         ) { [weak self] task in
             guard let self, let refreshTask = task as? BGAppRefreshTask else {
                 OttoLog.background.error("launch rejected: coordinator gone or wrong task class")
