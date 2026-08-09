@@ -33,12 +33,37 @@ struct EmptyStateTests {
     /// screen under test is still empty.
     private func host(
         _ view: some View,
-        until isReady: ([String]) -> Bool = { !$0.isEmpty }
+        until isReady: ([String]) -> Bool = { !$0.isEmpty },
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async -> UIWindow {
-        let window = UIWindow(frame: CGRect(origin: .zero, size: screen))
+        // Prefer a real window SCENE. A scene-less `UIWindow(frame:)` renders
+        // on iOS 26.3 but vended an empty hierarchy for this suite on a
+        // 26.4.1 runner; a window that belongs to a scene is the supported
+        // shape, and the `frame` initializer stays as the fallback so the
+        // suite still runs wherever no scene is connected.
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive } ?? UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first
+        let window = scene.map(UIWindow.init(windowScene:))
+            ?? UIWindow(frame: CGRect(origin: .zero, size: screen))
+        window.frame = CGRect(origin: .zero, size: screen)
         window.rootViewController = UIHostingController(rootView: AnyView(view))
         window.makeKeyAndVisible()
         await settle(window, until: isReady)
+        // A timeout means the tree never materialized, and the assertions that
+        // follow will all fail identically with nothing to distinguish "defect
+        // J is back" from "this host cannot render". Record what the host
+        // looked like, so the next run explains itself rather than repeating.
+        if !isReady(accessibilityLabels(in: window)) {
+            Issue.record("""
+                render timed out - scenes=\(UIApplication.shared.connectedScenes.count) \
+                usedScene=\(scene != nil) key=\(window.isKeyWindow) hidden=\(window.isHidden) \
+                bounds=\(window.bounds.size) subviews=\(window.subviews.count) \
+                elements=\(elements(in: window).count) labels=\(accessibilityLabels(in: window).count) \
+                blank=\(isVisuallyBlank(window))
+                """, sourceLocation: sourceLocation)
+        }
         return window
     }
 
