@@ -139,7 +139,10 @@ struct InsightsView: View {
         components.year = month.year
         components.month = month.month
         components.day = 1
-        guard let date = Calendar.current.date(from: components) else {
+        // `MonthlyProjection`'s year and month are domain numbers, i.e.
+        // proleptic Gregorian; resolving them through the device calendar
+        // labels the projection 543 years out on a Buddhist device.
+        guard let date = ottoDayCalendar.date(from: components) else {
             return "\(month.year)-\(month.month)"
         }
         return date.formatted(.dateTime.month(.wide).year())

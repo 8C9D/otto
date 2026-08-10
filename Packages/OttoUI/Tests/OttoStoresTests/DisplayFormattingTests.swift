@@ -46,7 +46,38 @@ struct DisplayFormattingTests {
     @Test("calendar days render through the locale, never by interpolation")
     func dayText() throws {
         let day = try #require(CalendarDay(year: 2026, month: 8, day: 15))
-        #expect(day.displayText(calendar: Calendar(identifier: .gregorian), locale: enCA) == "Aug 15, 2026")
+        #expect(day.displayText(locale: enCA) == "Aug 15, 2026")
+    }
+
+    /// The F1 guard: `CalendarDay`'s numbers are proleptic Gregorian, so the
+    /// day/instant conversions must resolve them in the Gregorian calendar and
+    /// nowhere else.
+    ///
+    /// FALSIFICATION NOTE, stated because it limits what this test proves: on a
+    /// Gregorian host `Calendar.current` IS Gregorian, so no test running here
+    /// can tell the fix from the defect it replaces. Reverting `displayDate` to
+    /// `Calendar.current` leaves this green on this machine. What it does catch
+    /// is the conversion resolving in any NON-Gregorian calendar - which is the
+    /// state a device produces and this host cannot be put into. See
+    /// `reviews/BASELINE.md` on `verify.sh` cloning the code and not the
+    /// environment.
+    @Test("a calendar day resolves to its Gregorian instant, not another calendar's")
+    func dayResolvesInGregorian() throws {
+        let day = try #require(CalendarDay(year: 2026, month: 8, day: 15))
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        let expected = try #require(gregorian.date(from: day.dateComponents))
+
+        #expect(day.displayDate() == expected)
+
+        // The same numbers read as another era land centuries away. If the
+        // conversion ever resolves through a non-Gregorian calendar, the
+        // instant moves by this much and the equality above fails.
+        var buddhist = Calendar(identifier: .buddhist)
+        buddhist.timeZone = .current
+        let misread = try #require(buddhist.date(from: day.dateComponents))
+        #expect(misread != expected)
+        #expect(day.displayDate() != misread)
     }
 
     @Test("cycles get their friendly names")

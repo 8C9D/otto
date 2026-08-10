@@ -27,20 +27,37 @@ public func monthlyEquivalentText(
     )
 }
 
+/// The calendar a `CalendarDay`'s numbers are IN.
+///
+/// `CalendarDay` is proleptic Gregorian by construction - its day arithmetic is
+/// an ordinal count anchored at 0001-01-01 (`CalendarDay.ordinalDay`) and its
+/// one instant conversion, `fireDate(hour:minute:in:)`, hard-codes
+/// `.gregorian`. So resolving a `CalendarDay`'s year/month/day through
+/// `Calendar.current` reads Gregorian numbers in whatever calendar the DEVICE
+/// is set to, and on a Buddhist device "2026-08-06" is read as year 2026 of the
+/// Buddhist era. Every day/instant conversion goes through this, and none of
+/// them takes a calendar parameter, so there is no seam left to get it wrong.
+///
+/// This is not a display choice. Rendering stays locale-aware: the instant is
+/// resolved here in Gregorian, and the formatter that prints it still shows it
+/// in the reader's own calendar.
+public let ottoDayCalendar = Calendar(identifier: .gregorian)
+
 extension CalendarDay {
-    /// The day rendered for display in the current calendar - formatting only;
-    /// billing arithmetic never touches `Date` (spec §4.1).
-    public func displayDate(calendar: Calendar = .current) -> Date? {
-        calendar.date(from: dateComponents)
+    /// The instant at which this calendar day begins, in the device's timezone.
+    /// Formatting only; billing arithmetic never touches `Date` (spec §4.1).
+    public func displayDate() -> Date? {
+        var calendar = ottoDayCalendar
+        calendar.timeZone = .current
+        return calendar.date(from: dateComponents)
     }
 
     /// The day as localized text, e.g. "Aug 15, 2026" in en-CA.
     public func displayText(
         style: Date.FormatStyle.DateStyle = .abbreviated,
-        calendar: Calendar = .current,
         locale: Locale = .current
     ) -> String {
-        guard let date = displayDate(calendar: calendar) else {
+        guard let date = displayDate() else {
             // Unreachable for a valid CalendarDay in the Gregorian calendar; the
             // numeric fallback keeps even an impossible failure legible.
             return "\(year)-\(month)-\(day)"
@@ -54,14 +71,13 @@ extension DisputeSummary {
     /// screenshot (spec §5.4, §7.1 screen 6). Every fact the summary holds, in
     /// sentence form, real formatters throughout.
     public func spokenText(
-        calendar: Calendar = .current,
         timeZone: TimeZone = .current,
         locale: Locale = .current
     ) -> String {
         let cancelled = markedCancelledAt.formatted(
             Date.FormatStyle(date: .abbreviated, timeZone: timeZone).locale(locale)
         )
-        let charge = chargeDate.displayText(calendar: calendar, locale: locale)
+        let charge = chargeDate.displayText(locale: locale)
         let amount = currencyText(cents: chargeAmountCents, currencyCode: currencyCode, locale: locale)
         var lines = [
             String(localized: "I cancelled my \(subscriptionName) subscription on \(cancelled)."),
