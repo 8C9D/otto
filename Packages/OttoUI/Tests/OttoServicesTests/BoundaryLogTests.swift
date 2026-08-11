@@ -60,21 +60,51 @@ struct BoundaryLogTests {
         let lines = try Self.boundaryLines(since: since)
         try OttoLogProbe.requireDelivered(lines)
 
-        func line(_ needle: String) throws -> String {
-            try #require(lines.last { $0.contains(needle) }, "nothing was logged for \(needle)")
+        // ANY line in the window carrying both parts, never `.last`.
+        //
+        // The first version of this test took the LAST line matching each
+        // prefix, and that is flaky by construction: `ExportServiceTests`,
+        // `SubscriptionFlowTests` and `VerificationFlowTests` exercise these
+        // same production paths, swift-testing runs suites in parallel, and
+        // `OSLogStore.position(date:)` reaches ~80 ms behind `since` - so the
+        // window legitimately holds siblings' lines and `.last` picked one of
+        // them. It passed in isolation and under `swift test` here, and failed
+        // in `verify.sh`'s clean clone, which is the only reason it was caught.
+        // Round 2 recorded exactly this shape for its first emission test.
+        //
+        // The claim is about the PRODUCTION statement, so a line emitted by a
+        // sibling exercising the same path is the same evidence - and deleting
+        // the statement removes every one of them, which is what the
+        // falsification measures.
+        func expectLine(_ needle: String, _ field: String, _ comment: Comment? = nil) {
+            #expect(
+                lines.contains { $0.contains(needle) && $0.contains(field) },
+                comment ?? "no \(needle) line in the window carried \(field)"
+            )
         }
 
-        #expect(try line("export kind=json").contains("subscriptions=1"))
-        #expect(try line("export kind=csv").contains("bytes="))
-        #expect(try line("import preview").contains("databaseEmpty=false"))
-        #expect(try line("import begin").contains("strategy=merge"))
-        #expect(try line("import end").contains("subscriptions="))
-        #expect(try line("cancellation started").contains(subscription.id.uuidString))
-        #expect(try line("verification answered").contains("chargesStopped=true"))
+        expectLine("export kind=json", "subscriptions=")
+        expectLine("export kind=csv", "bytes=")
+        expectLine("import preview", "databaseEmpty=")
+        expectLine("import begin", "strategy=merge")
+        expectLine("import end", "subscriptions=")
+        // These two carry an identifier, so they can be pinned to THIS
+        // subscription rather than to the category.
+        expectLine("cancellation started", subscription.id.uuidString)
+        expectLine("verification answered", subscription.id.uuidString)
+        #expect(
+            lines.contains {
+                $0.contains("verification answered")
+                    && $0.contains(subscription.id.uuidString)
+                    && $0.contains("chargesStopped=true")
+            }
+        )
 
         // The same privacy rule as every other category: opaque identifiers,
         // calendar days, counts and control-flow outcomes. Never what the user
-        // pays for, and never a file path.
+        // pays for, and never a file path. Asserted over EVERY line in the
+        // window rather than only this test's - a sibling breaking it would be
+        // the same defect in the same category.
         for entry in lines {
             #expect(!entry.contains("Zzyzx"))
             #expect(!entry.contains("999"))

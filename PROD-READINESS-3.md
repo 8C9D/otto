@@ -438,6 +438,21 @@ The flows logging pushed `SubscriptionFlowService.swift` past the 400-line `file
 
 **One query for both categories**, because a query costs seconds and four separate tests would have cost four.
 
+**This test was flaky by construction and `verify.sh` caught it, not the local suite.**
+Its first version took `lines.last { $0.contains(needle) }` for each prefix.
+`ExportServiceTests`, `SubscriptionFlowTests` and `VerificationFlowTests` exercise the same production paths, swift-testing runs suites in parallel, and `OSLogStore.position(date:)` reaches ~80 ms behind `since` - so the window legitimately holds siblings' lines and `.last` picked one of them.
+It passed in isolation, passed under `swift test`, and failed in the clean clone with three issues:
+
+```
+✘ try line("import preview").contains("databaseEmpty=false")
+✘ try line("cancellation started").contains(subscription.id.uuidString)
+✘ try line("verification answered").contains("chargesStopped=true")
+```
+
+Now it asks whether **any** line in the window carries both parts, and the two lines that carry an identifier are pinned to this subscription's UUID.
+The claim is about the production statement, so a sibling exercising the same path is the same evidence - and deleting the statement removes every one of them, which is what the falsification measures and what was re-measured after the change.
+Round 2 recorded this exact shape for its first emission test; this is its second occurrence, in the run that read the record.
+
 **What this does NOT do.** The trial, pause and usage flows stay unlogged - F11 named cancellation and verification, and widening further is scope this item did not measure. The view's routing of `.failed` to the alert has no test: nothing in the tree renders `SettingsView`, which is the residual round 2 recorded for `TodayView` and which is unchanged.
 
 ## ITEM 7 - R5-1, a snooze that scheduled nothing logged what a working one logs
