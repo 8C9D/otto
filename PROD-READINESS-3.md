@@ -24,8 +24,9 @@ All four reproduce the round-3 prompt's prediction exactly.
 Full output, provenance and the environment table are in `reviews-3/BASELINE-3.md`.
 
 **The standing risk was checked before any edit.**
-All four `OSLogStore(scope: .currentProcessIdentifier)` tests pass at HEAD, with neither the canary assertion nor the target-line `#require` firing - so the log daemon is delivering here and the production log statements are intact.
+All four `OSLogStore(scope: .currentProcessIdentifier)` tests pass at HEAD, with neither the target-line `#require` nor any canary assertion firing - so the log daemon is delivering here and the production log statements are intact.
 It stays in CANNOT ASSESS for CI runners only.
+**Corrected in stage 4**: only three of those four carry a canary. `MappingLogPrivacyTests` has none, so "the canary assertion did not fire" was vacuously true of it - see ITEM 5 and NEXT ROUND.
 
 ---
 
@@ -39,10 +40,10 @@ Everything else in round 1's and round 2's NEXT ROUND stays in NEXT ROUND.
 | 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | **RESOLVED as detection for 11 of 13 / DEFERRED as repair** - stage 2; the V3 freeze is NOT lifted |
 | 2 | **R0-9** | The migration guard cannot detect a missing stage | **RESOLVED** - stage 1 |
 | 3 | **F1's CI guard** | F1's four reading sites have no guard that runs on a Gregorian machine | **RESOLVED** - stage 3 |
-| 4 | **R4-2** | `NotificationCoordinator` compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome` | pending |
-| 5 | **R0-5** | A corrupt stored watermark becomes "no watermark", unlogged | pending |
-| 6 | **F11 remainder + R0-10(a)** | Import/export and cancellation/verification unlogged; `.fileImporter`'s `.failure` half dropped | pending |
-| 7 | **R5-1** | A snooze that scheduled nothing logs `handled` identically to one that worked | pending |
+| 4 | **R4-2** | `NotificationCoordinator` compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome` | **RESOLVED** - stage 4 |
+| 5 | **R0-5** | A corrupt stored watermark becomes "no watermark", unlogged | **RESOLVED** - stage 4 |
+| 6 | **F11 remainder + R0-10(a)** | Import/export and cancellation/verification unlogged; `.fileImporter`'s `.failure` half dropped | **RESOLVED** - stage 4 |
+| 7 | **R5-1** | A snooze that scheduled nothing logs `handled` identically to one that worked | **RESOLVED** - stage 4 |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded).
 There are no others.
@@ -61,11 +62,16 @@ Round 2's reviewers raised the missing row four consecutive times; the start is 
 | 0 | - (baseline only, `8f86c1f`) | - | no review |
 | 1 - R0-9 | `8806853..87d6508` | `87d6508` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-1.md`) |
 | 2 - R0-7 / N2-2 | `87d6508..e4f4872` | `e4f4872` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-2.md`) |
-| 3 - F1's CI guard | `e4f4872..` | pending | pending |
+| 3 - F1's CI guard | `e4f4872..b006d20` | `b006d20` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-3.md`) |
+| 4 - R4-2 + R0-5 + F11/R0-10(a) + R5-1 | `b006d20..` | pending | pending |
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read.
 That is round 2's arrangement, kept.
 Stage 1's remediation commits land **after** the reviewed head `87d6508` and are therefore inside stage 2's range, not orphaned between them - also round 2's arrangement.
+
+**Stage 4 groups items 4 through 7, disclosed rather than left to be noticed.**
+Process rule 5 permits grouping when items share a technique, and these four are one technique: making a path that failed silently say so - `onOutcome` on the background pass, a log line for an unreadable watermark, two log categories for the transfer and flow boundaries, and an `effect=` field on the action line. **One commit per item still holds**, and the ranges still chain, so no commit falls outside a review.
+Each stage's remediation commits land after its reviewed head and are therefore inside the next stage's range.
 
 **One commit outside every review range that has ever been issued, inherited rather than created here.**
 `reviews-3/REVIEW-1.md` finding 4 measured it: round 2's last review covered `5d8ed6a..3ce3e01`, and `aa92ca7` - a code commit - landed after it, with only `70f3f19` and `8806853` (both documents) between.
@@ -223,7 +229,21 @@ One is P1 and is a defect in this stage's own change; it is fixed here.
 
   **1.6% false positives on ordinary data**, in a ~64-day band, because Ethiopic 2018-11-30 *is* Gregorian 2026-08-06 - the collision is exact, not approximate.
   A false positive here silences reminders for a **working** subscription, which is a worse harm than the false negative it removes, and it lands on a shape as ordinary as "held since late 2018".
-  So the rule is not adopted. The measurement goes to NEXT ROUND with the design, so whoever picks it up starts from the constraint rather than from six clean fixtures.
+  So the rule is not adopted here.
+
+  **That 1.6% is a property of one parameter, and saying it without saying so overstated the objection** - `reviews-3/REVIEW-3.md` finding 3, re-derived independently by sweeping K:
+
+  ```
+  K(days) | false positives / 4001 ordinary anchors | sensitivity
+        1 |    3 / 4001  (0.07%)                    | 13/13
+        3 |    7 / 4001  (0.17%)                    | 13/13
+        7 |   15 / 4001  (0.37%)                    | 13/13
+       31 |   64 / 4001  (1.60%)                    | 13/13
+  ```
+
+  Sensitivity does not decay as the window narrows, so the trade at K=1 is **0.07%**, not 1.6%.
+  The objection survives in kind - the collision is exact, so no K removes it, and the harm is asymmetric - but it is an order of magnitude smaller than the number this ledger first quoted, and it does not settle the question the way that number implied.
+  Carried to NEXT ROUND with the sweep rather than with a single figure, so whoever picks it up evaluates the design rather than inheriting a verdict.
 
 - **Finding 2 (P2) - three of the four baseline measurements were absent from this section**, and the one number that moved (simulator 108 → 113) was the one nobody wrote down. All four are now recorded under "Baseline at the end of this stage" below. The narrative was organised around predict-then-measure-the-change, which is a stronger discipline than a baseline re-run and displaced it.
 - **Finding 3 (P3)** - the host total was 200, measured 201; the run's cumulative total is 576. Corrected above.
@@ -295,6 +315,159 @@ This stage adds a **fifth** such test, so it adds one more waiter on an unbounde
 That sharpens the CANNOT ASSESS entry rather than softening it.
 Taken anyway, and disclosed rather than buried: the alternative is a new log line with no executable guard, which is round 2's own R5-2 shipped again in the run whose item 7 is the same defect class.
 
+## ITEM 4 - R4-2, the coordinator nothing could reach, and the background pass that published nothing
+
+**RESOLVED**, stage 4.
+
+**Reconfirmed at HEAD by executing both halves.**
+Half (a): `rescheduleSoon` reverted to its pre-F3 shape - `guard let outcome = try? … else { return }`, dropping the failure entirely - and the whole tree run:
+
+```
+✔ Test run with 258 tests in 57 suites passed
+✔ Test run with 119 tests in 24 suites passed
+✔ Test run with 203 tests in 37 suites passed
+lint clean
+```
+
+580 tests green and `swiftlint --strict` clean with round 1's F3 fix deleted.
+Half (b): `awk` over `handleBackgroundRefresh`'s body returns **0** occurrences of `onOutcome`.
+A failed `BGAppRefreshTask` pass published nothing at all, so the store kept the last successful outcome and Today went on stating coverage.
+
+**What changed.**
+
+- **`handleBackgroundRefresh` publishes**, `onOutcome?(outcome)`, before the completion latch. Deliberately before: whether the OS has already reclaimed the task is bookkeeping about the *task*, and says nothing about whether the pass produced a result the UI should stop trusting.
+- **`BackgroundRefreshTask`**, a two-member protocol over `expirationHandler` and `setTaskCompleted(success:)`, with `extension BGAppRefreshTask: BackgroundRefreshTask {}`. `BGAppRefreshTask` has no public initializer, so this is what makes the background path drivable at all. The seam sits at the **system boundary**, not above the handler, so a fake cannot mock away the logic under test - the same rule `UserNotificationCentering` was built to.
+- **`appDidBecomeActive()` and `handleBackgroundRefresh` return their `Task`**, `@discardableResult`. The pass ran detached with no handle, so even on a simulator there was nothing to await and any test would have been a race. The app target discards the result and is unchanged; `rescheduleSoon` drops `private` for the same reason.
+- **`OttoUITests` gains `OttoServices`** as a direct dependency (`Package.swift`), because the coordinator is inside `#if os(iOS)` and its tests can only live in the simulator-hosted target.
+
+**Five tests, in the target that can actually run them.**
+`NotificationCoordinatorTests` is `#if os(iOS)` and UIKit-hosted like `DynamicTypeTests`, so it runs on the simulator and compiles to nothing under host `swift test` - which is why `verify.sh`'s total does not move and the simulator's does.
+This is the carry-over `docs/next-wave.md` records as "simulator-hosted `NotificationCoordinator` tests".
+
+**Falsified, three ways, each against the wiring rather than a helper:**
+
+| what was broken | result |
+|---|---|
+| `onOutcome?(outcome)` removed from `handleBackgroundRefresh` | 4 issues across 2 tests: `(published.count → 0) == 1` on both the healthy and the failed background pass |
+| `rescheduleSoon` back to its pre-F3 shape - **the exact revert R4-2 says leaves everything green** | 2 issues: `(published.count → 0) == 1` and `(published → []).first → nil` |
+| the `completion.claim()` guard removed from the expiration handler | `(task.completions → [false, true]) == [false]` |
+
+The second row is the finding closed: that revert used to be invisible and now fails.
+The third is a bonus - `CompletionLatch` had no test either, and the failure it produces is the double `setTaskCompleted` observed on the device during Gate 2 (`path=expiration` at 22:02:05.985 followed by `path=normal` at 22:02:06.028).
+
+**What this does NOT do.**
+
+- **`start()` is still unreachable.** It calls `BGTaskScheduler.shared.register` and `UNUserNotificationCenter.current()`, neither of which a test bundle can safely touch, so the registration itself and the two `NotificationCenter` observers it installs remain untested. The timezone and significant-time-change triggers therefore still have no test; what is now covered is the pass they run.
+- **The `UNUserNotificationCenterDelegate` half is untested.** `willPresent` and `didReceive` need real `UNNotification` / `UNNotificationResponse` values, which have no public initializers - the same wall `LiveNotificationClient`'s own seam comment records.
+- **It proves nothing about the real daemon.** `BGAppRefreshTask` behaviour on a device stays in CANNOT ASSESS; what is proved is Otto's own handler body against a fake task.
+
+**Cost.** Five simulator tests, ~0.03 s. The simulator suite's third bucket goes 31 → 36; host totals are unchanged, because none of this compiles on a mac host.
+
+## ITEM 5 - R0-5, a corrupt watermark reads as no watermark, unlogged
+
+**RESOLVED**, stage 4.
+
+**Reconfirmed at HEAD by executing the defect** against a real device store:
+
+```
+PROBE absent             -> nil
+PROBE corrupt(20260230)  -> nil
+PROBE corrupt(0)         -> nil
+PROBE same as absent?    true
+```
+
+Three different states, one answer, no log.
+A nil watermark sends `materializeEvents` back to today, so the rows between the last real charge and today are silently never created - F6's exact signature, reached by a third route with nothing written down.
+
+**And it is not hypothetical.**
+`OttoMigrationPlan.swift:242,247` carries `lastMaterializedThrough` out of the V2 column into the device store **without validating it**, so a corrupt V2 value arrives intact. The only other writer packs a validated `CalendarDay`.
+
+**What changed - three things, all in the persistence layer, no schema.**
+
+- **Absent and unreadable are distinguished, and the unreadable one is logged.** `OttoStore.watermarkDay(in:for:)` names the subscription and the offending packed value. The value is logged in the clear: a calendar day is exactly what `OttoLog` permits, and which impossible date it is - Feb 30 versus zero versus garbage - is the whole diagnosis.
+- **The row is chosen by minimum, not by `rows.first`.** There is no unique constraint (CloudKit forbids one) and the fetch is unsorted, so `first` was a coin toss between duplicates. The minimum is deterministic and is the direction §5.3 already requires.
+- **An unreadable value can no longer pin a reconstruction to itself.** `reconstructWatermarksNow`'s v2.5 cap is a `min` over **raw Ints**, and zero is smaller than every real packed day - so a corrupt row survived every reconstruction and the subscription could never recover. The cap now considers only values that parse.
+
+**A corrupt value still reads as nil**, and that is deliberate: there is nothing safe to invent from it, and guessing later would vouch for rows that may not exist. What changed is that it is no longer silent.
+
+**Falsified.**
+
+| what was reverted | result |
+|---|---|
+| the read back to `rows.first?.…flatMap(CalendarDay.init(yyyymmdd:))` | 2 issues: the log line `→ nil`, and `read == (try day(2026, 6, 1))` - the duplicate-row case, which proves `first` was nondeterministic |
+| the cap's validation removed from `reconstructWatermarksNow` | 1 issue: the reconstruction stays pinned at the corrupt value instead of recovering to the anchor |
+
+**A discrepancy in round 2's record, found here.**
+`PROD-READINESS-2.md` states that each of the four `OSLogStore` tests "emits a canary line and checks for it in the same query".
+Measured: `grep -rn "requireDelivered"` finds it in the three OttoUI tests and **not** in `MappingLogPrivacyTests`, the persistence one, which has no canary at all.
+On a runner where the store is readable but empty it fails at `#expect(!ours.isEmpty, "the store logged nothing for the record it skipped")` - byte-identical to the regression signature the canary exists to disambiguate.
+This run adds the missing probe for its **own** persistence test rather than rewriting round 2's; the gap in `MappingLogPrivacyTests` goes to NEXT ROUND.
+It also corrects this ledger's own Baseline paragraph, which said "neither the canary assertion nor the target-line `#require` firing" - true of three tests, and of the fourth only because it has no canary assertion to fire.
+
+**Cost.** Four tests; the log-reading one is ~11 s, which makes six `OSLogStore` readers in the tree.
+
+## ITEM 6 - F11's remainder and R0-10(a), the boundaries that recorded nothing
+
+**RESOLVED**, stage 4.
+
+**Reconfirmed at HEAD.**
+`OttoLog` defined exactly three categories, and neither `ExportService` nor `SubscriptionFlowService` referenced any of them; `.fileImporter`'s handler was `if case .success(let url) = result`, with the `.failure` half falling off the end.
+
+**What changed.**
+
+- **Two categories**: `transfer` (import/export) and `flows` (§5.4 cancellation and verification).
+- **`ExportService`** logs both exports with counts and byte sizes, the preview with its counts and whether the database was empty, and the import as a **begin/end pair** around the restore, plus an explicit failure line. The pair is the point: a begin with no end is exactly the state Gate 3 had to reconstruct by copying the container off the device.
+- **`SubscriptionFlowService`'s cancellation half** logs every exit - started, refused with a reason, abandoned with the day the watermark rewound to, and both verification answers with what they did.
+- **R0-10(a)**: `importPickerOutcome(of:)` classifies the picker result into `.selected` / `.cancelled` / `.failed`, logs it, and the view routes a real failure to **the alert that was already there** (`SettingsView.swift`'s "Nothing was imported"). A dismissed picker stays silent - whether SwiftUI reports it as `CocoaError.userCancelled` or as no callback at all is a framework detail, so both are handled and only the real failure interrupts the user.
+
+**Never a file name, never an amount, never a vendor.**
+An export lands under a dated Otto filename but the same helper writes wherever it is told, and an import path is whatever the user picked - a path can carry their name or the vendor's. The guard asserts the absence: no line in the window contains the fixture's vendor name, its amount, a currency symbol, or a `/`.
+
+**The classification lives in `OttoServices`, not in the view**, because the view's handler is inside a `private struct` nothing can call, and an unreachable decision is an unguarded one - the lesson round 2 relearned three times.
+
+**A file was split rather than a lint rule relaxed.**
+The flows logging pushed `SubscriptionFlowService.swift` past the 400-line `file_length`; the §5.4 cancellation and verification methods moved to `SubscriptionFlowService+Cancellation.swift`, the seam being the lifecycle they share against the trial/pause/usage edits left behind. `subscriptions` and `billingEvents` lose `private`, which is file-scoped, exactly as `cancellations` already had.
+
+**Falsified.**
+
+| what was broken | result |
+|---|---|
+| the `import begin`/`end` lines deleted | `lines.last { $0.contains(needle) } → nil` |
+| the `cancellation started` line deleted | same, at the same assertion |
+| `importPickerOutcome` made to treat every failure as a cancel | `(failed → .cancelled) != .cancelled` fails, and the `.failed` case check records an issue |
+
+**One query for both categories**, because a query costs seconds and four separate tests would have cost four.
+
+**What this does NOT do.** The trial, pause and usage flows stay unlogged - F11 named cancellation and verification, and widening further is scope this item did not measure. The view's routing of `.failed` to the alert has no test: nothing in the tree renders `SettingsView`, which is the residual round 2 recorded for `TodayView` and which is unchanged.
+
+## ITEM 7 - R5-1, a snooze that scheduled nothing logged what a working one logs
+
+**RESOLVED**, stage 4.
+
+**Reconfirmed at HEAD.**
+`snooze` has two non-throwing early returns - `guard let subscription … else { return }` and the evening-slot guard - and both reached `handle`'s success branch, so `handled action=otto.action.remindLater id=…` was emitted whether or not a reminder existed afterwards. Only `snoozesSpared=` in a different category contradicted it, indirectly.
+
+**What changed.**
+`NotificationActionEffect` - `scheduled`, `noSubscription`, `deadlinePassed`, `unroutable`, `notApplicable` - returned alongside the follow-up and rendered as `effect=` on the `handled` line.
+
+**Neither early return is a failure**, and calling one a failure would tell the user their answer was lost when it was not: the remaining ladder is the coverage. They simply are not the same event, and the line said they were.
+
+**`unroutable` is included because the fix would otherwise introduce a new false claim.**
+`route`'s first guard returns `.none` for an identifier that does not parse. Labelling that `notApplicable` would assert the action was handled and had nothing to schedule, when nothing was routed at all.
+
+**An existing assertion was strengthened, deliberately.**
+`aHandledActionIsRecorded` ended at "the line exists". That expectation encoded the defect - the same line was emitted by a snooze that worked and one that did nothing - so it now also requires `effect=scheduled`. No test was skipped, disabled or weakened.
+
+**Falsified.**
+
+| what was broken | result |
+|---|---|
+| `effect=` removed from the `handled` line | 4 issues across 3 tests |
+| `snooze` made to report `.scheduled` unconditionally | `(didNothing → "… effect=scheduled").contains("effect=noSubscription")` |
+
+**What this does NOT do.**
+The `deadlinePassed` branch has no test. Reaching it needs a snooze on the cancel-by day after the evening slot has passed, which the fixture clock makes awkward to arrange, and the branch is one `guard` beside the one that is covered. Stated rather than papered over; NEXT ROUND.
+
 ## ITEM 3 - F1's reading sites have no guard that runs on a Gregorian machine
 
 **RESOLVED**, stage 3.
@@ -351,6 +524,23 @@ A regex cannot see an *implicit* device calendar.
 Nor can it check that `conversionCalendar` is still Gregorian - that is `CalendarEraViewTests`' job, and it needs the non-Gregorian harness.
 
 **Cost.** Two tests, ~0.015 s. No suite time change.
+
+### Remediation after `reviews-3/REVIEW-3.md`
+
+PASS-WITH-FINDINGS over nine findings, two of them P2 against this stage and one against stage 2.
+The remediation commits land after the reviewed head `b006d20` and are therefore inside stage 4's range.
+
+- **Finding 1 (P2) - the rule could not see the spelling a real regression would use.**
+  The regex required the type name, and **four of the five protected sites are `calendar: Calendar = …` default parameters**, where Swift resolves a bare `.current`. Reproduced before fixing: rewriting `DisplayFormatting`'s three defaults to `calendar: Calendar = .current` left `swiftlint --strict` **clean**. That is two tokens away from the `timeZone: TimeZone = .current` sitting on the same signatures, and it includes `CalendarDayBinding.asDate`, the DatePicker **write** path.
+  The regex now carries three alternatives - `Calendar.current`, `: Calendar = .current`, and `Locale.current.calendar`, which reaches the device calendar without naming `Calendar` at all.
+  Re-falsified: each of the three spellings substituted into `DisplayFormatting` produces **3 violations**, and the five doc comments that name `Calendar.current` deliberately are still clean.
+  **Why it was missed**: every falsification reverted a site to the literal string the rule was written from, so the rule and its tests shared one premise - the same shape as stage 1's finding 1 and stage 2's finding 1, three stages running.
+- **Finding 2 (P2) - `reviews-3/REVIEW-2.md` finding 6 was recorded closed and half of it was not.**
+  The dedup/order test's fixture used a last-used date **equal** to the anchor, so the result deduplicated to an already-sorted pair and `.sorted()` was still unguarded: deleting it left all 258 domain tests green. Reproduced, then fixed by moving the last-used date **earlier** than the anchor, which is where field order and day order disagree. Now `.sorted()` removed gives `[2569-08-06, 2569-08-20, 2569-07-01]` against the expected order, and the `Set` removed gives 4 elements against 3.
+- **Finding 3 (P2) - the number rejecting the `createdAt` alternative was a property of one parameter.** Corrected under ITEM 1 with the full K sweep.
+- **Six P3s**, routed: the stage-3 baseline table is now recorded below (it was missing, and the ledger's only table was stale); "Reconfirmed at HEAD" was measured at `e4f4872` rather than `b006d20` and reproduces there exactly; `#expect(caught >= 10)` against a measured 11 leaves one slot of slack in the hand-maintained identifier list, and the YAML comment names three of the five protected files - both carried to NEXT ROUND rather than churned here.
+
+The reviewer also confirmed, by measuring hour/minute round trips in nine calendars, that the `SettingsView` → `SettingsStore` move is behaviour-preserving, and that a lint-blind revert of it is caught under the non-Gregorian harness.
 
 ## ITEM 2 - R0-9, the migration guard cannot detect a missing stage
 

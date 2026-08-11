@@ -96,6 +96,80 @@ struct NotificationActionLogTests {
         )
         #expect(line.hasPrefix("handled "))
         #expect(!line.contains("FAILED"))
+        // STRENGTHENED for R5-1. This assertion pair used to end at "the line
+        // exists", and that expectation encoded the defect: the same line was
+        // emitted by a snooze that scheduled a reminder and by one that
+        // scheduled nothing at all. This snooze DID schedule.
+        #expect(line.contains("effect=scheduled"))
+    }
+
+    /// R5-1. `snooze`'s two non-throwing early returns reached the success
+    /// branch, so "Remind me later" logged `handled action=otto.action.remindLater`
+    /// identically whether or not a reminder existed afterwards. Only
+    /// `snoozesSpared=` in a different category contradicted it, indirectly.
+    ///
+    /// One query for both halves, because a query costs seconds: the
+    /// discriminating assertion is that the two lines DIFFER.
+    @Test("⛔ a snooze that scheduled nothing does not log what a snooze that worked logs")
+    func aSnoozeThatScheduledNothingSaysSo() async throws {
+        let fixture = SchedulerFixture()
+        let (subscription, trial) = try await seedTrial(fixture.subscriptions)
+        let workingIdentifier = NotificationPlanIdentifier.planned(
+            PlannedReminder(
+                subscriptionID: subscription.id, day: trial.cancelByDate, kind: .trialDayOfMorning
+            )
+        )
+        // A rung whose subscription is gone: `snooze`'s first early return.
+        // The identifier still parses, so the action routes and reaches it.
+        let orphanIdentifier = NotificationPlanIdentifier.planned(
+            PlannedReminder(
+                subscriptionID: try fixtureUUID(4_242), day: trial.cancelByDate, kind: .trialDayOfMorning
+            )
+        )
+
+        let since = Date()
+        OttoLogProbe.emitCanary(to: OttoLog.actions)
+        for identifier in [workingIdentifier, orphanIdentifier] {
+            _ = try await fixture.handler.handle(
+                actionIdentifier: NotificationAction.remindLater.rawValue,
+                notificationIdentifier: identifier,
+                now: try fixtureNow(), today: try day(2026, 8, 6), timeZone: torontoZone
+            )
+        }
+
+        let lines = try Self.actionLogLines(since: since)
+        try OttoLogProbe.requireDelivered(lines)
+        let worked = try #require(lines.last { $0.contains(workingIdentifier) })
+        let didNothing = try #require(lines.last { $0.contains(orphanIdentifier) })
+
+        // Both are `handled` - neither is a failure, and calling the second one
+        // a failure would tell the user their answer was lost when it was not.
+        #expect(worked.hasPrefix("handled "))
+        #expect(didNothing.hasPrefix("handled "))
+        // And they are no longer the same event.
+        #expect(worked.contains("effect=scheduled"))
+        #expect(didNothing.contains("effect=noSubscription"))
+    }
+
+    @Test("an identifier that does not parse is not reported as an action that did nothing applicable")
+    func anUnroutableIdentifierSaysSo() async throws {
+        let fixture = SchedulerFixture()
+        _ = try await seedTrial(fixture.subscriptions)
+
+        let since = Date()
+        OttoLogProbe.emitCanary(to: OttoLog.actions)
+        _ = try await fixture.handler.handle(
+            actionIdentifier: NotificationAction.remindLater.rawValue,
+            notificationIdentifier: "not-an-otto-identifier",
+            now: try fixtureNow(), today: try day(2026, 8, 6), timeZone: torontoZone
+        )
+
+        let lines = try Self.actionLogLines(since: since)
+        try OttoLogProbe.requireDelivered(lines)
+        let line = try #require(lines.last { $0.contains("not-an-otto-identifier") })
+        // Adding `effect=` to this line would have introduced a NEW false claim
+        // if this branch reported `notApplicable`: nothing was routed at all.
+        #expect(line.contains("effect=unroutable"))
     }
 
     /// Every `actions` line this process emitted since `since`.

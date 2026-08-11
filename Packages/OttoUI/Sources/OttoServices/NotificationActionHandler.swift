@@ -14,6 +14,31 @@ public enum NotificationActionFollowUp: Hashable, Sendable {
     case openCancellation(subscriptionID: UUID, url: URL?)
 }
 
+/// What the routed action actually DID, for the `handled` line (R5-1).
+///
+/// `snooze` has two non-throwing early returns - the subscription is gone, and
+/// every remaining slot on the deadline day is already behind `now` - and both
+/// reached the success branch, so a "Remind me later" that produced no reminder
+/// logged `handled action=otto.action.remindLater` exactly like one that
+/// worked. Neither is a failure: the remaining ladder is the coverage, and
+/// throwing would tell the user their answer was lost when it was not. But they
+/// are not the same event, and the log said they were.
+///
+/// Control-flow outcomes only, which is what this category already permits.
+enum NotificationActionEffect: String {
+    /// A snooze reminder was added to the notification centre.
+    case scheduled
+    /// The subscription no longer exists, so there was nothing to snooze.
+    case noSubscription
+    /// Every remaining slot before the deadline has passed; the ladder already
+    /// standing is the coverage.
+    case deadlinePassed
+    /// The notification identifier did not parse, so nothing was routed.
+    case unroutable
+    /// The action does not schedule anything - every non-snooze branch.
+    case notApplicable
+}
+
 /// Handles notification action responses (spec §6.4). Every path is safe to run
 /// twice - the system can redeliver - and none of them requires the UI: state
 /// changes happen against the repositories, and the follow-up tells a foregrounded
@@ -60,16 +85,22 @@ public actor NotificationActionHandler {
         // unchanged - this observes, it does not handle.
         let action = actionIdentifier.isEmpty ? "default" : actionIdentifier
         do {
-            let followUp = try await route(
+            let routed = try await route(
                 actionIdentifier: actionIdentifier,
                 notificationIdentifier: notificationIdentifier,
                 now: now, today: today, timeZone: timeZone
             )
+            // `effect=` is R5-1. Without it this line said only that the
+            // handler ran, so a snooze that scheduled nothing and one that
+            // scheduled a reminder were the same entry in the log - and the
+            // only thing that contradicted it was `snoozesSpared=` in a
+            // different category, indirectly.
             OttoLog.actions.notice("""
                 handled action=\(action, privacy: .public) \
-                id=\(notificationIdentifier, privacy: .public)
+                id=\(notificationIdentifier, privacy: .public) \
+                effect=\(routed.effect.rawValue, privacy: .public)
                 """)
-            return followUp
+            return routed.followUp
         } catch {
             OttoLog.actions.error("""
                 action FAILED - the user's answer was not recorded \
@@ -87,21 +118,24 @@ public actor NotificationActionHandler {
         now: Date,
         today: CalendarDay,
         timeZone: TimeZone
-    ) async throws -> NotificationActionFollowUp {
+    ) async throws -> (followUp: NotificationActionFollowUp, effect: NotificationActionEffect) {
         guard let subscriptionID = NotificationPlanIdentifier.subscriptionID(of: notificationIdentifier) else {
-            return .none
+            // An identifier the app could not parse routed nothing at all, and
+            // reporting that as `notApplicable` would be a new false claim
+            // introduced by the field that exists to remove one.
+            return (.none, .unroutable)
         }
         switch NotificationAction(rawValue: actionIdentifier) {
         case .keepingIt:
             try await flows.acknowledgeCurrentCharge(subscriptionID: subscriptionID, now: now, today: today)
             _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
-            return .none
+            return (.none, .notApplicable)
         case .cancelling:
             guard let start = try await flows.startCancellation(
                 subscriptionID: subscriptionID, now: now, today: today
-            ) else { return .none }
+            ) else { return (.none, .notApplicable) }
             _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
-            return .openCancellation(subscriptionID: subscriptionID, url: start.cancellationURL)
+            return (.openCancellation(subscriptionID: subscriptionID, url: start.cancellationURL), .notApplicable)
         case .chargesStopped:
             // The verification yes-path (spec §5.4): verify and archive, all
             // background-safe - answering must succeed with the phone in a pocket.
@@ -109,7 +143,7 @@ public actor NotificationActionHandler {
                 subscriptionID: subscriptionID, chargesStopped: true, now: now, today: today
             )
             _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
-            return .none
+            return (.none, .notApplicable)
         case .stillCharging:
             // The no-path: the state work is background-safe, and the action is
             // foreground-registered so the dispute summary is on screen the
@@ -118,30 +152,30 @@ public actor NotificationActionHandler {
                 subscriptionID: subscriptionID, chargesStopped: false, now: now, today: today
             )
             _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
-            return .openDetail(subscriptionID: subscriptionID)
+            return (.openDetail(subscriptionID: subscriptionID), .notApplicable)
         case .stillUsing:
             // The §7.3 yes-path: record the use, background-safe, and let the
             // reschedule move the next check-in a cadence out.
             try await flows.recordUsage(subscriptionID: subscriptionID, on: today, now: now)
             _ = try await scheduler.reschedule(now: now, today: today, timeZone: timeZone, trigger: .notificationAction)
-            return .none
+            return (.none, .notApplicable)
         case .notUsing:
             // The other path opens the facts; deciding what to do with an
             // unused subscription is the user's call, never Otto's.
-            return .openDetail(subscriptionID: subscriptionID)
+            return (.openDetail(subscriptionID: subscriptionID), .notApplicable)
         case .remindLater:
-            try await snooze(
+            let effect = try await snooze(
                 subscriptionID: subscriptionID,
                 notificationIdentifier: notificationIdentifier,
                 now: now,
                 today: today,
                 timeZone: timeZone
             )
-            return .none
+            return (.none, effect)
         case nil:
             // The plain tap: open the subscription. A delivery or interaction is
             // also a reschedule trigger (spec §6.2), which the caller performs.
-            return .openDetail(subscriptionID: subscriptionID)
+            return (.openDetail(subscriptionID: subscriptionID), .notApplicable)
         }
     }
 
@@ -157,9 +191,9 @@ public actor NotificationActionHandler {
         now: Date,
         today: CalendarDay,
         timeZone: TimeZone
-    ) async throws {
+    ) async throws -> NotificationActionEffect {
         guard let subscription = try await subscriptions.subscription(withID: subscriptionID) else {
-            return
+            return .noSubscription
         }
         let deadline = snoozeDeadline(
             for: notificationIdentifier, subscription: subscription, today: today
@@ -178,7 +212,7 @@ public actor NotificationActionHandler {
             minute = policy.eveningMinute
             guard let atEvening = target.fireDate(hour: hour, minute: minute, in: timeZone),
                   atEvening > now
-            else { return }
+            else { return .deadlinePassed }
         }
 
         let kind = snoozedKind(of: notificationIdentifier)
@@ -203,6 +237,7 @@ public actor NotificationActionHandler {
             isTimeSensitive: kind.isTimeSensitive,
             categoryIdentifier: NotificationCategory.actionable
         ))
+        return .scheduled
     }
 
     /// The date a snooze must never pass: the cancel-by date for trial reminders,
