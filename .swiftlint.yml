@@ -56,7 +56,13 @@ line_length:
 custom_rules:
   device_calendar_outside_conversion_seam:
     name: "Device calendar in a day/instant conversion"
-    regex: '\bCalendar\s*\.\s*(?:current|autoupdatingCurrent)\b'
+    # Three spellings, because the first alone was blind to the likeliest one.
+    # Four of the five protected sites take `calendar: Calendar = ...`, and in a
+    # typed position Swift resolves a bare `.current` - two tokens away from the
+    # `timeZone: TimeZone = .current` sitting on the same signature. The third
+    # alternative closes `Locale.current.calendar`, which reaches the device
+    # calendar without naming `Calendar` at all.
+    regex: '\bCalendar\s*\.\s*(?:current|autoupdatingCurrent)\b|:\s*Calendar\s*=\s*\.\s*(?:current|autoupdatingCurrent)\b|\bLocale\s*\.\s*(?:current|autoupdatingCurrent)\s*\.\s*calendar\b'
     included:
       - ".*/Packages/[^/]+/Sources/.*"
       - ".*/Otto/.*\\.swift"

@@ -189,19 +189,24 @@ struct StoredDayPlausibilityTests {
     @Test("⛔ the reported days are deduplicated and in day order")
     func reportedDaysAreDedupedAndSorted() throws {
         let today = try day(2026, 8, 11)
-        // Ordinary shapes: a trial that started on the anchor, and a last-used
-        // date equal to it. Both are reachable, and the result is what a
-        // reader repairing the record actually sees in the log line.
+        // Ordinary shapes: a trial that started on the anchor (a duplicate), and
+        // a last-used date EARLIER than it. The order matters - `lastUsedDate`
+        // is appended last, so an unsorted result ends with the earliest day.
+        // An earlier version of this test used a last-used date equal to the
+        // anchor, which deduplicated to an already-sorted pair and left
+        // `.sorted()` unguarded: deleting it kept all 258 domain tests green
+        // (`reviews-3/REVIEW-3.md` finding 2).
         let anchor = try day(2569, 8, 6)
         let trial = try makeTrialTerm(startDate: anchor, lengthDays: 14)
         let subscription = try makeSubscription(
-            status: .trial, cycleStartDay: anchor, trial: trial, lastUsedDate: anchor
+            status: .trial, cycleStartDay: anchor, trial: trial, lastUsedDate: try day(2569, 7, 1)
         )
         let reported = subscription.implausibleStoredDays(asOf: today)
 
-        // The anchor, the trial start and the last-used date are the same day
-        // and must be named once; the derived conversion date is a second.
-        #expect(reported == [try day(2569, 8, 6), try day(2569, 8, 20)])
+        // The anchor and the trial start are the same day and must be named
+        // once; the derived conversion date and the last use are two more, in
+        // day order rather than in field order.
+        #expect(reported == [try day(2569, 7, 1), try day(2569, 8, 6), try day(2569, 8, 20)])
         #expect(reported == reported.sorted())
         #expect(Set(reported).count == reported.count)
     }
