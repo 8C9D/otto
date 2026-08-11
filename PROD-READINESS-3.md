@@ -37,7 +37,7 @@ Everything else in round 1's and round 2's NEXT ROUND stays in NEXT ROUND.
 | # | id | what | terminal state |
 |---|---|---|---|
 | 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | pending |
-| 2 | **R0-9** | The migration guard cannot detect a missing stage | pending |
+| 2 | **R0-9** | The migration guard cannot detect a missing stage | **RESOLVED** - stage 1 |
 | 3 | **F1's CI guard** | F1's four reading sites have no guard that runs on a Gregorian machine | pending |
 | 4 | **R4-2** | `NotificationCoordinator` compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome` | pending |
 | 5 | **R0-5** | A corrupt stored watermark becomes "no watermark", unlogged | pending |
@@ -58,8 +58,11 @@ Round 2's reviewers raised the missing row four consecutive times; the start is 
 
 | stage | range passed to the reviewer | reviewed head | verdict |
 |---|---|---|---|
-| 0 | - (baseline only) | - | no review |
+| 0 | - (baseline only, `8f86c1f`) | - | no review |
 | 1 - R0-9 | `8806853..` | pending | pending |
+
+Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read.
+That is round 2's arrangement, kept.
 
 ---
 
@@ -75,6 +78,51 @@ Recorded as they are made; this list is complete at the end of the run.
 3. **Release configuration behaves as Debug** except where a finding says otherwise.
    No Release build was produced this run.
 4. **`8806853` is the intended starting point** and neither prior branch is to be merged, rebased or pushed by this run.
+
+## ITEM 2 - R0-9, the migration guard cannot detect a missing stage
+
+**RESOLVED**, stage 1.
+
+**Reconfirmed at HEAD by executing the defect, not by reading the citation.**
+`reviews/REVIEW-0.md:276` claims that appending `OttoSchemaV4` to `schemas` and pointing `mainSchema` at it, with no stage, leaves the suite green.
+Done exactly that: a throwaway `OttoSchemaV4` carrying V3's models, `OttoMigrationPlan.schemas` extended to four entries, `OttoContainerFactory.mainSchema` repointed, `stages` untouched at two.
+
+```
+✔ Test run with 118 tests in 24 suites passed after 22.407 seconds.
+```
+
+Green, with a four-version plan carrying two stages.
+The probe was then removed and the two sources restored from the index before the fix was written.
+
+**What changed.**
+One test, `stagesChainTheSchemas`, in the file that already owns this contract.
+No production change: the plan is correct today, and what was missing was anything that would notice when it stopped being.
+
+**It asserts the chain, not the count.**
+`reviews/REVIEW-0.md` proposes `stages.count == schemas.count - 1`.
+That catches the forgotten stage and nothing else - a stage added and wired wrong (`V2 → V4`, a duplicate, a reordering) satisfies the arithmetic while leaving a version no stage reaches.
+`MigrationStage` publishes no accessor for its endpoints, but its payload reflects as `(fromVersion, toVersion)` for both `.lightweight` and `.custom`, so the guard walks the stages against the schema list and asserts each hop connects version *n* to version *n+1*.
+
+**The reflection fails closed, which is the whole design.**
+Reading a framework enum's payload by `Mirror` is exactly the kind of guard that can stop guarding without failing - this file's own header records that happening once, to a version-pinned reference that stayed green through Wave 6A.
+So an extraction that finds nothing returns nil and the caller records an issue naming that cause, rather than skipping the stage.
+
+**Falsified in three directions**, because the count half and the chain half and the extraction each have to be load-bearing on their own:
+
+| what was changed | result |
+|---|---|
+| V4 appended, `mainSchema` repointed, **no stage** (the R0-9 reproduction verbatim) | `Expectation failed: (stages.count → 2) == (versions.count - 1 → 3)` |
+| V4 appended **with a wrong stage**, `V2 → V4`, so the count is now right | `Expectation failed: (hop.fromVersion → 2.0.0) == (versions[index] → 3.0.0)` - the case a count assertion passes |
+| the payload labels renamed `fromVersion`/`toVersion` → `fromV`/`toV`, simulating an SDK rename | `Expectation failed: … .versions(of: stage → .custom(fromVersion: OttoPersistence.OttoSchemaV1, …)) → nil` |
+
+The second row is the one that justifies the extra machinery: it is a real mistake, it is invisible to the assertion the finding proposed, and it ships a migration that skips a version.
+
+**Cost.** One test, ~0.001 s.
+The OttoPersistence suite goes from 118 to 119 tests.
+
+**What this does NOT do.**
+It relates `stages` to `schemas` and nothing further: a stage that connects the right two versions but carries a `willMigrate`/`didMigrate` that does the wrong thing, or nothing, still passes.
+Proving a stage's *body* correct is what `MigrationTests` and `WatermarkRelocationMigrationTests` are for, and adding a version means adding a case there too.
 
 ## CANNOT ASSESS
 
