@@ -70,6 +70,56 @@ extension SerializedPersistenceTests {
         #expect(try await rebuilt.events(forSubscription: try fixtureUUID(1)).count == 1)
     }
 
+    /// R3-1's store half, so the policy assertion in `ExportServiceTests` is not
+    /// the only evidence. An ALL-TOMBSTONED database is not `isEmpty`, so the UI
+    /// asks merge-or-replace and the user can answer Merge - and `.keep` then
+    /// leaves the restored subscription with no watermark, which is F6 exactly,
+    /// one prompt later. Both policies are asserted on the same input, because
+    /// "reconstruct produced a watermark" means nothing unless "keep"
+    /// demonstrably does not.
+    @Test("⛔ restoring into an ALL-TOMBSTONED store: reconstruct gives a watermark, keep leaves it nil")
+    func restoreIntoAllTombstonedStoreReconstructsWatermarks() async throws {
+        let imported = try await { () async throws -> OttoDataSnapshot in
+            let (source, _) = try makeStore()
+            let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+            try await source.save(subscription)
+            try await source.save(try makeBillingEvent(
+                index: 101, subscriptionID: subscription.id, expectedDate: try day(2026, 6, 15)
+            ))
+            return try await source.completeSnapshot()
+        }()
+
+        /// A store holding records that are all tombstoned - deleted by hand,
+        /// then left. Not `isEmpty`, and no ledger progress worth keeping.
+        func allTombstonedStore() async throws -> OttoStore {
+            let (store, _) = try makeStore()
+            let doomed = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+            try await store.save(doomed)
+            try await store.deleteSubscription(withID: doomed.id, at: Date(timeIntervalSince1970: 9_000))
+            let snapshot = try await store.completeSnapshot()
+            #expect(!snapshot.isEmpty)
+            #expect(snapshot.hasNoLiveRecords)
+            return store
+        }
+
+        // .keep on an all-tombstoned store: the watermark the resurrection
+        // needs is never written.
+        let kept = try await allTombstonedStore()
+        try await kept.restore(imported, at: Date(timeIntervalSince1970: 11_000), watermarks: .keep)
+        #expect(try await kept.materializationWatermark(forSubscription: try fixtureUUID(1)) == nil)
+
+        // .reconstruct on the same input: the latest live imported row.
+        let rebuilt = try await allTombstonedStore()
+        try await rebuilt.restore(
+            imported, at: Date(timeIntervalSince1970: 11_000), watermarks: .reconstruct
+        )
+        #expect(
+            try await rebuilt.materializationWatermark(forSubscription: try fixtureUUID(1))
+                == (try day(2026, 6, 15))
+        )
+        #expect(try await rebuilt.subscriptions().count == 1)
+    }
+
     /// R0-6. `reconstructWatermarksNow` deletes every watermark row and then
     /// rebuilt one only for subscriptions that were live AT THAT MOMENT, so a
     /// subscription that was tombstoned when the reconstruction ran and

@@ -146,6 +146,41 @@ struct ExportServiceTests {
         #expect(stored.billingEvents.count == 1)
     }
 
+    /// R3-1. `isEmpty` was the wrong predicate for the stated principle: a
+    /// database whose every record is tombstoned has no ledger progress worth
+    /// keeping either, but it is not `isEmpty` - `completeSnapshot()` carries
+    /// tombstones by design - so the prompt appeared and answering Merge
+    /// reproduced F6 exactly. Narrower than F6 (it takes a deliberate answer at
+    /// an explicit prompt rather than a silent default), which is why round 1
+    /// rated it P2, but the prompt asks about *records* and the user is not
+    /// consenting to this.
+    @Test("⛔ a merge into an ALL-TOMBSTONED database reconstructs too - tombstones are not progress")
+    func mergeIntoAllTombstonedDatabaseReconstructsWatermarks() async throws {
+        // Every record present and every record tombstoned: not `isEmpty`, and
+        // nothing live to keep.
+        var buried = try seededSnapshot()
+        let buriedAt = Date(timeIntervalSince1970: 9_000)
+        for index in buried.subscriptions.indices { buried.subscriptions[index].deletedAt = buriedAt }
+        for index in buried.billingEvents.indices { buried.billingEvents[index].deletedAt = buriedAt }
+        for index in buried.paymentMethods.indices { buried.paymentMethods[index].deletedAt = buriedAt }
+        #expect(!buried.isEmpty)
+        #expect(buried.hasNoLiveRecords)
+
+        let transfer = MockTransfer(snapshot: buried)
+        let service = ExportService(transfer: transfer)
+        var incoming = try seededSnapshot()
+        incoming.subscriptions[0].updatedAt = Date(timeIntervalSince1970: 50_000)
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("otto-tombstoned-merge-test.json")
+        try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
+
+        _ = try await service.performImport(
+            from: file, strategy: .merge, now: Date(timeIntervalSince1970: 11_000)
+        )
+
+        #expect(await transfer.restoredWatermarkPolicies == [.reconstruct])
+    }
+
     @Test("a replace import names the reconstruct policy, so the store runs the §5.3 sequence")
     func replaceImportReconstructsWatermarks() async throws {
         let transfer = MockTransfer(snapshot: try seededSnapshot())

@@ -30,7 +30,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
-| 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | *(pending)* |
+| 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — see ITEM 4 |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
 | 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
@@ -214,6 +214,30 @@ The first falsification attempt was **invalid and is recorded rather than hidden
 
 ---
 
+## ITEM 4 — R3-1, an all-tombstoned database still loses its watermarks
+
+**RESOLVED**, `<stage-4 commit>`.
+
+**Reconfirmed at HEAD.** `ExportService.performImport` decided the watermark policy with `strategy == .replace || current.isEmpty`, and `OttoDataSnapshot.isEmpty` is emptiness of the raw arrays, which `completeSnapshot()` fills **tombstones included** by design. A database whose every record is tombstoned is therefore not `isEmpty`: the UI asks merge-or-replace, and answering Merge maps to `watermarks: .keep`, leaving every restored subscription with a nil watermark. `min(storedWatermark ?? today, today)` then materializes from today and the rows between the file's last charge and today are silently never created — F6 exactly, one prompt later.
+
+**What changed.** `OttoDataSnapshot.hasNoLiveRecords` in `OttoDomain`, and the policy reads it instead of `isEmpty`. The predicate **strictly widens**: `isEmpty` implies `hasNoLiveRecords`, so every input that reconstructed before still does, and the only new cases are databases holding nothing but tombstones.
+
+**The prompt is deliberately left alone.** `ImportPreview.databaseIsEmpty` still uses `isEmpty`, so `SettingsView` still asks merge-or-replace for an all-tombstoned database. That is right: a tombstone is communicable data and a replace really does treat it differently from a merge. What was wrong was only the **watermark** decision following the record count instead of the principle round 1 stated for it — *"does this device have ledger progress worth keeping"*. Those are two different questions and they now have two different expressions.
+
+**Falsified in three directions**, so the predicate cannot be satisfied by a constant either way:
+
+| what was changed | result |
+|---|---|
+| back to `current.isEmpty` | the all-tombstoned test fails: `restoredWatermarkPolicies == [.reconstruct]` |
+| pinned to `true` | the ordinary merge test fails: `restoredWatermarkPolicies == [.keep]` |
+| `hasNoLiveRecords` forced to `false` | both the all-tombstoned **and** the empty-database tests fail — confirming the empty case now routes through the same predicate |
+
+**Proved against the real store, not only against the policy.** Round 1's Review 3 rejected a decision-variable assertion as one link short of its claim, so `RestoreIntoEmptyStoreTests` gains an end-to-end case: an all-tombstoned store restored with `.keep` leaves the watermark **nil**, and the same store with the same file under `.reconstruct` gets `2026-06-15`, the latest live imported row.
+
+**What this does NOT do.** `hasNoLiveRecords` requires all five arrays to have no live record. A database with, say, a live payment method but **no live subscriptions** still answers `false` and still takes `.keep` — and it has no ledger progress either, because a watermark is per-subscription. That is a real residual, it is wider than R3-1 as frozen, and widening the predicate to match would be fixing something the work list does not name. Recorded as **N2-3** in NEXT ROUND.
+
+---
+
 ## NOT DEFECTS
 
 *(a finding that no longer reproduces at HEAD is moved here with its evidence rather than fixed)*
@@ -235,5 +259,6 @@ Carried forward from round 1 and not touched by round 2, plus what round 2 disco
   - **Numbering-system-caused, 3 tests, nothing to do with the calendar.** `DisplayFormattingTests.swift:59,68,69` render Arabic-Indic numerals under `ar_SA` — `"Every ٤٥ days"`, `"١ subscription"`, `"٣ subscriptions"` — through `String(localized:)` and `AttributedString(localized:)`, neither of which touches a date. They pass under `th_TH@calendar=buddhist` and `ja_JP@calendar=japanese`.
 
   So the per-host baseline is **1 issue** under Buddhist and Japanese, **5** under `ar_SA`, which is what this ledger and `CalendarEraTests.swift` record. Whoever picks this up is fixing two different things, not one.
+- **N2-3 (P2, from stage 4)** — R3-1's fix keys on `hasNoLiveRecords`, which is false whenever *any* of the five record types has a live row. A device with no live subscriptions but a surviving payment method (or price change, or cancellation episode) therefore still takes `.keep` on a merge, and still ends with nil watermarks — the same loss R3-1 describes, through a narrower door. The faithful predicate for "ledger progress worth keeping" is arguably *no live subscriptions*, since a watermark is per-subscription and nothing else can carry progress. Not fixed here because it is wider than the frozen finding.
 - **N2-2 (P1, from stage 1)** — **R0-7 is now a prerequisite, not a follow-up.** F1 stops new corruption; a non-Gregorian device holding pre-fix data now plans zero reminders while Today claims coverage (mechanism traced under ITEM 1). R0-7 was rated P2 in round 1 as "the other half of F1". It is P1 the moment F1 ships to such a device. Required repair, concretely: for each stored day written under a non-Gregorian calendar, reinterpret the packed `yyyymmdd` by converting the era-numbered `(y, m, d)` back through the device calendar that wrote it into a Gregorian `(y, m, d)` — the inverse of `Calendar.current.dateComponents` — across `StoredSubscription` anchors and trial dates, `StoredBillingEvent.expectedDate`, `StoredCancellationEpisode` check dates, `StoredPriceChange.effectiveDate` and `StoredMaterializationWatermark.lastMaterializedThrough`. It needs a persisted marker of which calendar wrote the data, which the V3 schema does not carry — so it is a schema change and is **DEFERRED by the freeze**, exactly as round 1 concluded. A repair that guesses the writing calendar is not acceptable on billing dates.
 
