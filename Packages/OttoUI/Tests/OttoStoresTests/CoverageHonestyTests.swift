@@ -13,16 +13,17 @@ import OttoServices
 ///  - the last pass SUCCEEDED but reconciled the ledger for only some
 ///    subscriptions, so `coveredThrough` describes a plan that some of the
 ///    user's subscriptions are not in.
+private struct SchedulerFailed: Error {}
+
+private struct ThrowingScheduler: ReminderScheduling {
+    func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome {
+        throw SchedulerFailed()
+    }
+}
+
 @MainActor
 @Suite("Coverage is stated only when it is true")
 struct CoverageHonestyTests {
-
-    private struct ThrowingScheduler: ReminderScheduling {
-        struct Failed: Error {}
-        func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome {
-            throw Failed()
-        }
-    }
 
     private struct FixedClient: NotificationClient {
         var permission: NotificationPermission = .authorized
