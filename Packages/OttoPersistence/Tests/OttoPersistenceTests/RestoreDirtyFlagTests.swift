@@ -135,7 +135,11 @@ extension SerializedPersistenceTests {
             #expect(try storedFlags(in: containers).isEmpty)
         }
 
-        @Test("a completed replace and a merge both end with no dirty flag - a merge never writes one")
+        // Named for the POLICY, not the import strategy: the two stopped being
+        // the same thing when a merge into an empty database became a
+        // .reconstruct (ExportService). A .reconstruct writes a flag and clears
+        // it in the same sequence; .keep never writes one at all.
+        @Test("a completed restore ends with no dirty flag under either policy - .keep never writes one")
         func completedRestoresLeaveNoFlag() async throws {
             let (store, containers) = try makeStore()
             let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
