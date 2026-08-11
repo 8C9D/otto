@@ -62,13 +62,29 @@ extension SerializedPersistenceTests {
                 "\(versions.count) schema versions need \(versions.count - 1) stages, found \(stages.count)"
             )
 
+            // Strictly increasing, asserted separately from the hops. A new
+            // version is written by copying the previous one, and leaving
+            // `versionIdentifier` at the old value is the likeliest mistake
+            // that produces: the hop assertions below then compare 3.0.0 to
+            // 3.0.0 and agree, `mainSchema` still equals `schemas.last`, and
+            // the whole file goes green on a chain SwiftData cannot stage.
+            for index in versions.indices.dropFirst() {
+                #expect(
+                    versions[index - 1] < versions[index],
+                    """
+                    schema \(index) is \(versions[index]) and schema \(index - 1) is \(versions[index - 1]) - \
+                    versions must strictly increase; a copied version whose identifier was never bumped \
+                    makes every other assertion here vacuous
+                    """
+                )
+            }
+
             for (index, stage) in stages.enumerated() where index + 1 < versions.count {
                 let hop = try #require(
                     Self.versions(of: stage),
                     """
-                    could not read stage \(index)'s versions - MigrationStage's payload no longer \
-                    reflects as (fromVersion, toVersion), so THIS GUARD IS NOT GUARDING. Fix the \
-                    extraction; do not delete the test.
+                    stage \(index) is a MigrationStage case this guard does not know about, so THIS \
+                    GUARD IS NOT GUARDING it. Teach `versions(of:)` the new case; do not delete the test.
                     """
                 )
                 #expect(
@@ -84,31 +100,29 @@ extension SerializedPersistenceTests {
 
         /// The two schema versions a `MigrationStage` connects.
         ///
-        /// `MigrationStage` publishes no accessor for them, so this reads the
-        /// enum's own payload by reflection - which works identically for
-        /// `.lightweight` and `.custom`, both of whose payloads label their
-        /// first two elements `fromVersion` and `toVersion`.
+        /// `MigrationStage` exposes no `fromVersion` property, but its cases
+        /// carry the endpoints and are public, so this destructures them.
+        /// Deliberately a `switch` and not `Mirror`: both read the same
+        /// payload, and only the switch makes a future SDK that renames or
+        /// reorders it a COMPILE error here, at the Xcode upgrade, rather than
+        /// a runtime nil that turns the suite red later for a reason nobody
+        /// will connect to the toolchain.
         ///
-        /// It FAILS CLOSED on purpose: an extraction that finds nothing returns
-        /// nil and the caller records an issue naming that cause, because a
-        /// guard that quietly stops guarding is the exact failure this file was
-        /// rebuilt to prevent.
+        /// It still fails closed: a SwiftData release that adds a third case
+        /// reaches `@unknown default`, returns nil, and the caller records an
+        /// issue naming that cause - because a guard that quietly stops
+        /// guarding is the exact failure this file was rebuilt to prevent.
         private static func versions(
             of stage: MigrationStage
         ) -> (fromVersion: Schema.Version, toVersion: Schema.Version)? {
-            guard let payload = Mirror(reflecting: stage).children.first?.value else { return nil }
-            var fromVersion: Schema.Version?
-            var toVersion: Schema.Version?
-            for child in Mirror(reflecting: payload).children {
-                guard let schema = child.value as? any VersionedSchema.Type else { continue }
-                switch child.label {
-                case "fromVersion": fromVersion = schema.versionIdentifier
-                case "toVersion": toVersion = schema.versionIdentifier
-                default: continue
-                }
+            switch stage {
+            case .lightweight(let fromVersion, let toVersion):
+                return (fromVersion.versionIdentifier, toVersion.versionIdentifier)
+            case .custom(let fromVersion, let toVersion, _, _):
+                return (fromVersion.versionIdentifier, toVersion.versionIdentifier)
+            @unknown default:
+                return nil
             }
-            guard let fromVersion, let toVersion else { return nil }
-            return (fromVersion, toVersion)
         }
 
         @Test("no attribute is unique, and every attribute is optional or has a default")

@@ -59,10 +59,19 @@ Round 2's reviewers raised the missing row four consecutive times; the start is 
 | stage | range passed to the reviewer | reviewed head | verdict |
 |---|---|---|---|
 | 0 | - (baseline only, `8f86c1f`) | - | no review |
-| 1 - R0-9 | `8806853..` | pending | pending |
+| 1 - R0-9 | `8806853..87d6508` | `87d6508` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-1.md`) |
+| 2 - R0-7 / N2-2 | `87d6508..` | pending | pending |
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read.
 That is round 2's arrangement, kept.
+Stage 1's remediation commits land **after** the reviewed head `87d6508` and are therefore inside stage 2's range, not orphaned between them - also round 2's arrangement.
+
+**One commit outside every review range that has ever been issued, inherited rather than created here.**
+`reviews-3/REVIEW-1.md` finding 4 measured it: round 2's last review covered `5d8ed6a..3ce3e01`, and `aa92ca7` - a code commit - landed after it, with only `70f3f19` and `8806853` (both documents) between.
+Round 3's first range starts at `8806853` because the prompt fixes that as the starting point, so `aa92ca7`'s diff has never been read by any reviewer in either round.
+Nothing untested is carried: `reviews-3/BASELINE-3.md` re-ran all four measurements against the state at `8806853`, which includes `aa92ca7`'s effect.
+Carried to NEXT ROUND rather than closed, because closing it means issuing a review of a range this run is not scoped to.
+The range rule at the head of this section is written for stage-to-stage chaining inside a run and therefore says nothing about a run's *first* start, which is exactly where the gap is; that is the wording to fix, not just the incident.
 
 ---
 
@@ -99,23 +108,27 @@ One test, `stagesChainTheSchemas`, in the file that already owns this contract.
 No production change: the plan is correct today, and what was missing was anything that would notice when it stopped being.
 
 **It asserts the chain, not the count.**
-`reviews/REVIEW-0.md` proposes `stages.count == schemas.count - 1`.
+`PROD-READINESS.md:76` proposes `stages.count == schemas.count - 1`.
 That catches the forgotten stage and nothing else - a stage added and wired wrong (`V2 → V4`, a duplicate, a reordering) satisfies the arithmetic while leaving a version no stage reaches.
-`MigrationStage` publishes no accessor for its endpoints, but its payload reflects as `(fromVersion, toVersion)` for both `.lightweight` and `.custom`, so the guard walks the stages against the schema list and asserts each hop connects version *n* to version *n+1*.
+`MigrationStage` exposes no `fromVersion` property, but its cases are public and carry the endpoints, so the guard destructures each stage and asserts hop *n* connects version *n* to version *n+1*.
 
-**The reflection fails closed, which is the whole design.**
-Reading a framework enum's payload by `Mirror` is exactly the kind of guard that can stop guarding without failing - this file's own header records that happening once, to a version-pinned reference that stayed green through Wave 6A.
-So an extraction that finds nothing returns nil and the caller records an issue naming that cause, rather than skipping the stage.
+**And it asserts the versions strictly increase**, which is a separate claim from the hops and was missing until remediation - see below.
 
-**Falsified in three directions**, because the count half and the chain half and the extraction each have to be load-bearing on their own:
+**The extraction is a `switch`, not `Mirror`, and it fails closed either way.**
+The first version of this guard read the payload by reflection. Both forms read the same thing, but only the switch turns a future SDK that renames or reorders the payload into a **compile error at the Xcode upgrade** rather than a runtime nil that reddens the suite later for a reason nobody connects to the toolchain.
+A SwiftData release that adds a third case still reaches `@unknown default`, returns nil, and the caller records an issue naming that cause - a guard that quietly stops guarding is the failure this file was rebuilt to prevent.
+
+**Falsified in four directions**, because the count, the ordering, the chain and the extraction each have to be load-bearing on their own:
 
 | what was changed | result |
 |---|---|
 | V4 appended, `mainSchema` repointed, **no stage** (the R0-9 reproduction verbatim) | `Expectation failed: (stages.count → 2) == (versions.count - 1 → 3)` |
 | V4 appended **with a wrong stage**, `V2 → V4`, so the count is now right | `Expectation failed: (hop.fromVersion → 2.0.0) == (versions[index] → 3.0.0)` - the case a count assertion passes |
-| the payload labels renamed `fromVersion`/`toVersion` → `fromV`/`toV`, simulating an SDK rename | `Expectation failed: … .versions(of: stage → .custom(fromVersion: OttoPersistence.OttoSchemaV1, …)) → nil` |
+| V4 appended **with its identifier left at `3.0.0`** and a correct-looking `V3 → V4` stage | `Expectation failed: (versions[index - 1] → 3.0.0) < (versions[index] → 3.0.0)` |
+| `case .lightweight` renamed `.lightweightXX`, simulating an SDK rename | `error: expression pattern of type 'SwiftDataError' cannot match values of type 'MigrationStage'` - it does not compile, which is the point |
 
-The second row is the one that justifies the extra machinery: it is a real mistake, it is invisible to the assertion the finding proposed, and it ships a migration that skips a version.
+The second row justifies the chain over a count: a real mistake, invisible to the assertion the finding proposed, shipping a migration that skips a version.
+The third row is the reviewer's, and is the reason for the remediation below.
 
 **Cost.** One test, ~0.001 s.
 The OttoPersistence suite goes from 118 to 119 tests.
@@ -123,6 +136,35 @@ The OttoPersistence suite goes from 118 to 119 tests.
 **What this does NOT do.**
 It relates `stages` to `schemas` and nothing further: a stage that connects the right two versions but carries a `willMigrate`/`didMigrate` that does the wrong thing, or nothing, still passes.
 Proving a stage's *body* correct is what `MigrationTests` and `WatermarkRelocationMigrationTests` are for, and adding a version means adding a case there too.
+
+### Remediation after `reviews-3/REVIEW-1.md`
+
+The verdict is PASS-WITH-FINDINGS.
+Three of its four findings are defects in this stage's own change and are fixed inside the stage; the fourth is inherited and is recorded under REVIEW RANGES and NEXT ROUND.
+
+- **Finding 1 (P2) - the guard went green on a version identifier that was never bumped, and that is the mistake this gate exists to catch.**
+  Reproduced here before fixing it: a fourth schema carrying V3's models with `Schema.Version(3, 0, 0)`, plus a correct-looking `.lightweight(V3 → V4)` stage, left **all five tests in the file green** on a chain of `1.0.0 → 2.0.0 → 3.0.0 → 3.0.0`.
+  The hop assertions compare `3.0.0` to `3.0.0` and agree; `guardTargetsTheLiveSchema` cannot see it either, because `live.version == terminal.versionIdentifier` holds trivially and the entity sets are identical whenever the new version keeps the same models - which is exactly what a value-repair migration does.
+  The test was titled "in order" and asserted no ordering.
+  Now it asserts `versions[index - 1] < versions[index]` across the whole list, separately from the hops, and the reproduction fails at that line.
+  This one mattered beyond tidiness: the run reorders items 1 and 2 **so that this test gates the schema-freeze lift**, and copying the previous version and forgetting to bump it is the single likeliest way to get V4 wrong.
+- **Finding 2 (P3) - the reflection was unnecessary and the justification for it was overstated.**
+  The ledger and the code both said `MigrationStage` "publishes no accessor … so this reads the enum's own payload by reflection".
+  Literally true of properties, and false as a claim about the API: the cases are public and pattern-matchable.
+  Verified independently rather than taken on the reviewer's word - the `switch` form typechecks against this SDK, and renaming the case to `.lightweightXX` is a compile error, so the probe resolves the real type.
+  Replaced.
+- **Finding 3 (P3) - a citation pointing at the wrong file.**
+  This section attributed `stages.count == schemas.count - 1` to `reviews/REVIEW-0.md`.
+  Verified: `grep -n "stages.count" reviews/REVIEW-0.md PROD-READINESS.md` returns exactly one line, `PROD-READINESS.md:76`, and nothing in `reviews/REVIEW-0.md`.
+  The round-1 ledger row credits REVIEW 0 in its *source* column, which is what made the conflation a single step.
+  Corrected above.
+  This is the fourth recurrence across three rounds of a citation measured once and never re-derived.
+- **Finding 4 (P3) - `aa92ca7` is outside every review range ever issued.**
+  Inherited, not created here.
+  Recorded under REVIEW RANGES and carried to NEXT ROUND.
+
+The reviewer also settled a claim this repository cannot settle on its own: the plan contains no `.lightweight` stage, so the extraction's lightweight half is unexercised in-repo.
+It was exercised with a real `.lightweight` stage during the review and during falsification rows 2 and 3 above, and it reads that payload correctly.
 
 ## CANNOT ASSESS
 
