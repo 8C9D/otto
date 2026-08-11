@@ -66,7 +66,16 @@ extension OttoStore {
         let rows = try deviceStateContext.fetch(FetchDescriptor<StoredMaterializationWatermark>())
         var current: [UUID: Int] = [:]
         for row in rows {
-            if let id = row.subscriptionID, let stored = row.lastMaterializedThrough {
+            // Only values that ARE dates cap anything (R0-5). The cap is a
+            // min over raw Ints, so an unreadable value - 0 from a partially
+            // written row, or a packed impossible date the V2→V3 carry-over
+            // brought across unvalidated - would otherwise pin every future
+            // reconstruction to itself and make the corruption permanent.
+            // Skipping it lets the ledger reconstruction stand, which is the
+            // conservative value this method exists to produce.
+            if let id = row.subscriptionID,
+               let stored = row.lastMaterializedThrough,
+               CalendarDay(yyyymmdd: stored) != nil {
                 current[id] = min(current[id] ?? stored, stored)
             }
             deviceStateContext.delete(row)

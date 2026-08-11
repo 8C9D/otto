@@ -73,7 +73,46 @@ public actor OttoStore {
                 predicate: #Predicate { $0.subscriptionID == subscriptionID }
             )
         )
-        return rows.first?.lastMaterializedThrough.flatMap(CalendarDay.init(yyyymmdd:))
+        return Self.watermarkDay(in: rows, for: subscriptionID)
+    }
+
+    /// One subscription's stored watermark, distinguishing "no watermark" from
+    /// "a watermark that is not a date" - and logging the second (R0-5).
+    ///
+    /// Both used to collapse into the same nil, and a nil watermark sends
+    /// `materializeEvents` back to TODAY, which is F6's exact signature: the
+    /// rows between the last real charge and today are silently never created.
+    /// Neither path said anything, so that failure had a third unlogged route
+    /// into it. This is not hypothetical - `OttoMigrationPlan` carries
+    /// `lastMaterializedThrough` out of the V2 column into V3 without
+    /// validating it, so a corrupt V2 value arrives intact.
+    ///
+    /// The row is chosen by MINIMUM, not by `rows.first`. There is no unique
+    /// constraint and the fetch is unsorted, so `first` was nondeterministic
+    /// across duplicate rows; the minimum is deterministic and it is the
+    /// direction §5.3 already requires - a watermark errs earlier, never later,
+    /// because a regressed one re-observes idempotently while an advanced one
+    /// vouches for rows that may not exist.
+    ///
+    /// A corrupt value still reads as nil, because there is nothing safe to
+    /// invent from it. What changes is that it is no longer silent.
+    static func watermarkDay(
+        in rows: [StoredMaterializationWatermark],
+        for subscriptionID: UUID
+    ) -> CalendarDay? {
+        guard let stored = rows.compactMap(\.lastMaterializedThrough).min() else { return nil }
+        guard let day = CalendarDay(yyyymmdd: stored) else {
+            // The packed value, not a redaction: a calendar day is exactly what
+            // OttoLog permits in the clear, and which impossible date it is
+            // ("Feb 30" versus zero versus garbage) is the whole diagnosis.
+            mappingLogger.error("""
+                watermark unreadable - materializing from today for this \
+                subscription: id=\(subscriptionID.uuidString, privacy: .public) \
+                stored=\(stored, privacy: .public)
+                """)
+            return nil
+        }
+        return day
     }
 
     /// Upserts (or clears, on nil) one watermark and SAVES the device store.
