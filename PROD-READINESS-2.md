@@ -33,7 +33,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` + `d00c086` (the shipped predicate is `d00c086`'s) |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — `0b76d65` |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | **RESOLVED** — see ITEM 6 |
-| 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
+| 7 | **R5-2** | F2's log line has no executable guard | **RESOLVED** — see ITEM 7 |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded). There are no others.
 
@@ -308,6 +308,24 @@ reconcile pending=0 desired=64 … added=[… <…>] failed=[<decode: missing da
 ```
 
 `os_log`'s per-entry limit truncated the `added=` list and then **lost the `failed=` field entirely**. So on a device where a pass adds many rungs, the failure list — the field this item exists to enrich — can be dropped from the log altogether. Recorded as **N2-4**; not fixed, because it is a pre-existing property of the line's shape and wider than RF-3.
+
+---
+
+## ITEM 7 — R5-2, F2's log line has no executable guard
+
+**RESOLVED**, `<stage-7 commit>`.
+
+**Reconfirmed at HEAD.** Deleting **both** `OttoLog.actions` statements from `NotificationActionHandler` — the entire content of round 1's F2 fix — left the whole suite green, exactly as `reviews/REVIEW-5.md` measured. F2 was closed on an artifact quoted in a commit message, which is real evidence about one run and no guard at all against the next edit.
+
+**What changed.** No production change: the line was already correct. `NotificationActionLogTests` asserts it exists, using `OSLogStore(scope: .currentProcessIdentifier)` — the technique round 1 first recorded as impossible ("reading the unified log from `swift test` would assert about the host"), then corrected, then declined on cost.
+
+Both branches are pinned, not just the failure: a `handled` line for the success path too, so silence in the log means the handler never ran rather than meaning it succeeded quietly. The failure assertion also checks the privacy property directly — the line carries the opaque `<uuid>|<day>|<kind>` triple and an error **type**, and neither a vendor name nor a currency symbol.
+
+**Falsified**: with both statements deleted, both tests fail at the `#require`, `→ nil`.
+
+**Cost, and the risk round 1 named.** The OttoUI suite goes from ~0.05 s to ~5 s. Round 1 gave two reasons for declining: cost, and dependence on the log daemon being readable. The second is a real risk that this run now carries into CI on three tests, and is recorded in CANNOT ASSESS with the remedy if CI goes red. It was taken anyway because the alternative is what round 1 shipped: a fix whose only evidence rots the moment someone edits the file.
+
+**What is still not guarded.** `reviews/REVIEW-5.md`'s R5-1 stands untouched: a snooze that returns early without scheduling anything still logs `handled` identically to one that worked. That is a NEXT ROUND item about what the line *says*, not about whether it exists, and this item is the latter.
 
 ---
 

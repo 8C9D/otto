@@ -113,17 +113,10 @@ struct NotificationActionTests {
     /// that answer and total silence is that `handle` refuses to pretend it
     /// worked. It must THROW, never return a follow-up as if the work landed.
     ///
-    /// The `os_log` record this pass added on the same path is NOT asserted
-    /// here, and the reason first given for that was wrong. Review 5
-    /// demonstrated that `OSLogStore(scope: .currentProcessIdentifier)` reads
-    /// the line back inside the test process, so a guard is possible; the real
-    /// objections are that it costs 11-27 s against a suite that currently runs
-    /// in about two, and that it depends on the log daemon being readable -
-    /// exactly the host-environment dependence `reviews/BASELINE.md` warns
-    /// about. So the emission is evidenced by an artifact read out of the
-    /// unified log (see the commit message) rather than by a test, the guard is
-    /// recorded in NEXT ROUND with the technique named, and what this test pins
-    /// is the structure the log line depends on: that the failure reaches
+    /// The `os_log` record on the same path is asserted in
+    /// `NotificationActionLogTests` (round 2, R5-2), which reads the line back
+    /// with `OSLogStore(scope: .currentProcessIdentifier)`. What THIS test pins
+    /// is the structure that line depends on: that the failure reaches
     /// `handle`'s catch at all instead of being swallowed upstream.
     @Test("a failed action is reported to the caller, never reported as done")
     func failedActionDoesNotLookLikeSuccess() async throws {
