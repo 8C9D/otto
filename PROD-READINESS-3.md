@@ -64,7 +64,11 @@ Round 2's reviewers raised the missing row four consecutive times; the start is 
 | 2 - R0-7 / N2-2 | `87d6508..e4f4872` | `e4f4872` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-2.md`) |
 | 3 - F1's CI guard | `e4f4872..b006d20` | `b006d20` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-3.md`) |
 | 4 - R4-2 + R0-5 + F11/R0-10(a) + R5-1 | `b006d20..ce66bf7` | `ce66bf7` | **REJECT** (`reviews-3/REVIEW-4.md`) |
-| 4r - stage-4 remediation | `ce66bf7..` | pending | pending (a DIFFERENT fresh reviewer, per the contract) |
+| 4r - stage-4 remediation | `ce66bf7..6d981f4` | `6d981f4` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-5.md`, a different reviewer) |
+
+Stage 4's REJECT is the only one of this run.
+It was remediated once and re-reviewed by a **different** fresh reviewer, which passed it with findings; those findings were routed in turn (`aae0166`).
+That is one remediation cycle of the two the contract allows.
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read.
 That is round 2's arrangement, kept.
@@ -535,6 +539,23 @@ Four findings, all routed here:
 - **Finding 3 (P3) - the fix for `reviews-3/REVIEW-4.md` finding 8 made the table wrong.**
   Relabelling it `e4f4872` and changing the simulator's second bucket 70 → 72 were both mistakes: the numbers were taken at `49ba021` (stage 2 *including* its remediation), and the `72` was a later commit's. The row that was right before the remediation was wrong after it. Corrected, with the commit named.
 - **Finding 4 (P3) - the amount tripwire still saw hex it did not control**, at ~1.1e-5 per run rather than the 25 % the `999` needle carried, and the needle had silently narrowed `999` → `99999` without disclosure. Every UUID is now stripped before the content check, and the narrowing is stated.
+
+## VERIFICATION AT HEAD (`aae0166`) - all four, measured
+
+| measurement | `reviews-3/BASELINE-3.md` | at HEAD | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, **258 / 124 / 207 = 589** | +24, this run's new host tests |
+| `swiftlint --strict` | clean | clean | unchanged |
+| simulator suite | 108 / 70 / 31 = 209, 7 known issues | **117 / 72 / 36 = 225**, 7 known issues, `** TEST SUCCEEDED **` | +16 since baseline |
+| non-Gregorian harness | 1 / 1 / 5 | **1 / 1 / 5**, same five citations | unchanged |
+
+Twelve unmutated full `swift test --package-path Packages/OttoUI` runs at HEAD: **12 passed, 0 failed.**
+
+Against `reviews-3/BASELINE-3.md`: **+24 host tests, +16 simulator tests, no lint rule relaxed, no test skipped or disabled, and no new known issue.**
+One `custom_rules` entry was added and no existing rule touched.
+Two of this run's own assertions were weakened during a remediation and are restored; that is recorded rather than hidden.
+
+Four files were split rather than a length rule relaxed: `SubscriptionFlowService+Cancellation.swift` out of `SubscriptionFlowService.swift`, and three function splits (`watchingEpisode`, `recordStillCharging`, and `BoundaryLogTests`' two helpers).
 
 ## VERIFICATION AFTER THE STAGE-4 REMEDIATION (`ef7e9b8`) - all four, measured
 
