@@ -29,7 +29,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 |---|---|---|---|
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` |
-| 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | *(pending)* |
+| 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — see ITEM 3 |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | *(pending)* |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
@@ -173,6 +173,33 @@ The last two were added in remediation. `reviews-2/REVIEW-2.md` finding 1 was ri
 **The card fires for every trigger except one, and that one is pre-existing.** `rescheduleSoon` reports a failure as `onOutcome?(nil)`, so `.foreground`, `.timeZoneChange`, `.significantTimeChange`, `.notificationDelivered` and `.notificationAction` all set the flag, and `appDidBecomeActive` runs a fresh pass on every foreground — so a persistent failure surfaces the next time the user opens the app. `handleBackgroundRefresh` never calls `onOutcome` on either path, so a failed `BGAppRefreshTask` pass still publishes nothing. That is round 1's **R4-2**, unchanged by this item and still in NEXT ROUND; the coordinator is inside `#if os(iOS)` and compiles to nothing under host `swift test`, so that wiring remains untested.
 
 **A file was split rather than a lint rule relaxed.** The card pushed `TodayView.swift` past SwiftLint's 400-line `file_length`. Reconstructing the unsplit file at the stage's end gives **456** lines, and SwiftLint confirms it: `File should contain 400 lines or less: currently contains 456`. (An earlier draft of this paragraph said 440, a number measured at an intermediate working state and never re-derived — the same class of defect `reviews-2/REVIEW-1.md` finding 5 raised, recurring in the document written to correct it.) `.swiftlint.yml` is untouched; `TodaySection` moved to `TodaySectionPlan.swift`, which is the seam the type already documents — the pure composition decision, holding no view, and the thing `TodaySectionPlanTests` exercises.
+
+---
+
+## ITEM 3 — R0-6, a resurrected subscription comes back with no watermark
+
+**RESOLVED**, `<stage-3 commit>`.
+
+**Reconfirmed at HEAD.** `OttoStore+DataTransfer.swift` fetches subscriptions with `deletedAt == nil`, deletes **every** watermark row unconditionally, then rebuilds one only for the subscriptions in that live fetch. A subscription tombstoned at reconstruct time therefore ends with no row; `ImportResolution` can clear `deletedAt` on a later merge and bring it back; `OttoStore+BillingEvents.swift:54`'s `min(storedWatermark ?? today, today)` then materializes from **today**. That is the founding v2.1 hazard and F6's exact failure signature by a second route.
+
+**What changed.** One line: the fetch drops its predicate and reconstructs for every subscription, tombstoned ones included. The **event** fetch still filters to live rows, so a tombstoned subscription falls back to its anchor rather than inheriting a dead ledger's progress — the same conservative value a live subscription with no ledger rows already gets. The v2.5 cap (`min(reconstructed, current[id] ?? reconstructed)`) is untouched, so no watermark can move forward.
+
+**No schema change.** `StoredMaterializationWatermark` is unchanged; this is a source change in `Packages/OttoPersistence/Sources/`, which round 1 had left untouched. The cost is one device-state row per tombstoned subscription, never read while it stays tombstoned.
+
+**An existing assertion changed, deliberately and in the strengthening direction.** `DataTransferTests` asserted `materializationWatermark(forSubscription: fixtureUUID(4)) == nil` under the comment *"A tombstoned subscription materializes nothing and needs none."* That reasoning is true only while the subscription stays tombstoned, which is precisely R0-6's point. The assertion now pins a **value** — the anchor, `2026-03-01` — rather than an absence. No test was skipped, disabled, or weakened.
+
+**Falsified.** Reverting the fetch predicate produces exactly 2 issues, both watermark assertions and nothing else:
+
+```
+✘ "watermarks reconstruct from the ledger…" DataTransferTests.swift:282
+✘ "⛔ a subscription tombstoned at reconstruct time and resurrected later still has a watermark"
+   DataTransferTests.swift:397
+✘ Test run with 114 tests in 23 suites failed with 2 issues.
+```
+
+The first falsification attempt was **invalid and is recorded rather than hidden**: the bare fetch line appears twice in the file, and patching the first occurrence broke `completeSnapshot` instead, producing `danglingReference` and tombstone-snapshot failures that had nothing to do with the fix. Re-done against the line inside `reconstructWatermarksNow`.
+
+**Unrelated stderr, checked.** The persistence suite prints `CoreData: error:` lines about a model checksum and `deviceStateStoreUnavailable`. They appear identically with the fix present and reverted, and the suite passes in both, so they are pre-existing diagnostics from a deliberate migration-failure test, not a regression.
 
 ---
 

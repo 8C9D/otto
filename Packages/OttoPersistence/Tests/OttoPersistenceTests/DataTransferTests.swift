@@ -272,8 +272,17 @@ extension SerializedPersistenceTests {
                 try await fresh.materializationWatermark(forSubscription: try fixtureUUID(5))
                     == (try day(2026, 1, 10))
             )
-            // A tombstoned subscription materializes nothing and needs none.
-            #expect(try await fresh.materializationWatermark(forSubscription: try fixtureUUID(4)) == nil)
+            // A tombstoned subscription gets one too, at its anchor (R0-6).
+            // This used to assert nil, on the reasoning that a tombstoned
+            // subscription materializes nothing and needs no watermark. True
+            // while it stays tombstoned - but a merge import can clear
+            // `deletedAt` and bring it back, and it then had no watermark and
+            // materialized from TODAY. Its live ledger row was tombstoned with
+            // it, so the anchor is what remains.
+            #expect(
+                try await fresh.materializationWatermark(forSubscription: try fixtureUUID(4))
+                    == (try day(2026, 3, 1))
+            )
         }
 
         @Test("an unreadable record fails the export loudly - a backup with a silent hole is worse than none")
@@ -347,6 +356,48 @@ extension SerializedPersistenceTests {
         // The data arrived either way - the difference is only the watermark.
         #expect(try await rebuilt.subscriptions().count == 1)
         #expect(try await rebuilt.events(forSubscription: try fixtureUUID(1)).count == 1)
+    }
+
+    /// R0-6. `reconstructWatermarksNow` deletes every watermark row and then
+    /// rebuilt one only for subscriptions that were live AT THAT MOMENT, so a
+    /// subscription that was tombstoned when the reconstruction ran and
+    /// resurrected afterwards - which a merge import does by clearing
+    /// `deletedAt` (`ImportResolution`) - came back with a nil watermark and
+    /// materialized from TODAY. That is the founding v2.1 hazard and F6's exact
+    /// failure signature, reached by a second route.
+    @Test("⛔ a subscription tombstoned at reconstruct time and resurrected later still has a watermark")
+    func resurrectedSubscriptionKeepsItsWatermark() async throws {
+        let (store, containers) = try makeStore()
+        let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 3, 1))
+        try await store.save(subscription)
+        try await store.save(try makeBillingEvent(
+            index: 101, subscriptionID: subscription.id, expectedDate: try day(2026, 3, 1)
+        ))
+        try await store.deleteSubscription(withID: subscription.id, at: Date(timeIntervalSince1970: 9_000))
+        #expect(try await store.subscriptions().isEmpty)
+
+        // The reconstruction runs while it is tombstoned - a replace-restore or
+        // the §5.3 dirty-flag heal, neither of which knows what a later merge
+        // will bring back.
+        try await store.reconstructMaterializationWatermarks()
+
+        // Resurrection, exactly as a merge import performs it.
+        let context = ModelContext(containers.main)
+        let record = try #require(
+            try context.fetch(FetchDescriptor<StoredSubscription>())
+                .first { $0.id == subscription.id }
+        )
+        record.deletedAt = nil
+        try context.save()
+
+        let revived = OttoStore(containers: containers)
+        #expect(try await revived.subscriptions().count == 1)
+        // The anchor, never nil - a nil here makes materializeEvents start from
+        // today and silently skip every charge back to the last real one.
+        #expect(
+            try await revived.materializationWatermark(forSubscription: subscription.id)
+                == (try day(2026, 3, 1))
+        )
     }
     }
 }

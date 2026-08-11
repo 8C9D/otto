@@ -200,9 +200,18 @@ extension OttoStore: DataTransferRepository {
     /// any §5.3 dirty flag IN THE SAME SAVE, so "reconstructed" and "no longer
     /// dirty" commit together or not at all.
     func reconstructWatermarksNow() throws {
-        let subscriptions = try modelContext.fetch(
-            FetchDescriptor<StoredSubscription>(predicate: #Predicate { $0.deletedAt == nil })
-        )
+        // EVERY subscription, tombstoned ones included (R0-6). The delete loop
+        // below drops every watermark row unconditionally, so a subscription
+        // skipped here comes back with none - and a merge import can resurrect a
+        // tombstoned subscription by clearing its `deletedAt`. It would then
+        // materialize from TODAY, which is the founding v2.1 hazard and the
+        // exact failure F6 exists to prevent, reached by a second route.
+        //
+        // A watermark for a tombstoned subscription costs one device-state row
+        // and is never read while it stays tombstoned; the ledger below is still
+        // built from LIVE events only, so a tombstoned subscription falls back
+        // to its anchor rather than inheriting a dead row's progress.
+        let subscriptions = try modelContext.fetch(FetchDescriptor<StoredSubscription>())
         let events = try modelContext.fetch(
             FetchDescriptor<StoredBillingEvent>(predicate: #Predicate { $0.deletedAt == nil })
         )
