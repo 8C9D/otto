@@ -169,9 +169,9 @@ struct ExportServiceTests {
         // be tombstoned would answer "something is live" and miss it.
         buried.paymentMethods = [PaymentMethod(
             id: try fixtureUUID(300),
-            label: "Bank",
-            last4: "XXXX",
-            issuer: "Bank",
+            label: "Test card",
+            last4: "4821",
+            issuer: "Test Issuer",
             expiryMonth: 12,
             expiryYear: 2030,
             isDefault: true,

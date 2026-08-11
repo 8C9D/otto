@@ -28,9 +28,9 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | # | id | what | terminal state |
 |---|---|---|---|
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
-| 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` + `12fdcfc` + `c566ce6` |
+| 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` + `12fdcfc` + `c566ce6` + `d00c086` |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
-| 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` |
+| 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` + `d00c086` (the shipped predicate is `d00c086`'s) |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — `0b76d65` |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
 | 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
@@ -69,6 +69,7 @@ Stage 0's commit is deliberately inside stage 1's range rather than being treate
 - Real notification delivery, Focus breakthrough, interruption levels. Requires hardware.
 - Release-configuration behavior of any kind.
 - Accessibility-label rendering. No AX client on this host.
+- Whether `OSLogStore(scope: .currentProcessIdentifier)` is readable on the GitHub-hosted CI runner. `MappingLogPrivacyTests.theEmittedLineIsRedacted` depends on it and passed 17 times locally, including 6 concurrent runs; CI cannot be exercised from here because network calls are prohibited.
 
 ---
 
@@ -224,7 +225,7 @@ The first falsification attempt was **invalid and is recorded rather than hidden
 
 ## ITEM 4 — R3-1, an all-tombstoned database still loses its watermarks
 
-**RESOLVED**, `20d189a`.
+**RESOLVED**, `20d189a` + `d00c086`. `20d189a` alone carries the five-conjunct predicate that `reviews-2/REVIEW-4.md` finding 1 showed does not fire on the reachable case; the shipped one-conjunct predicate is `d00c086`'s, and citing only the first would point a reader at the rejected version.
 
 **Reconfirmed at HEAD.** `ExportService.performImport` decided the watermark policy with `strategy == .replace || current.isEmpty`, and `OttoDataSnapshot.isEmpty` is emptiness of the raw arrays, which `completeSnapshot()` fills **tombstones included** by design. A database whose every record is tombstoned is therefore not `isEmpty`: the UI asks merge-or-replace, and answering Merge maps to `watermarks: .keep`, leaving every restored subscription with a nil watermark. `min(storedWatermark ?? today, today)` then materializes from today and the rows between the file's last charge and today are silently never created — F6 exactly, one prompt later.
 
@@ -242,7 +243,7 @@ The first falsification attempt was **invalid and is recorded rather than hidden
 |---|---|
 | back to `current.isEmpty` | the all-tombstoned test fails: `restoredWatermarkPolicies == [.reconstruct]` |
 | pinned to `true` | the ordinary merge test fails: `restoredWatermarkPolicies == [.keep]` |
-| `hasNoLiveRecords` forced to `false` | both the all-tombstoned **and** the empty-database tests fail — confirming the empty case now routes through the same predicate |
+| the predicate forced to `false` | `ExportServiceTests` fails at the empty-database **and** all-tombstoned cases, plus `ExportImportTests`' two domain-side cases — confirming the empty case routes through the same predicate. (This row named `hasNoLiveRecords` until `d00c086` renamed it, and the domain-side failures post-date the table.) |
 
 **Proved against the real store, not only against the policy.** Round 1's Review 3 rejected a decision-variable assertion as one link short of its claim, so `RestoreIntoEmptyStoreTests` gains an end-to-end case: an all-tombstoned store restored with `.keep` leaves the watermark **nil**, and the same store with the same file under `.reconstruct` gets `2026-06-15`, the latest live imported row.
 
@@ -274,6 +275,15 @@ That `<private>` is the whole point of the finding. Round 1 rated R0-4 P2 partly
 Together those pin it from both ends: the call site must use the helper, and the helper must withhold the value.
 
 **Costs and limits, stated.** The `OSLogStore` read takes the OttoPersistence suite from ~1.5 s to ~7 s. The first version of the emission test was **flaky by construction** — it took the *first* skip line in the time window, and the log is process-wide, so a concurrently running suite's line was picked up instead (observed: `StoredSubscription.status is missing`). It now examines every skip line in the window and asserts the value is absent from **all** of them, which is both stable and stronger. What the guard cannot show on this host is that the raw value never entered the log buffer: pre-fix it rendered `<private>`, so the write is invisible to a reader without a private-data profile. What it does show is that the code path now writes only the summary.
+
+### Corrections to stage 5's own record
+
+- **`d00c086` does not compile, and its message states a count that cannot have been measured there.** The rename of `hasNoLiveRecords` → `hasNoLiveSubscriptions` updated the domain and services call sites and missed `RestoreIntoEmptyStoreTests.swift:101`; the one-line repair shipped two commits later inside `0b76d65`, whose subject is the unrelated log fix. `swift test --package-path Packages/OttoPersistence` fails at `d00c086` with `error: fatalError`, and the message's "OttoPersistence 115" is `989ece0`'s number, not that commit's. **This matters beyond tidiness**: CI's `persistence-tests` job runs exactly that command on every push, `verify.sh` exists because a committed HEAD once did not compile while the local tree passed, and it is a bisect landmine on the file this run keeps returning to. Commits cannot be amended, so it is recorded here. The branch's HEAD compiles and is green; only that intermediate commit does not.
+- **"Together those pin it from both ends" overstates by one call site.** Both falsification rows exercise `OttoStore.mapSkippingFailures`. Reverting `CancellationEpisodeMapping.storedNoteAnywhere` alone leaves all 118 tests green: its `catch` fires only when a SwiftData `context.fetch` throws, which no test forces. The exposure there was theoretical — that error can never be a `MappingError`, so `mappingLogSummary` always returned a type name — but the *claim* was wrong, and an unguarded log line is this run's own item 7.
+- **The stated cause of the earlier flake was false.** The ledger and the test comment both blamed concurrent suites. The OttoPersistence target is `@Suite(.serialized)` throughout, so suites do **not** run concurrently. The real mechanism is that `OSLogStore.position(date:)` is approximate — measured reaching ~81 ms behind `since`, putting five earlier tests' lines in the window. The remedy adopted happens to tolerate the real mechanism, which is why nothing forced the diagnosis to be re-derived. Corrected in both places, and the test now makes its own line the discriminating assertion instead of asserting about output it did not produce.
+- **Round 1's reason for declining this technique was cited by half, and the dropped half is a live risk.** `PROD-READINESS.md` gives two: cost, **and** dependence on the log daemon being readable. `.github/workflows/ci.yml`'s `persistence-tests` job now runs a test requiring `OSLogStore` to be readable on a GitHub-hosted runner — an environment this run cannot exercise, and `docs/next-wave.md` records that CI's first run found a host-environment dependency twice. Kept anyway, because removing it leaves R0-4 with no executable guard at all, which is the failure round 1 was criticised for. **If CI goes red on it**, the failure will be `OSLogStore(scope:)` throwing rather than an assertion, and the remedy is to move `theEmittedLineIsRedacted` behind a host check rather than to delete it. Added to CANNOT ASSESS.
+- **The offending value is now unrecoverable from any surface, which is a real trade.** `mapSkippingFailures` discards the caught error and nothing else carries it, so after this change the invalid value exists nowhere — not in the log, not under a private-data profile, not in a sysdiagnose. `description` keeping it has no reader. On the default read the fix is still strictly better, because `<private>` told an investigator nothing; but distinguishing a Feb-30 packing artifact from a zero from garbage is diagnosability this ledger should not have claimed as pure gain.
+- **A real card's issuer and last four were copied into a new source fixture**, in the stage whose subject is card details — `"Bank"` / `"XXXX"`, which `reviews-2/BASELINE-2.md` records as the real device's payment method. Not a new exposure (both already appear in committed documents, and no `.swift` file carried them before), but the surrounding fixture already used a synthetic value. Replaced with `"Test Issuer"` / `"4821"`.
 
 ---
 

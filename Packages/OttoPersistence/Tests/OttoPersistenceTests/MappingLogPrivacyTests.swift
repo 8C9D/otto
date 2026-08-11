@@ -74,20 +74,32 @@ extension SerializedPersistenceTests {
             // Reads through `mapSkippingFailures`, which logs and skips.
             #expect(try await store.subscriptions().isEmpty)
 
-            // Every skip line in the window, not the first: the log is
-            // process-wide and other suites run concurrently, so `first` picked
-            // up whichever test happened to skip a record at the same moment.
+            // Every skip line in the window, not the first.
+            //
+            // NOT because suites run concurrently - this whole target is
+            // `@Suite(.serialized)` (`TestSupport.swift`), so they do not.
+            // `OSLogStore.position(date:)` is approximate: it reaches ~80 ms
+            // behind `since`, so the window legitimately contains lines from
+            // tests that ran just before this one, and the first version of
+            // this test asserted about whichever of those came first.
             let skipped = try Self.persistenceLogLines(since: since)
                 .filter { $0.contains("Skipping unmappable record") }
-            #expect(!skipped.isEmpty, "the store logged nothing for a record it skipped")
-            #expect(skipped.contains { $0.contains("Subscription.cycleStartDay") })
-            for line in skipped {
-                // The packed value the pre-fix line carried into the log. Held
-                // across ALL of them, not just this test's: after the fix no
-                // skip line anywhere carries a value.
+
+            // The discriminating assertion: OUR line, from the record this test
+            // corrupted. Every falsification of the fix fails here.
+            let ours = skipped.filter { $0.contains("cycleStartDay") }
+            #expect(!ours.isEmpty, "the store logged nothing for the record it skipped")
+            #expect(ours.allSatisfy { $0.contains("Subscription.cycleStartDay") })
+            for line in ours {
+                // The packed value the pre-fix line carried into the log.
                 #expect(!line.contains("20260230"))
                 #expect(!line.contains("<private>"))
             }
+            // And, more weakly, no skip line from ANY test in the window
+            // carries a redaction marker - after the fix none of them can. A
+            // failure here is about the subsystem, not necessarily about this
+            // test's record, which is why it is separate from the block above.
+            #expect(skipped.allSatisfy { !$0.contains("<private>") })
         }
 
         /// Every `persistence` line this process emitted since `since`.
