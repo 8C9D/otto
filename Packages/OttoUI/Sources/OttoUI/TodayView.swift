@@ -33,9 +33,12 @@ enum TodaySection: Hashable {
         var hasReadRepairs = false
         var hasNext30Days = false
         var hasLater = false
-        /// A pass produced an outcome AND that outcome may be stated -
-        /// see `ScheduleOutcome.canClaimCoverage`.
-        var canClaimCoverage = false
+        /// The latest pass's outcome, or nil when no pass has succeeded since
+        /// the last failure. Whether it may be STATED is decided in `plan`,
+        /// not by the caller - the mapping from an outcome to a coverage claim
+        /// is the rule this type exists to pin, and computing it at the call
+        /// site put it in a SwiftUI body where no test can reach it.
+        var scheduleOutcome: ScheduleOutcome?
     }
 
     static func plan(_ input: Input) -> [TodaySection] {
@@ -60,7 +63,7 @@ enum TodaySection: Hashable {
         if input.hasLater {
             sections.append(.later)
         }
-        if input.canClaimCoverage,
+        if input.scheduleOutcome?.canClaimCoverage == true,
            input.permission == .authorized || input.permission == .provisional {
             sections.append(.coverage)
         }
@@ -112,7 +115,7 @@ struct TodayView: View {
             hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
             hasNext30Days: !overview.next30Days.isEmpty,
             hasLater: !overview.later.isEmpty,
-            canClaimCoverage: model.notifications?.outcome?.canClaimCoverage ?? false
+            scheduleOutcome: model.notifications?.outcome
         ))
         return List {
             ForEach(sections, id: \.self) { section in

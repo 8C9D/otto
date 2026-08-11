@@ -1,4 +1,6 @@
+import Foundation
 import Testing
+import OttoDomain
 import OttoServices
 @testable import OttoUI
 
@@ -10,6 +12,34 @@ import OttoServices
 @Suite("Today's section plan (spec §6 constraint 3, §7.1)")
 struct TodaySectionPlanTests {
 
+    /// The horizon day the outcome fixtures claim coverage through. A stored
+    /// constant rather than a force-unwrap, so an invalid literal would be a
+    /// compile-time-visible nil here instead of a crash inside a test.
+    private static let horizon = CalendarDay(year: 2026, month: 11, day: 4)
+
+    /// A pass that succeeded with nothing left behind.
+    private func healthyOutcome(ledgerFailures: [UUID] = []) throws -> ScheduleOutcome {
+        ScheduleOutcome(
+            permission: .authorized,
+            scheduledCount: 3,
+            truncatedAfter: nil,
+            coveredThrough: try #require(Self.horizon),
+            ledgerFailures: ledgerFailures
+        )
+    }
+
+    /// The rule R0-1 added, pinned where it is actually applied.
+    ///
+    /// The gate lived in the SwiftUI body as `outcome?.canClaimCoverage ?? false`
+    /// - unreachable by any test, so reverting it left the suite green. It is
+    /// `plan`'s decision now, and this asserts the mapping rather than
+    /// restating `ledgerFailures.isEmpty` under another name.
+    @Test("a pass that failed some subscriptions' ledgers withdraws the coverage claim from Today")
+    func ledgerFailuresWithdrawCoverageFromThePlan() throws {
+        #expect(plan(scheduleOutcome: try healthyOutcome()).contains(.coverage))
+        #expect(!plan(scheduleOutcome: try healthyOutcome(ledgerFailures: [UUID()])).contains(.coverage))
+    }
+
     private func plan(
         subscriptionsEmpty: Bool = false,
         permission: NotificationPermission? = .authorized,
@@ -17,7 +47,7 @@ struct TodaySectionPlanTests {
         hasReadRepairs: Bool = false,
         hasNext30Days: Bool = false,
         hasLater: Bool = false,
-        canClaimCoverage: Bool = false
+        scheduleOutcome: ScheduleOutcome? = nil
     ) -> [TodaySection] {
         TodaySection.plan(TodaySection.Input(
             subscriptionsEmpty: subscriptionsEmpty,
@@ -26,7 +56,7 @@ struct TodaySectionPlanTests {
             hasReadRepairs: hasReadRepairs,
             hasNext30Days: hasNext30Days,
             hasLater: hasLater,
-            canClaimCoverage: canClaimCoverage
+            scheduleOutcome: scheduleOutcome
         ))
     }
 
@@ -79,13 +109,13 @@ struct TodaySectionPlanTests {
     }
 
     @Test("the coverage footer needs a schedule outcome AND a permission that can deliver")
-    func coverageFooterConditions() {
-        #expect(plan(canClaimCoverage: true).contains(.coverage))
-        #expect(plan(permission: .provisional, canClaimCoverage: true).contains(.coverage))
-        #expect(!plan(permission: .denied, canClaimCoverage: true).contains(.coverage))
-        #expect(!plan(canClaimCoverage: false).contains(.coverage))
+    func coverageFooterConditions() throws {
+        #expect(plan(scheduleOutcome: try healthyOutcome()).contains(.coverage))
+        #expect(plan(permission: .provisional, scheduleOutcome: try healthyOutcome()).contains(.coverage))
+        #expect(!plan(permission: .denied, scheduleOutcome: try healthyOutcome()).contains(.coverage))
+        #expect(!plan(scheduleOutcome: nil).contains(.coverage))
         // An empty database schedules nothing worth a horizon statement.
-        #expect(!plan(subscriptionsEmpty: true, canClaimCoverage: true).contains(.coverage))
+        #expect(!plan(subscriptionsEmpty: true, scheduleOutcome: try healthyOutcome()).contains(.coverage))
     }
 
     @Test("no notification engine means no notification surface, never a crash")

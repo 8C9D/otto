@@ -134,6 +134,10 @@ Provenance: **INDEPENDENT** = found by reading the code in this run. **CONTAMINA
 
   **Required change, for whoever picks this up:** make the era explicit at *both* ends in one commit — Gregorian components in `DateProvider`/`CalendarDayBinding`/`DisplayFormatting`/`InsightsView`, **and** `components.calendar = Calendar(identifier: .gregorian)` on the trigger in `LiveNotificationClient.add`, checking that `pendingRequests()`'s readback at `:147-157` still round-trips. Verify on a device with the calendar set to Buddhist. Until then the app is correct on Gregorian devices and wrong on others, which is where it already was.
 
+- **R4-1 (from `reviews/REVIEW-4.md`, P1)** — R0-1's coverage gate is all-or-nothing, so one subscription's ledger failure withdraws a statement that is still accurate for every other subscription. Worse, `.notificationStatus` renders only for a permission other than authorized (`TodayView.swift:63-65`), so for an authorized user whose engine has been failing since install, Today is **identical** to a healthy one: no coverage line, no anything. This run traded a false claim for silence, which is the lesser evil but still not right. Saying something true in its place is new user-facing copy, which the scope constraint forbids.
+- **R4-2 (from `reviews/REVIEW-4.md`, P2)** — F3's coordinator half is unverified: `NotificationCoordinator` is inside `#if os(iOS)` and compiles to nothing under host `swift test`, so reverting `rescheduleSoon` to its pre-fix shape leaves all tests green. That path carries every unattended trigger (foreground, timezone, significant time change, notification delivered/acted on); only `.stateChange` reaches the tested store. Separately, `handleBackgroundRefresh` never calls `onOutcome` at all, so a background pass publishes nothing either way. This is the same gap `docs/next-wave.md` already carries as "simulator-hosted `NotificationCoordinator` tests".
+- **R4-3 (from `reviews/REVIEW-4.md`, P2)** — `ScheduleOutcome.truncatedAfter` has no consumer anywhere: the budget can silently drop rungs past the truncation point and no surface says so. And `ledgerFailures` reaches the log only as a bare count (`OttoLog.swift:87`), so an investigation learns that some subscription failed but never which.
+
 - **R3-1 (from `reviews/REVIEW-3.md`)** — `ExportService.performImport`'s new empty-database predicate is `current.isEmpty`, but `completeSnapshot()` includes tombstones, so a database whose every record is tombstoned is not `isEmpty`. It therefore still gets the merge-or-replace prompt, and choosing Merge there reproduces F6 exactly: nil watermark, rows between the file's last charge and today silently never created. The stated principle ("does this device have ledger progress worth keeping") is broader than the predicate that implements it. Reviewer measured this against the real store. Post-freeze discovery, so recorded rather than fixed.
 
 - **R0-7's stored-data repair** — repairing calendar days already written under a non-Gregorian device calendar. A migration/repair pass over stored user data is a new user-visible capability, which the scope constraint forbids. Required change described in NEXT ROUND.
@@ -146,10 +150,10 @@ Frozen at Review 0 (`reviews/REVIEW-0.md`, verdict PASS-WITH-FINDINGS). The P0 a
 
 | # | id | pass | terminal state |
 |---|---|---|---|
-| 1 | F4 | 4 | |
-| 2 | R0-1 | 4 | |
-| 3 | F3 | 4 | |
-| 4 | F5 | 4 | |
+| 1 | F4 | 4 | **RESOLVED** — `c7bfe46`; UNVERIFIED on hardware (Focus behavior) |
+| 2 | R0-1 | 4 | **RESOLVED** — `c7bfe46`, re-tested after Review 4 |
+| 3 | F3 | 4 | **RESOLVED (store path)** — `c7bfe46`; coordinator path UNVERIFIED, see NEXT ROUND |
+| 4 | F5 | 4 | **RESOLVED** — `c7bfe46` |
 | 5 | F2 | 5 | |
 | 6 | F6 | 3 | **RESOLVED** — `b15b0a6`, remediated after Review 3 |
 | 7 | F1 | 2 | **DEFERRED** — pass 2 rejected and reverted |

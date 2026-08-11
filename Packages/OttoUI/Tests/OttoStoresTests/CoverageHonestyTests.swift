@@ -26,7 +26,7 @@ private struct ThrowingScheduler: ReminderScheduling {
 struct CoverageHonestyTests {
 
     private struct FixedClient: NotificationClient {
-        var permission: NotificationPermission = .authorized
+        var permission: NotificationPermission = .denied
         func permission() async -> NotificationPermission { permission }
         func requestAuthorization() async -> NotificationPermission { permission }
         func pendingRequests() async -> [NotificationRequestSpec] { [] }
@@ -49,6 +49,8 @@ struct CoverageHonestyTests {
 
     @Test("a failed pass drops the previous outcome - no claim beats a stale one")
     func failedPassClearsTheOutcome() async throws {
+        // The system says denied; the stale outcome says authorized. A failed
+        // pass has to go to the system rather than trust what it already held.
         let store = NotificationStatusStore(
             scheduler: ThrowingScheduler(), client: FixedClient(),
             dates: .fixed(today: try day(2026, 8, 6))
@@ -61,17 +63,11 @@ struct CoverageHonestyTests {
 
         // Not the old outcome, and not a fabricated new one.
         #expect(store.outcome == nil)
-        // The permission is still refreshed - a failed pass says nothing about
-        // whether notifications are allowed.
-        #expect(store.permission == .authorized)
+        // The permission is still refreshed FROM THE SYSTEM. Asserting
+        // .authorized here would have been unfalsifiable: apply(outcome) on the
+        // seeding line already set it, so deleting the refresh entirely left
+        // the assertion green.
+        #expect(store.permission == .denied)
     }
 
-    @Test("a pass that failed some subscriptions' ledgers may not claim coverage")
-    func ledgerFailuresWithdrawTheCoverageClaim() throws {
-        let day = try day(2026, 11, 4)
-        #expect(outcome(coveredThrough: day).canClaimCoverage)
-        // Succeeded overall, and reports the full horizon - but a subscription
-        // whose materialization threw has no rows and no reminders this pass.
-        #expect(!outcome(ledgerFailures: [UUID()], coveredThrough: day).canClaimCoverage)
-    }
 }
