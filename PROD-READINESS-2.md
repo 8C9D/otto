@@ -32,8 +32,8 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` + `d00c086` (the shipped predicate is `d00c086`'s) |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — `0b76d65` |
-| 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | **RESOLVED** — see ITEM 6 |
-| 7 | **R5-2** | F2's log line has no executable guard | **RESOLVED** — see ITEM 7 |
+| 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | **RESOLVED** — `0ffe160` |
+| 7 | **R5-2** | F2's log line has no executable guard | **RESOLVED** — `cac78f8` |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded). There are no others.
 
@@ -48,9 +48,12 @@ Round 1's `RF-2` was a systematic blind spot: each stage's range started at what
 | 2 — R4-1 | `a82d4e0..100c508` | `100c508` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-2.md`) |
 | 3 — R0-6 | `100c508..62b4128` | `62b4128` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-3.md`) |
 | 4 — R3-1 | `62b4128..989ece0` | `989ece0` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-4.md`) |
-| 5 — R0-4 | `989ece0..<head>` | *(pending)* | *(pending)* |
+| 5 — R0-4 | `989ece0..5d8ed6a` | `5d8ed6a` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-5.md`) |
+| 6 — RF-3 + R5-2 | `5d8ed6a..<head>` | *(pending)* | *(pending)* |
 
 **The range start is recorded when the stage opens, not when its verdict lands.** Four consecutive reviewers raised the missing row, each time because the table was being kept as a record of *completed reviews* rather than of *ranges issued* — which is round 1's `RF-2` in miniature, in the table built to prevent it. The start is knowable from the stage's first commit; only the head and the verdict have to wait.
+
+**Stage 6 covers two items, deliberately.** The prompt groups items 6 and 7 as "cheap, do them last and do not let them expand", and they share one technique and one test idiom. One commit per item still holds — `0ffe160` and `cac78f8` — and the ranges still chain, so no commit falls outside a review. Recorded as a deviation from one-review-per-item rather than left to be noticed.
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read. Stage 1's own remediation commit lands **after** the reviewed head `a82d4e0` and is therefore inside stage 2's range, not orphaned between them.
 
@@ -289,7 +292,7 @@ Together those pin it from both ends: the call site must use the helper, and the
 
 ## ITEM 6 — RF-3, the reasons for failures 2..n reach nothing
 
-**RESOLVED**, `<stage-6 commit>`. A regression from round 1's own F5 fix.
+**RESOLVED**, `0ffe160`. A regression from round 1's own F5 fix.
 
 **Reconfirmed at HEAD.** `reconcile` collects `(id, error)` for every refused `add`, then logs `failed=[\(OttoLog.list(failures.map(\.id)))]` — identifiers only — and rethrows `failures.first` alone. Measured by reverting the fix: `failed=[…|renewal …|renewal …|renewal]`, three rungs and no reason among them.
 
@@ -313,7 +316,7 @@ reconcile pending=0 desired=64 … added=[… <…>] failed=[<decode: missing da
 
 ## ITEM 7 — R5-2, F2's log line has no executable guard
 
-**RESOLVED**, `<stage-7 commit>`.
+**RESOLVED**, `cac78f8`.
 
 **Reconfirmed at HEAD.** Deleting **both** `OttoLog.actions` statements from `NotificationActionHandler` — the entire content of round 1's F2 fix — left the whole suite green, exactly as `reviews/REVIEW-5.md` measured. F2 was closed on an artifact quoted in a commit message, which is real evidence about one run and no guard at all against the next edit.
 
