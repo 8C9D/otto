@@ -30,7 +30,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
-| 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — see ITEM 4 |
+| 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
 | 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
@@ -216,7 +216,7 @@ The first falsification attempt was **invalid and is recorded rather than hidden
 
 ## ITEM 4 — R3-1, an all-tombstoned database still loses its watermarks
 
-**RESOLVED**, `<stage-4 commit>`.
+**RESOLVED**, `20d189a`.
 
 **Reconfirmed at HEAD.** `ExportService.performImport` decided the watermark policy with `strategy == .replace || current.isEmpty`, and `OttoDataSnapshot.isEmpty` is emptiness of the raw arrays, which `completeSnapshot()` fills **tombstones included** by design. A database whose every record is tombstoned is therefore not `isEmpty`: the UI asks merge-or-replace, and answering Merge maps to `watermarks: .keep`, leaving every restored subscription with a nil watermark. `min(storedWatermark ?? today, today)` then materializes from today and the rows between the file's last charge and today are silently never created — F6 exactly, one prompt later.
 
