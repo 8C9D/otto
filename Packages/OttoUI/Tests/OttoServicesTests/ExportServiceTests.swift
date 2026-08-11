@@ -162,9 +162,24 @@ struct ExportServiceTests {
         let buriedAt = Date(timeIntervalSince1970: 9_000)
         for index in buried.subscriptions.indices { buried.subscriptions[index].deletedAt = buriedAt }
         for index in buried.billingEvents.indices { buried.billingEvents[index].deletedAt = buriedAt }
-        for index in buried.paymentMethods.indices { buried.paymentMethods[index].deletedAt = buriedAt }
+        // A LIVE payment method, deliberately. `deleteSubscription` cascades to
+        // trials, episodes, billing events and price changes but not to payment
+        // methods, so this is the state a user actually reaches by deleting
+        // every subscription - and a predicate that demanded every record type
+        // be tombstoned would answer "something is live" and miss it.
+        buried.paymentMethods = [PaymentMethod(
+            id: try fixtureUUID(300),
+            label: "Bank",
+            last4: "XXXX",
+            issuer: "Bank",
+            expiryMonth: 12,
+            expiryYear: 2030,
+            isDefault: true,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )]
         #expect(!buried.isEmpty)
-        #expect(buried.hasNoLiveRecords)
+        #expect(buried.hasNoLiveSubscriptions)
 
         let transfer = MockTransfer(snapshot: buried)
         let service = ExportService(transfer: transfer)

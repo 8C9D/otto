@@ -29,14 +29,16 @@ import OttoDomain
 ///  - `th_TH@calendar=buddhist`, `ja_JP@calendar=japanese` — 1 issue,
 ///    `DisplayFormattingTests.swift:49`. That one IS calendar-caused:
 ///    `Date.FormatStyle` renders through the process calendar and a `.locale()`
-///    call does not override it, so the day reads "Aug 15, 2569 BE".
-///    `NotificationReconciliationTests.swift:170` is the same shape.
-///  - `ar_SA@calendar=islamic-umalqura` — 5 issues, the four above plus
-///    `DisplayFormattingTests.swift:59,68,69`. Those three are **not about the
-///    calendar at all**: they are Arabic-Indic numerals from the locale's
-///    numbering system ("Every ٤٥ days", "١ subscription"), reached through
-///    `String(localized:)` and `AttributedString(localized:)`, which never
-///    touch a date.
+///    call does not override it, so the day reads "Aug 15, 2569 BE" or
+///    "Aug 15, Reiwa 8".
+///  - `ar_SA@calendar=islamic-umalqura` — 5 issues: `:49` above, plus
+///    `NotificationReconciliationTests.swift:170` (same calendar cause, but its
+///    body carries no year, so only a calendar that disagrees on the MONTH
+///    moves it), plus `DisplayFormattingTests.swift:59,68,69`. Those last three
+///    are **not about the calendar at all**: they are Arabic-Indic numerals
+///    from the locale's numbering system ("Every ٤٥ days", "١ subscription"),
+///    reached through `String(localized:)` and `AttributedString(localized:)`,
+///    which never touch a date.
 @Suite("Calendar era: day conversions never resolve in the device calendar (F1)")
 struct CalendarEraTests {
 

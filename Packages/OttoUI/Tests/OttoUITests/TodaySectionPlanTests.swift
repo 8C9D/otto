@@ -196,11 +196,14 @@ struct CoverageGapCardTests {
         // fail on a host the run itself created as an evidence surface. The
         // branch is still pinned - swap the wordings and the count phrase is
         // absent from the headline entirely.
+        // Exact equality, with the count phrase interpolated rather than
+        // spelled out: that pins the WHOLE string and still holds in a locale
+        // whose numbering system is not ASCII. `contains` alone would accept
+        // "1 subscription subscriptions couldn't be updated".
         let one = CoverageGapCard(failureCount: 1)
-        #expect(one.headline.contains(subscriptionCountText(1)))
-        #expect(one.headline.hasSuffix("couldn't be updated"))
+        #expect(one.headline == "\(subscriptionCountText(1)) couldn't be updated")
         let three = CoverageGapCard(failureCount: 3)
-        #expect(three.headline.contains(subscriptionCountText(3)))
+        #expect(three.headline == "\(subscriptionCountText(3)) couldn't be updated")
         // The count is actually used, rather than a fixed phrase that happens
         // to contain one of them.
         #expect(one.headline != three.headline)
@@ -319,5 +322,24 @@ struct TodayInputTests {
         #expect(built.permission == .authorized)
         #expect(built.lastPassFailed)
         #expect(TodaySection.plan(built).contains(.coverageGap))
+
+        // Every field this function chooses, not just the one the review
+        // happened to name: replacing either of the other two with a constant
+        // deletes the §5.2b unreadable-record card or the read-repair card from
+        // Today for every user, and nothing would have noticed.
+        await repository.seedNeedsReview(
+            unreadableCount: 2,
+            readRepairs: [SubscriptionReadRepairReport(
+                subscriptionID: UUID(), name: "Gate Test", repairs: []
+            )]
+        )
+        await model.subscriptionsStore.refresh()
+        let withCards = TodaySection.input(
+            model: model, overview: overview, subscriptionsEmpty: false
+        )
+        #expect(withCards.unreadableCount == 2)
+        #expect(withCards.hasReadRepairs)
+        #expect(TodaySection.plan(withCards).contains(.unreadableRecords))
+        #expect(TodaySection.plan(withCards).contains(.readRepairs))
     }
 }

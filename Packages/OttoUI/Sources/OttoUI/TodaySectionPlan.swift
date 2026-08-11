@@ -59,14 +59,6 @@ enum TodaySection: Hashable {
         var lastPassFailed = false
     }
 
-    /// Builds the input from the stores.
-    ///
-    /// Not in the view body. `TodaySection.Input` was extracted so the
-    /// composition RULE would be testable, and that left the *mapping from the
-    /// stores to the input* behind in a private method on a `View`, which is the
-    /// one shape no host test can reach - so the whole notification half of it
-    /// could be deleted with every test green. That is Wave 9A defect 1's shape,
-    /// and round 1's R0-1 had the same one at the same call site.
     /// The whole mapping, from the model the view holds.
     ///
     /// The view passes `model` and nothing else on purpose. When it picked the
@@ -91,6 +83,15 @@ enum TodaySection: Hashable {
         )
     }
 
+    /// The same mapping taken apart, for tests that vary one input at a time -
+    /// including the absent-engine case, which a real `AppModel` cannot express
+    /// without building a second one.
+    ///
+    /// NOT the seam the view uses. `TodaySection.Input` was extracted so the
+    /// composition RULE would be testable, and that left the mapping behind in
+    /// a private method on a `View` - the one shape no host test can reach, and
+    /// Wave 9A defect 1's shape exactly. Round 1's R0-1 had it at this same
+    /// call site.
     @MainActor
     static func input(
         overview: TodayOverview,

@@ -87,16 +87,17 @@ public actor ExportService {
         // last real charge (OttoStore+BillingEvents), so the restored ledger
         // silently loses the rows between the file's last charge and today -
         // on the one path whose entire purpose is getting them back.
-        // `hasNoLiveRecords`, not `isEmpty`. The principle above is about ledger
-        // progress, and a database whose every record is tombstoned has none -
-        // but it is not `isEmpty`, because `completeSnapshot()` carries
-        // tombstones by design. So the UI does ask merge-or-replace there, and
-        // answering Merge reproduced F6 exactly: nil watermark, and the rows
-        // between the file's last charge and today silently never created. The
-        // prompt is still right to appear - a replace and a merge really do
-        // differ for the tombstones - it is only the WATERMARK decision that
-        // must follow the principle rather than the record count.
-        let reconstruct = strategy == .replace || current.hasNoLiveRecords
+        // `hasNoLiveSubscriptions`, not `isEmpty`. The principle above is about
+        // ledger progress, and a watermark is per-subscription, so a database
+        // whose subscriptions are all tombstoned has none - but it is not
+        // `isEmpty`, because `completeSnapshot()` carries tombstones by design.
+        // So the UI does ask merge-or-replace there, and answering Merge
+        // reproduced F6 exactly: nil watermark, and the rows between the file's
+        // last charge and today silently never created. The prompt is still
+        // right to appear - a replace and a merge really do differ for the
+        // tombstones - it is only the WATERMARK decision that must follow the
+        // principle rather than the record count.
+        let reconstruct = strategy == .replace || current.hasNoLiveSubscriptions
         try await transfer.restore(
             resolved.snapshot, at: now,
             watermarks: reconstruct ? .reconstruct : .keep
