@@ -21,6 +21,15 @@ import OttoDomain
 ///
 /// Recorded here so that nobody reads a green CI run as evidence about F1: CI
 /// runners are Gregorian, and on a Gregorian host this file guards nothing.
+///
+/// **That command does not exit 0, and did not before F1 either.** The
+/// non-Gregorian host has its own baseline of PRE-EXISTING failures, measured
+/// at `7a3cf54` and unchanged by F1: 1 issue under `th_TH@calendar=buddhist`
+/// and under `ja_JP@calendar=japanese`, 5 under `ar_SA@calendar=islamic-umalqura`
+/// - `DisplayFormattingTests.swift:49,59,68,69` and
+/// `NotificationReconciliationTests.swift:170`, all of which pin rendered
+/// strings that a non-Gregorian `Calendar.autoupdatingCurrent` legitimately
+/// writes differently. Read the named tests, not the exit code.
 @Suite("Calendar era: day conversions never resolve in the device calendar (F1)")
 struct CalendarEraTests {
 
@@ -71,5 +80,28 @@ struct CalendarEraTests {
             day.displayText(locale: enCA)
                 == instant.formatted(Date.FormatStyle(date: .abbreviated).locale(enCA))
         )
+    }
+
+    @Test("the dispute summary names the charge day in the Gregorian era")
+    func spokenTextIsGregorian() throws {
+        // `spokenText` is what the user reads aloud to a bank. Its default
+        // calendar is the fifth F1 site and had no guard: reverting it alone
+        // left every test green on every host.
+        let chargeDay = try #require(CalendarDay(year: 2026, month: 8, day: 15))
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        let instant = try #require(gregorian.date(from: chargeDay.dateComponents))
+        let enCA = Locale(identifier: "en_CA")
+        let rendered = instant.formatted(Date.FormatStyle(date: .abbreviated).locale(enCA))
+
+        let summary = DisputeSummary(
+            subscriptionName: "Gate Test",
+            markedCancelledAt: Date(timeIntervalSince1970: 0),
+            evidenceNotes: [],
+            chargeDate: chargeDay,
+            chargeAmountCents: 1100,
+            currencyCode: "CAD"
+        )
+        #expect(summary.spokenText(locale: enCA).contains(rendered))
     }
 }

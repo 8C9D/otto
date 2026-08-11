@@ -231,7 +231,7 @@ public final class LiveNotificationClient: NotificationClient {
             // 1483 CE, `nextTriggerDate()` is nil, and the reminder can never
             // fire. `conversionCalendar` carries an autoupdating timezone, so
             // the fire instant still follows the device exactly as a nil
-            // calendar did. Measured both ways; see reviews-2/REVIEW-1.md.
+            // calendar did. Both measured; see PROD-READINESS-2.md, F1.
             var components = DateComponents()
             components.calendar = CalendarDay.conversionCalendar
             components.year = spec.year
