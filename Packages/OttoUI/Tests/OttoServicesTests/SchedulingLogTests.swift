@@ -86,6 +86,53 @@ struct SchedulingLogTests {
         #expect(identifiers.allSatisfy { $0.contains("=") })
     }
 
+    /// R0-7 / N2-2's line, read back the same way and for the same reason.
+    ///
+    /// The coverage half of that fix has its own executable guard
+    /// (`ImplausibleStoredDayTests`); this is the diagnostic half. A user who
+    /// sees the gap card still needs someone to be able to find out WHICH days
+    /// are wrong, and a log line that names them is the only surface that does
+    /// - so it has to be readable, and it has to still be there after the next
+    /// edit.
+    @Test("⛔ a skipped subscription's line names the offending days, and nothing about the vendor")
+    func theEmittedSkipLineNamesTheDays() async throws {
+        let fixture = SchedulerFixture()
+        // What a pre-F1 build wrote on a Buddhist device. The name is
+        // distinctive so its ABSENCE from the line is a real assertion.
+        let subscription = try makeSubscription(
+            index: 88, name: "Zzyzx Streaming", amountCents: 999_99, cycleStartDay: try day(2569, 8, 6)
+        )
+        await fixture.subscriptions.seed([subscription])
+
+        let since = Date()
+        OttoLogProbe.emitCanary(to: OttoLog.scheduling)
+        _ = try await fixture.scheduler.reschedule(
+            now: Date(timeIntervalSince1970: 1_786_000_000),
+            today: try day(2026, 8, 11),
+            timeZone: TimeZone(identifier: "America/Toronto") ?? .current
+        )
+
+        let lines = try Self.schedulingLogLines(since: since)
+        try OttoLogProbe.requireDelivered(lines)
+
+        let mine = try fixtureUUID(88).uuidString.lowercased()
+        let line = try #require(
+            lines.last { $0.contains("reason=implausibleStoredDays") && $0.lowercased().contains(mine) },
+            "the pass skipped the subscription without saying which days made it skip"
+        )
+
+        // The days themselves, not a count: "one of its dates is wrong" is not
+        // something a user can act on, and 2569-08-06 is.
+        #expect(line.contains("2569-08-06"))
+        #expect(line.contains("today=2026-08-11"))
+        // The same privacy rule as every other line in this file: an opaque
+        // identifier, calendar days, and a control-flow outcome. Never what the
+        // user pays for.
+        #expect(!line.contains("Zzyzx"))
+        #expect(!line.contains("999"))
+        #expect(!line.contains("$"))
+    }
+
     /// Every `scheduling` line this process emitted since `since`.
     /// `.currentProcessIdentifier` reads only this process, so the assertion is
     /// about the app rather than about the host.

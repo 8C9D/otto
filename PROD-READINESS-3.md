@@ -36,7 +36,7 @@ Everything else in round 1's and round 2's NEXT ROUND stays in NEXT ROUND.
 
 | # | id | what | terminal state |
 |---|---|---|---|
-| 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | pending |
+| 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | **RESOLVED as detection / DEFERRED as repair** - stage 2; the V3 freeze is NOT lifted |
 | 2 | **R0-9** | The migration guard cannot detect a missing stage | **RESOLVED** - stage 1 |
 | 3 | **F1's CI guard** | F1's four reading sites have no guard that runs on a Gregorian machine | pending |
 | 4 | **R4-2** | `NotificationCoordinator` compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome` | pending |
@@ -87,6 +87,138 @@ Recorded as they are made; this list is complete at the end of the run.
 3. **Release configuration behaves as Debug** except where a finding says otherwise.
    No Release build was produced this run.
 4. **`8806853` is the intended starting point** and neither prior branch is to be merged, rebased or pushed by this run.
+
+## ITEM 1 - R0-7 / N2-2, the days already stored under a non-Gregorian calendar
+
+**RESOLVED as a detection, DEFERRED as a repair.**
+The V3 schema freeze is **not** lifted, and the reason is not caution: **`OttoSchemaV4` cannot supply the fact the repair needs.**
+The harm F1 created on such a device - zero reminders behind a Today that claims full coverage - is closed.
+The wrong dates are not.
+
+### Reconfirmed at HEAD by executing the defect
+
+Not by reading `PROD-READINESS-2.md`'s trace.
+A throwaway probe ran the **real** `NotificationScheduler.reschedule` over a subscription whose stored anchor is `2569-08-06` - what a pre-F1 build wrote on a Buddhist device for "6 Aug 2026" - with `today` at `2026-08-11`, beside an identically-shaped healthy control:
+
+```
+PROBE   scheduledCount=0  pending=0  ledgerFailures=0  canClaimCoverage=true  coveredThrough=2026-11-09  plan=0
+CONTROL scheduledCount=4             ledgerFailures=0  canClaimCoverage=true  coveredThrough=2026-11-09
+```
+
+Round 2's trace is exact, and one detail of it is worse than the sentence conveys: the two outcomes are **identical on every field Today reads**.
+`scheduledCount` is not on Today; `canClaimCoverage` and `coveredThrough` are, and they agree.
+A device with no reminders at all is indistinguishable, at the surface, from one with four.
+
+**This reproduces on a Gregorian host.**
+The corruption lives in the stored *values*, not in the reading, so it needs no non-Gregorian harness - which is also why the guard added below runs on every CI machine, unlike F1's own.
+
+### The schema decision, and why it is not a deferral
+
+The prompt permits `OttoSchemaV4` on four conditions and requires this run to decide rather than inherit.
+Decided: **no V4.**
+The reason is a defect in the premise, not a failure of the conditions.
+
+**A V4 marker records the calendar the device is set to at MIGRATION time, not the calendar that wrote the rows.**
+The V3→V4 stage runs once, years after the data was written, and the only value it could put in a `writingCalendar` column is `Calendar.current.identifier` as read at that moment.
+That is precisely the guess the prompt forbids, and it is worse than a coin flip in both directions:
+
+- a user who switched **Buddhist → Gregorian before updating** gets a marker saying "gregorian", no repair runs, and the data stays wrong;
+- a user who switched **Gregorian → Buddhist before updating** gets a marker saying "buddhist", the repair runs, and **correct billing dates are shifted 543 years into the past.**
+
+There is no way to tell those two devices apart, and the second outcome destroys data that was right.
+So the column adds cost and no information: **`Calendar.current` is already readable at repair time without a schema change**, and a column that can only be filled from it tells a future reader nothing the future reader could not have read directly.
+
+The evidence that *does* exist is already in V3.
+Every record carries the §5.0 audit quartet, and `createdAt` is a `Date` - an absolute instant no calendar corrupts.
+A row created at a true instant in 2026 whose `expectedDate` is 2569 is detectably inconsistent **with its own record**, and that is inference from stored evidence rather than a guess about the device.
+It is also not enough to *repair* with: identifying which calendar produced a given `(y, m, d)` is only a year offset for Buddhist, Minguo and Persian, while Islamic months and days are not Gregorian ones shifted at all and Japanese year 8 is ambiguous across three eras.
+**The schema was never the limitation.** The limitation is that the writing calendar was not recorded and cannot be recovered, and V4 does not change that.
+
+**Against the four conditions, one by one:**
+
+1. **Item 2 lands first - MET.** Stage 1, `87d6508` + `7d531de`. It is a real gate: it now catches a missing stage, a mis-wired stage, and (after the reviewer's finding) a version identifier that was copied and never bumped.
+2. **The migration proved on data written by the old schema - not attempted, and it is not what fails.** The mechanics are provable here; `WatermarkRelocationMigrationTests` already builds a V2 store on disk, closes it and reopens it at V3, so the harness exists and `reviews/REVIEW-0.md` §4's concern about verifying from the writing context is answerable. What cannot be proved is the migration's **input**, because the input is a guess.
+3. **Idempotent and reversible in effect - satisfiable, and irrelevant.** A one-shot marker in the device-state store would give idempotence with no schema change at all, since that store is local-only and explicitly outside the versioned chain (`OttoDeviceStateSchema.swift:11-15`). A Gregorian device is untouched by construction. Neither answers condition 2's problem.
+4. **Condition 4 therefore applies**, on its own stated grounds: *"shipping an unverifiable migration on the store that holds the money is worse than both."*
+   The failure mode is not "the repair does nothing"; it is "the repair silently rewrites correct billing dates", on a device nobody can inspect, with no way to tell which case you are in.
+
+### What changed instead
+
+Two additions, no schema, no data mutation, no new screen or setting.
+
+- **`CalendarDay.isPlausibleStoredDay(asOf:)`** and **`Subscription.implausibleStoredDays(asOf:)`** in `OttoDomain` (`StoredDayPlausibility.swift`).
+  A stored day more than **100 years** from today cannot be a date Otto schedules against.
+  Every calendar Foundation offers is centuries away from the Gregorian numbering `CalendarDay` is built on - Buddhist +543, Hebrew +3760, Islamic −578, Minguo −1911, Japanese Reiwa −2018, Persian −621 - and the nearest miss is five times outside the window.
+  It makes **no claim about which calendar wrote the day and performs no conversion**; both would be guesses.
+- **`NotificationScheduler.reconcileLedger`** reports such a subscription as a ledger failure, logs which days, and skips it.
+  `ledgerFailures` already drives `canClaimCoverage`, which already drives round 2's `CoverageGapCard`, so the silent state becomes a visible one through machinery that exists.
+
+The fields checked are exactly the ones the planner and the materializer read as days to schedule against: the stored anchor, the trial's entered start and derived conversion date, a pause's scheduled resume, and the last recorded use.
+The anchor is read directly rather than through `billingAnchor(asOf:)`, because that derivation compares the conversion date against `today` - the comparison the corruption breaks.
+
+### Predicted observable difference, then measured
+
+Predicted before the change: the corrupt device keeps `scheduledCount=0` (nothing is repaired) but gains `ledgerFailures=[id]` and `canClaimCoverage=false`; the healthy device is bit-for-bit unchanged; every existing test is unchanged because no fixture in the repository is more than a century from its own `today`.
+
+Measured: all three hold.
+Every fixture year in `Packages/*/Tests` is 1896-2028, and the three pre-1900 ones are date-engine arithmetic tests that never reach a scheduler.
+Host suites went 256 / 119 / 200 with no pre-existing test touched.
+
+### Falsified, four ways, at the call site each time
+
+| what was broken | result |
+|---|---|
+| the **wiring** in `reconcileLedger` deleted, helper untouched | 5 issues across 3 tests: `(outcome.ledgerFailures → []) == ([corrupt.id] → …)`, `(outcome.canClaimCoverage → true) == false`, and `materializeCalls == [healthy.id]` |
+| `isPlausibleStoredDay` forced to `true` | 5 issues, including all four field cases |
+| the field list cut back to `cycleStartDay` alone | 3 issues - the trial, the pause resume and the last-used cases |
+| **only** the log statement deleted, failure reporting kept | `lines.last { $0.contains("reason=implausibleStoredDays") && … } → nil` - at the target-line `#require`, not at the canary |
+
+The healthy-device test passes under every one of them, which is what makes it a control rather than a fourth copy of the same assertion.
+
+### Two things this stage got wrong and found by falsifying
+
+- **A test that passed for the wrong reason, caught before it shipped.**
+  The fourth test first asserted that a corrupt subscription leaves no ledger rows and no watermark afterwards.
+  Both are true **with the fix reverted**: a 2569 anchor produces no charges in a 2026 window either way, and `FakeBillingEventRepository.materializeEvents` never advances a watermark at all.
+  It asserted nothing about the change.
+  It now asserts the **call** - `materializeCalls == [healthy.id]` - which is what the fix actually alters, and it fails when the wiring is removed.
+- **An invalid falsification, recorded rather than hidden.**
+  The first attempt at falsification 1 located the end of the block with `s.index("                continue\n            }\n")` and no start offset, so it matched an earlier `continue` in the file and cut the wrong region; the suite stayed green and the falsification looked like a failure of the test.
+  Re-done with the search anchored to the block, and the removal printed and the symbol count checked (`grep -c` → 0) before the run.
+  This is round 2's own "patched the first of two identical lines" defect, in a different tool.
+
+### What a non-Gregorian user's actual position is at the end of this run
+
+Stated concretely, because declining V4 obliges it.
+
+**On a fresh install, any calendar: correct.** F1 is right, nothing is stored wrong, and this stage is a no-op.
+
+**On a device that already holds pre-F1 data:**
+
+1. Reminders for every affected subscription are **still not scheduled**. This run does not repair that and does not claim to.
+2. Today no longer says they are. `canClaimCoverage` is false, so round 2's coverage-gap card appears - *"N subscriptions couldn't be updated / Otto couldn't refresh their reminders on its last check, so some may be missing. Nothing was deleted, and it will try again."*
+3. The subscription list and detail screens show the wrong dates **in plain sight** - "Aug 6, 2569" - because F1 made the display resolve the stored numbers honestly rather than cancelling the error out.
+4. **The repair is manual, and it works.** Re-pick the next-charge date on each affected subscription (and the trial start, pause resume, or last-used date the log names). With F1 in place the DatePicker now writes Gregorian, so a re-picked date is stored correctly and the subscription starts scheduling on the next pass. The log line names exactly which days to fix.
+5. `docs/next-wave.md` and the app carry no instruction saying so. Writing one is a documentation change to a narrative document this run is forbidden to edit, so it goes to NEXT ROUND.
+
+**Should F1 be gated off for them? No.**
+Gating it off means resuming era-numbered writes into billing data - the defect F1 exists to stop - and it would restore delivery only by making the two errors cancel again, which is a working system built on two compensating faults.
+It is also not implementable where the seam is: `CalendarDay.conversionCalendar` is a static computed property in the domain with no access to the store, so "gate it off if this device holds corrupt data" would mean global mutable state under every date conversion in the app.
+The card plus the visible wrong dates plus a manual repair is a worse experience and an honest one; the gate is a better experience and a lie.
+
+### What this does NOT do
+
+- **It does not repair anything.** The days stay wrong until a human fixes them.
+- **The card's wording is imprecise for this case.** "It will try again" is true and will not succeed. Re-wording it means new user-facing copy, which is outside this run's scope - round 2 needed an explicit exception to add that card at all. NEXT ROUND.
+- **It only covers the scheduling pass.** `SubscriptionFlowService` and the import path can still act on a corrupt day; they are not where the silent-coverage harm is, and widening the check to them is a blast radius this stage did not measure.
+- **The threshold is a judgment.** 100 years is five times the nearest era offset and forty years beyond the oldest plausible billing anchor, but it is a constant chosen here, not derived from a spec.
+
+### Cost, measured
+
+The OttoUI suite goes from **~12 s to 21-41 s** (two consecutive full runs: 40.8 s and 21.0 s).
+The new log-reading test alone is **11.5 s**; the pre-existing `reconcile` one is 7.5 s, and they contend rather than overlap.
+That is a **fifth** `OSLogStore(scope: .currentProcessIdentifier)` test, on runners this run cannot exercise, and it deepens the standing risk in CANNOT ASSESS by one test.
+Taken anyway, and disclosed rather than buried: the alternative is a new log line with no executable guard, which is round 2's own R5-2 shipped again in the run whose item 7 is the same defect class.
 
 ## ITEM 2 - R0-9, the migration guard cannot detect a missing stage
 

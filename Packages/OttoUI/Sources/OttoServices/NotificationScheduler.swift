@@ -212,6 +212,28 @@ public actor NotificationScheduler: ReminderScheduling {
                 OttoLog.scheduling.notice("ledger pass cancelled, \(failures.count, privacy: .public) failures so far")
                 break
             }
+            // R0-7 / N2-2. A stored day centuries from today is not a date
+            // this pass can schedule against, and the pass's SILENCE about it
+            // is the defect: measured at HEAD, an era-numbered anchor produced
+            // zero reminders with `ledgerFailures` empty and `coveredThrough`
+            // at the full horizon - the outcome a healthy subscription
+            // returns. Recorded as a failure so the pass cannot claim coverage
+            // it does not have, and skipped rather than materialized, because
+            // materializing from a corrupt anchor writes ledger rows on dates
+            // nothing will ever charge. It is NOT repaired here: which
+            // calendar wrote the day was never recorded, and guessing it is
+            // not acceptable on billing dates (PROD-READINESS-3.md ITEM 1).
+            let implausible = subscription.implausibleStoredDays(asOf: today)
+            if !implausible.isEmpty {
+                failures.append(subscription.id)
+                OttoLog.scheduling.error("""
+                    ledger \(subscription.id.uuidString, privacy: .public) \
+                    SKIPPED reason=implausibleStoredDays \
+                    today=\(String(describing: today), privacy: .public) \
+                    days=[\(OttoLog.list(implausible.map(String.init(describing:))), privacy: .public)]
+                    """)
+                continue
+            }
             // Before AND after, not only on change: "correctly did not
             // advance" is as much an observation as an advance, and omitting
             // the no-op cannot be told from never reaching this subscription.
