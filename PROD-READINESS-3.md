@@ -659,3 +659,82 @@ Carried forward from round 2, unchanged unless an item says otherwise:
   No AX client on this host.
 - Whether `OSLogStore(scope: .currentProcessIdentifier)` is readable, and delivering, on the GitHub-hosted CI runners.
   Confirmed working on this host at HEAD; CI cannot be exercised from here because network calls are prohibited.
+
+---
+
+## NOT DEFECTS
+
+A finding that no longer reproduced at HEAD would be here with its evidence rather than fixed.
+
+**None.**
+All seven work-list items were reconfirmed by **executing** the defect before being touched, never by reading the citation:
+
+| item | how it was executed |
+|---|---|
+| R0-9 | appended `OttoSchemaV4` with no stage - 118 tests green |
+| R0-7 / N2-2 | ran the real scheduler over a `2569-08-06` anchor - `scheduledCount=0`, `canClaimCoverage=true` |
+| F1's CI guard | reverted two F1 sites to `Calendar.current` - 201 tests green, lint clean |
+| R4-2 | reverted `rescheduleSoon` to its pre-F3 shape - 580 tests green, lint clean; `awk` over `handleBackgroundRefresh` found 0 `onOutcome` |
+| R0-5 | wrote `20260230` and `0` into a real device store - both read `nil`, identical to absent |
+| F11 / R0-10(a) | `OttoLog` had three categories and neither service named any of them; `.fileImporter` handled `.success` only |
+| R5-1 | `snooze`'s two non-throwing returns reach `handle`'s success branch, which logs one line |
+
+## DEFERRED
+
+- **R0-7's repair** - repairing calendar days already stored under a non-Gregorian device calendar.
+  **Not deferred by the schema freeze**, which is what rounds 1 and 2 concluded and what this run disproved: a V4 marker can only be filled from `Calendar.current` at migration time, which is not the calendar that wrote the rows, and the wrong direction rewrites correct billing dates.
+  Deferred because the writing calendar was never recorded and cannot be recovered.
+  The **harm** is closed for 11 of the 13 calendars that can cause it; the two that remain and the manual repair a user has are under ITEM 1.
+- **F7 - clock monotonicity in merge resolution.**
+  Scoped to the CloudKit wave; prior analysis in `docs/sync-safety.md`. Untouched by all three rounds.
+
+## NEXT ROUND
+
+Reconciled item by item against round 2's list, not summarised.
+
+### Round 2's carried-forward list, item by item
+
+| id | round 2's state | round 3's state |
+|---|---|---|
+| **R0-5** | open, P2 | **CLOSED** - item 5. Absent and unreadable are now distinguished and logged, duplicates resolve to the earliest, and a corrupt value can no longer pin a reconstruction |
+| **R0-7** | open, **P1** | **HALF CLOSED** - item 1. The silent-coverage harm is closed for 11 of 13 calendars; the repair is DEFERRED, for a different reason than round 2 gave. Residual is **N3-1** |
+| **R0-9** | open, P2 | **CLOSED** - item 2, by chain rather than by count |
+| **R0-10(a)** | open, P2 | **CLOSED** - item 6 |
+| **R0-10(b)** | folded into F8 | **still open**, inside F8 |
+| **R0-11** | open, P2 | **still open**, untouched. `invalidateOutdatedUpcomingEvents` can leave uncommitted soft-deletes while reporting "nothing invalidated" |
+| **F8** | open, P2 | **still open**, untouched. Both exports written to `tmp` on every appearance of Settings. Item 6 added a log line to those writes, which makes the unrequested write *observable* and no less unrequested |
+| **F9** | open, P2 | **still open**, untouched. `csvField` does not neutralize a leading `=`, `+`, `-`, `@` |
+| **F10** | open, P2 | **still open**, untouched. `rescheduleSoon` spawns an unstructured `Task` per trigger with no coalescing - item 4 gave it a return value, which makes it awaitable and does **not** coalesce it |
+| **F11** | partly addressed | **mostly closed** - item 6 closed import/export and cancellation/verification; round 2 closed notification actions. The trial, pause and usage flows remain unlogged: **N3-7** |
+| **R4-2** | open, P2 | **CLOSED** - item 4, both halves. Residuals `start()` and the delegate are **N3-6b** below |
+| **R4-3** | open, P2 | **still open**, untouched. `ScheduleOutcome.truncatedAfter` has no consumer |
+| **R5-1** | open, P2 | **CLOSED** - item 7 |
+| **RF-1** | historical | historical; no round-3 reviewer repeated it (all four verified `.git/FETCH_HEAD` absent) |
+| **RF-2** | addressed by construction | addressed again, and **N3-3** records the one gap the rule's wording leaves |
+| **RF-4** | corrected form recorded | corrected form used throughout, plus one addition: the harness bundle path must be **absolute**, and the command run from the repo root, or `dlopen` fails with "no such file" |
+| Round 0 §4: `SyncActivationService` wired into nothing | open | **still open**, untouched |
+| Round 0 §4: V2→V3 carry-over verified from the writing context | open | **still open**. Item 1 established that the harness to settle it exists (`WatermarkRelocationMigrationTests` builds a V2 store on disk, closes it, reopens at V3) but did not use it |
+| **N2-1** locale-sensitive tests | open, P2 | **still open**, unmoved - the same five citations under `ar_SA`, `th_TH`, `ja_JP` |
+| **N2-2** | raised R0-7 to P1 | see R0-7 |
+| **N2-4** | fixed in round 2 | fixed; item 6's new lines were sized against the same budget - see **N3-8** |
+| **N2-3** | withdrawn in round 2 | remains withdrawn |
+
+### Discovered by round 3
+
+- **N3-1 (P2) - two of Foundation's calendars are undetectable by any distance rule.**
+  Ethiopic writes +8 years and Indian (Saka) −78 for the same instant, so a day written under either is indistinguishable from a legitimate Gregorian anchor of that date. On such a device Otto schedules reminders on the **wrong days** while claiming full coverage - worse than the state item 1 closes for the other eleven. `StoredDayPlausibilityTests` pins the boundary on both sides so it cannot drift silently. Live exposure today is nil under ASSUMPTION 1; no locale defaults to either calendar.
+- **N3-2 (P2) - the `createdAt`-keyed detector is the only known way to close N3-1, and its cost is smaller than this ledger first said.**
+  Sensitivity 13/13 at every window tested; false positives on ordinary Gregorian anchors are **0.07% at K=1 day**, rising to 1.60% at K=31. The irreducible objection is that the Ethiopic collision is exact, so no K removes it, and a false positive silences a working subscription's reminders. Worth a proper evaluation rather than the single figure this run first quoted.
+- **N3-3 (P2) - `MappingLogPrivacyTests` reads `OSLogStore` with no canary**, so on a runner where the store is readable but empty it fails at `#expect(!ours.isEmpty, "the store logged nothing for the record it skipped")` - byte-identical to the regression signature the canary exists to disambiguate. `PROD-READINESS-2.md` records the canary as covering all four log-reading tests; it covers three. The probe now exists in that test target (added for this run's own test) and wiring it in is a two-line change.
+- **N3-4 (P2) - `aa92ca7` has never been inside any review range, in either round.** Round 2's last review ended at `3ce3e01`; round 3's first range starts at `8806853` because the prompt fixes it. The *state* is verified by `reviews-3/BASELINE-3.md`; the *diff* has been read by nobody. The rule that produced the gap - "each stage's range starts at the previous stage's reviewed head" - says nothing about a run's **first** start, which is the wording to fix.
+- **N3-5 (P2) - the coverage-gap card's copy is permanently false for the implausible-days case.**
+  It says "it will try again", and for a subscription whose stored dates are centuries out it will try again and fail again until a human repairs the dates. Re-wording it is new user-facing copy, which needed an explicit scope exception in round 2.
+- **N3-6 (P2) - nothing tells a non-Gregorian user what to do.**
+  The manual repair works (re-pick the dates; F1 makes the DatePicker write Gregorian) and is documented only in this ledger. Writing it into `docs/` is an edit to a narrative document this run is forbidden to make.
+  **(b)** `NotificationCoordinator.start()` and the two `UNUserNotificationCenterDelegate` methods remain untested - `BGTaskScheduler.register`, `UNUserNotificationCenter.current()`, `UNNotification` and `UNNotificationResponse` have no test-safe construction. The timezone and significant-time-change triggers therefore still have no test; item 4 covered the pass they run.
+- **N3-7 (P3) - the trial, pause and usage flows are still unlogged.** F11 named cancellation and verification; those are closed. `confirmTrialConversion`, `pause`, `resume` and `recordUsage` change money state and record nothing.
+- **N3-8 (P3) - six tests now read `OSLogStore`, and the cost is a property of the runner, not of the code.**
+  The same 201-test suite measured **11.9 s and 91.4 s on this host in one session**, an 8x spread with no code change, because the readers run in parallel and all block on the same daemon. This deepens round 2's CANNOT ASSESS entry rather than adding to it: what is unbounded on an unknown CI runner is the read.
+- **N3-9 (P3) - `SettingsView`'s routing of a refused file to the alert has no test.** The classification is guarded host-side; nothing in the tree renders `SettingsView`, which is the same residual round 2 recorded for `TodayView`.
+- **N3-10 (P3) - two slack points in item 1's own guard.** `#expect(caught >= 10)` against a measured 11 lets the hand-maintained `Calendar.Identifier` list lose one entry silently, and `.swiftlint.yml`'s comment names three of the five files the F1 rule protects.
+- **N3-11 (P3) - the snooze `deadlinePassed` branch has no test.** Reaching it needs a snooze on the cancel-by day after the evening slot has passed; the branch is one `guard` beside the covered one.
