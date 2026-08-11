@@ -60,7 +60,8 @@ Round 2's reviewers raised the missing row four consecutive times; the start is 
 |---|---|---|---|
 | 0 | - (baseline only, `8f86c1f`) | - | no review |
 | 1 - R0-9 | `8806853..87d6508` | `87d6508` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-1.md`) |
-| 2 - R0-7 / N2-2 | `87d6508..` | pending | pending |
+| 2 - R0-7 / N2-2 | `87d6508..e4f4872` | `e4f4872` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-2.md`) |
+| 3 - F1's CI guard | `e4f4872..` | pending | pending |
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read.
 That is round 2's arrangement, kept.
