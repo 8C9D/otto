@@ -515,7 +515,20 @@ Remediated here; a **different** fresh reviewer re-reviews, per the contract.
 **One correction to the reviewer, measured.**
 `reviews-3/REVIEW-3.md` reported the K sweep as 2 / 14 / 63; this ledger reports 3 / 7 / 15 / 64 from its own run, and `reviews-3/REVIEW-4.md` re-derived it to the digit. The ledger's figures stand.
 
-## VERIFICATION AT THE END OF STAGE 4 - all four, measured
+## VERIFICATION AFTER THE STAGE-4 REMEDIATION (`ef7e9b8`) - all four, measured
+
+| measurement | `reviews-3/BASELINE-3.md` | at `ef7e9b8` | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, **258 / 124 / 207 = 589** | +24, this run's new host tests |
+| `swiftlint --strict` | clean | clean | unchanged |
+| simulator suite | 108 / 70 / 31 = 209, 7 known issues | **117 / 72 / 36 = 225**, 7 known issues, `** TEST SUCCEEDED **` | +16 since baseline |
+| non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
+
+**And the flake specifically**: `reviews-3/REVIEW-4.md` measured `BoundaryLogTests` failing **3 of 12** unmutated full `swift test --package-path Packages/OttoUI` runs.
+Re-measured after the fix, same command, same count: **12 of 12 passed, 0 failed.**
+Twelve runs cannot prove a 0 % rate, but they are the same sample size that measured the defect, and the mechanism it depended on - an absolute assertion over a population containing foreign random hex - no longer exists.
+
+## VERIFICATION AT THE END OF STAGE 4 (`ce66bf7`, pre-remediation) - all four, measured
 
 | measurement | `reviews-3/BASELINE-3.md` | at `4380736` | verdict |
 |---|---|---|---|
