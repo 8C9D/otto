@@ -483,6 +483,18 @@ Round 2 recorded this exact shape for its first emission test; this is its secon
 **What this does NOT do.**
 The `deadlinePassed` branch has no test. Reaching it needs a snooze on the cancel-by day after the evening slot has passed, which the fixture clock makes awkward to arrange, and the branch is one `guard` beside the one that is covered. Stated rather than papered over; NEXT ROUND.
 
+## VERIFICATION AT THE END OF STAGE 4 - all four, measured
+
+| measurement | `reviews-3/BASELINE-3.md` | at `4380736` | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, **258 / 123 / 207 = 588** | +23, this run's new host tests |
+| `swiftlint --strict` | clean | clean | unchanged |
+| simulator suite | 108 / 70 / 31, 7 known issues | **117 / 72 / 36**, 7 known issues, `** TEST SUCCEEDED **` | +14, this run's new simulator tests |
+| non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
+
+No pre-existing test was skipped, disabled or weakened; one existing assertion was strengthened (ITEM 7) and one existing fixture corrected (stage-3 remediation).
+No lint rule was relaxed; one `custom_rules` entry was added.
+
 ## ITEM 3 - F1's reading sites have no guard that runs on a Gregorian machine
 
 **RESOLVED**, stage 3.
