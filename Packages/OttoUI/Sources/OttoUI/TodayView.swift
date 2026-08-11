@@ -42,11 +42,7 @@ struct TodayView: View {
 
     private func overviewList(_ overview: TodayOverview, subscriptionsEmpty: Bool) -> some View {
         let sections = TodaySection.plan(TodaySection.input(
-            overview: overview,
-            subscriptionsEmpty: subscriptionsEmpty,
-            unreadableCount: model.subscriptionsStore.unreadableCount,
-            hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
-            notifications: model.notifications
+            model: model, overview: overview, subscriptionsEmpty: subscriptionsEmpty
         ))
         return List {
             ForEach(sections, id: \.self) { section in

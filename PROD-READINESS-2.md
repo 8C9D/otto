@@ -46,6 +46,7 @@ Round 1's `RF-2` was a systematic blind spot: each stage's range started at what
 | 0 | — (baseline only, `a15336a`) | — | no review |
 | 1 — F1 | `7a3cf54..a82d4e0` | `a82d4e0` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-1.md`) |
 | 2 — R4-1 | `a82d4e0..100c508` | `100c508` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-2.md`) |
+| 3 — R0-6 | `100c508..62b4128` | `62b4128` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-3.md`) |
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read. Stage 1's own remediation commit lands **after** the reviewed head `a82d4e0` and is therefore inside stage 2's range, not orphaned between them.
 
@@ -116,7 +117,7 @@ Before this fix that device delivered, because the two errors cancelled. **F1 mu
 
 **2. The reading sites have no CI-executable guard.** By ASSUMPTION 2 no SwiftLint `custom_rules` entry was added, so nothing fails on a Gregorian runner if `Calendar.current` returns to those defaults. What exists instead: eight guards that fail under the documented non-Gregorian harness, and a statement of that limitation in `CalendarEraTests.swift` itself so no green CI run is mistaken for evidence about F1.
 
-### Corrections to this stage's own commit message
+### Corrections to stage 1's own commit message
 
 `a82d4e0`'s message overstates four things. Recorded here because commit messages cannot be amended and the ledger is the live document.
 
@@ -180,7 +181,7 @@ The last two were added in remediation. `reviews-2/REVIEW-2.md` finding 1 was ri
 
 **RESOLVED**, `db13abd` + `8ea8162`.
 
-**Reconfirmed at HEAD.** `OttoStore+DataTransfer.swift` fetches subscriptions with `deletedAt == nil`, deletes **every** watermark row unconditionally, then rebuilds one only for the subscriptions in that live fetch. A subscription tombstoned at reconstruct time therefore ends with no row; `ImportResolution` can clear `deletedAt` on a later merge and bring it back; `OttoStore+BillingEvents.swift:54`'s `min(storedWatermark ?? today, today)` then materializes from **today**. That is the founding v2.1 hazard and F6's exact failure signature by a second route.
+**Reconfirmed at HEAD.** `reconstructWatermarksNow` (at `7a3cf54` in `OttoStore+DataTransfer.swift`; moved to `OttoStore+Watermarks.swift` by this stage's own split) fetches subscriptions with `deletedAt == nil`, deletes **every** watermark row unconditionally, then rebuilds one only for the subscriptions in that live fetch. A subscription tombstoned at reconstruct time therefore ends with no row; `ImportResolution` can clear `deletedAt` on a later merge and bring it back; `OttoStore+BillingEvents.swift:54`'s `min(storedWatermark ?? today, today)` then materializes from **today**. That is the founding v2.1 hazard and F6's exact failure signature by a second route.
 
 **What changed.** One line: the fetch drops its predicate and reconstructs for every subscription, tombstoned ones included. The **event** fetch still filters to live rows, so a tombstoned subscription falls back to its anchor rather than inheriting a dead ledger's progress — the same conservative value a live subscription with no ledger rows already gets. The v2.5 cap (`min(reconstructed, current[id] ?? reconstructed)`) is untouched, so no watermark can move forward.
 
@@ -191,15 +192,23 @@ The last two were added in remediation. `reviews-2/REVIEW-2.md` finding 1 was ri
 **Falsified.** Reverting the fetch predicate produces exactly 2 issues, both watermark assertions and nothing else:
 
 ```
-✘ "watermarks reconstruct from the ledger…" DataTransferTests.swift:282
+✘ "watermarks reconstruct from the ledger…" DataTransferTests.swift:262
 ✘ "⛔ a subscription tombstoned at reconstruct time and resurrected later still has a watermark"
-   DataTransferTests.swift:397
+   RestoreIntoEmptyStoreTests.swift:116
 ✘ Test run with 114 tests in 23 suites failed with 2 issues.
 ```
 
 The first falsification attempt was **invalid and is recorded rather than hidden**: the bare fetch line appears twice in the file, and patching the first occurrence broke `completeSnapshot` instead, producing `danglingReference` and tombstone-snapshot failures that had nothing to do with the fix. Re-done against the line inside `reconstructWatermarksNow`.
 
+**What this does NOT do.** `reviews/REVIEW-0.md` names *three* filters between a subscription and a rebuilt watermark, and this removes one. The other two survive at `OttoStore+Watermarks.swift`: `guard let id = subscription.id, let reconstructed = latestBySubscription[id] ?? subscription.cycleStartDay else { continue }`. They are **inert**, and the completeness argument is: a record with a nil `id` or a nil `cycleStartDay` cannot map to a domain `Subscription` at all — `SubscriptionMapping` routes both through `require(...)` / `CalendarDay.stored(...)` and `StorageShapes` throws `MappingError` on nil — so it is skipped by `mapSkippingFailures`, counted in `unreadableCount`, and can never reach `materializeEvents`. **For every subscription that can materialize at all, the fix guarantees a row.** That is the statement the item should have made without a reader deriving it.
+
 **A lint regression, caught and repaired inside the stage.** `db13abd` pushed both `OttoStore+DataTransfer.swift` and `DataTransferTests.swift` to 403 lines, past the 400-line `file_length`. `.swiftlint.yml` is untouched; `8ea8162` split the watermark reconstruction and the §5.3 dirty flag into `OttoStore+Watermarks.swift` (the seam is the store they write — those methods own the `deviceState` context while the rest writes the main one) and the empty-store restore suite into `RestoreIntoEmptyStoreTests.swift`. `markRestoreDirty` loses `private`, which is file-scoped, because `restoreThroughMainSave` still calls it.
+
+### Corrections to this stage's own record
+
+- **`db13abd`'s message ends "swiftlint --strict clean" and that commit is not.** It carries two `file_length` errors at 403 lines, repaired two commits later by `8ea8162`. The ledger recorded the repair and not the false claim. Commit messages cannot be amended, so the correction lives here.
+- **This stage regressed the non-Gregorian baseline it had just documented, from 5 issues to 7 under `ar_SA`, and it is now repaired.** `CoverageGapCardTests` pinned the ASCII literals `"1 subscription couldn't be updated"` / `"3 subscriptions…"`, which render as `"١ subscription…"` under a locale with its own numbering system — the *same* defect class this run had diagnosed four paragraphs earlier as N2-1. The assertions now compare against `subscriptionCountText(n)` and pin the branch by structure (`one.headline != three.headline`, suffix, count phrase present) rather than by ASCII digits. Re-measured after the repair: **1 / 1 / 5** under `th_TH@calendar=buddhist`, `ja_JP@calendar=japanese`, `ar_SA@calendar=islamic-umalqura` — the documented baseline exactly.
+- **The R0-6 falsification cited a file layout this stage deleted.** `DataTransferTests.swift:397` is `RestoreIntoEmptyStoreTests.swift:116` after the split, and `reconstructWatermarksNow` is no longer in `OttoStore+DataTransfer.swift`. Both corrected above. This is the third recurrence of a citation measured before a move and not re-derived after it.
 
 **Unrelated stderr, checked.** The persistence suite prints `CoreData: error:` lines about a model checksum and `deviceStateStoreUnavailable`. They appear identically with the fix present and reverted, and the suite passes in both, so they are pre-existing diagnostics from a deliberate migration-failure test, not a regression.
 

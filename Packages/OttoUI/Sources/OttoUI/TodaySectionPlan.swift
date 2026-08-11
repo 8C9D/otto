@@ -67,6 +67,30 @@ enum TodaySection: Hashable {
     /// one shape no host test can reach - so the whole notification half of it
     /// could be deleted with every test green. That is Wave 9A defect 1's shape,
     /// and round 1's R0-1 had the same one at the same call site.
+    /// The whole mapping, from the model the view holds.
+    ///
+    /// The view passes `model` and nothing else on purpose. When it picked the
+    /// fields itself, `notifications: model.notifications` could be replaced
+    /// with `nil` - deleting the permission banner, the coverage sentence and
+    /// the coverage-gap card in one token - and every test stayed green,
+    /// because what a `View` hands to a function is not reachable from a test.
+    /// Each extraction that stops short of the arguments just moves that hole
+    /// one frame out.
+    @MainActor
+    static func input(
+        model: AppModel,
+        overview: TodayOverview,
+        subscriptionsEmpty: Bool
+    ) -> Input {
+        input(
+            overview: overview,
+            subscriptionsEmpty: subscriptionsEmpty,
+            unreadableCount: model.subscriptionsStore.unreadableCount,
+            hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
+            notifications: model.notifications
+        )
+    }
+
     @MainActor
     static func input(
         overview: TodayOverview,

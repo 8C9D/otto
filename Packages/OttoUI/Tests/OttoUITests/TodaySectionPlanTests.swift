@@ -181,17 +181,29 @@ struct CoverageGapCardTests {
     func aWholePassFailureHasNoCount() {
         let card = CoverageGapCard(failureCount: 0)
         #expect(card.headline == "Reminders couldn't be updated")
-        // The sentence this branch exists to prevent.
-        #expect(!card.headline.contains("0"))
+        // The sentence this branch exists to prevent. `subscriptionCountText(0)`
+        // rather than "0", so the assertion holds in a locale whose numbering
+        // system does not use ASCII digits.
+        #expect(!card.headline.contains(subscriptionCountText(0)))
         #expect(card.detail.contains("didn't finish"))
     }
 
     @Test("a partial failure names how many subscriptions, inflected, and no more than that")
     func aPartialFailureNamesTheCount() {
+        // Compared against `subscriptionCountText`, not against a literal
+        // "1 subscription": under a locale with its own numbering system that
+        // phrase is "١ subscription", and pinning the ASCII form made this suite
+        // fail on a host the run itself created as an evidence surface. The
+        // branch is still pinned - swap the wordings and the count phrase is
+        // absent from the headline entirely.
         let one = CoverageGapCard(failureCount: 1)
-        #expect(one.headline == "1 subscription couldn't be updated")
+        #expect(one.headline.contains(subscriptionCountText(1)))
+        #expect(one.headline.hasSuffix("couldn't be updated"))
         let three = CoverageGapCard(failureCount: 3)
-        #expect(three.headline == "3 subscriptions couldn't be updated")
+        #expect(three.headline.contains(subscriptionCountText(3)))
+        // The count is actually used, rather than a fixed phrase that happens
+        // to contain one of them.
+        #expect(one.headline != three.headline)
         // Wave 10 defect I: the inflection must be RESOLVED, not left as markup.
         #expect(!three.headline.contains("^["))
         #expect(three.detail.contains("their reminders"))
@@ -274,5 +286,38 @@ struct TodayInputTests {
         #expect(input(nil).permission == nil)
         #expect(input(nil).scheduleOutcome == nil)
         #expect(!input(nil).lastPassFailed)
+    }
+
+    /// The last frame the view still owns. `TodayView` used to pick the fields
+    /// itself, so `notifications: model.notifications` could be replaced with
+    /// `nil` - deleting the permission banner, the coverage sentence and the
+    /// gap card at once - with every test green. It passes the whole model now,
+    /// and this asserts the model-to-input mapping that replaced it.
+    @Test("⛔ Today's input comes from the model's notification store, not from nil")
+    func theModelFeedsTheInput() async throws {
+        let store = NotificationStatusStore(
+            scheduler: ThrowingScheduler(), client: AuthorizedClient(),
+            dates: .fixed(today: try #require(CalendarDay(year: 2026, month: 8, day: 6)))
+        )
+        await store.reschedule()
+
+        let repository = PreviewRepository()
+        let model = AppModel(
+            repositories: AppModel.Repositories(
+                subscriptions: repository, billingEvents: repository,
+                cancellations: repository, priceChanges: repository,
+                paymentMethods: repository, transfer: repository
+            ),
+            notifications: store,
+            settings: SettingsStore(
+                userDefaults: UserDefaults(suiteName: "otto.tests.todayinput") ?? .standard
+            ),
+            dates: .fixed(today: try #require(CalendarDay(year: 2026, month: 8, day: 6)))
+        )
+
+        let built = TodaySection.input(model: model, overview: overview, subscriptionsEmpty: false)
+        #expect(built.permission == .authorized)
+        #expect(built.lastPassFailed)
+        #expect(TodaySection.plan(built).contains(.coverageGap))
     }
 }

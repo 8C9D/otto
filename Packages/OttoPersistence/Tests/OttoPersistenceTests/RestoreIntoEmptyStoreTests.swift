@@ -20,7 +20,8 @@ extension SerializedPersistenceTests {
     /// install with an EMPTY store takes a file and must come out with
     /// watermarks that describe the imported ledger.
     ///
-    /// The sibling test above proves what `reconstructMaterializationWatermarks()`
+    /// `DataTransferTests`'s `replaceImportReconstructsWatermarks` proves what
+    /// `reconstructMaterializationWatermarks()`
     /// computes, but calls it directly on an already-seeded store - it never
     /// goes through `restore(_:at:watermarks:)` and never sees an empty
     /// database, which is the exact composition a restore-after-reinstall
@@ -81,8 +82,13 @@ extension SerializedPersistenceTests {
         let (store, containers) = try makeStore()
         let subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 3, 1))
         try await store.save(subscription)
+        // The event is dated LATER than the anchor on purpose. With both on the
+        // same day - as the sibling fixture has them - the expected watermark is
+        // simultaneously the anchor and the dead ledger row, so the assertion
+        // cannot tell which one produced it and the "live events only" rule is
+        // unguarded for exactly the case this test is about.
         try await store.save(try makeBillingEvent(
-            index: 101, subscriptionID: subscription.id, expectedDate: try day(2026, 3, 1)
+            index: 101, subscriptionID: subscription.id, expectedDate: try day(2026, 5, 1)
         ))
         try await store.deleteSubscription(withID: subscription.id, at: Date(timeIntervalSince1970: 9_000))
         #expect(try await store.subscriptions().isEmpty)
@@ -103,8 +109,10 @@ extension SerializedPersistenceTests {
 
         let revived = OttoStore(containers: containers)
         #expect(try await revived.subscriptions().count == 1)
-        // The anchor, never nil - a nil here makes materializeEvents start from
-        // today and silently skip every charge back to the last real one.
+        // The ANCHOR (2026-03-01), never nil and never the tombstoned ledger
+        // row (2026-05-01): a nil makes materializeEvents start from today and
+        // silently skip every charge back to the last real one, and inheriting
+        // a dead row's progress would vouch for charges that no longer exist.
         #expect(
             try await revived.materializationWatermark(forSubscription: subscription.id)
                 == (try day(2026, 3, 1))
