@@ -63,6 +63,7 @@ struct BoundaryLogTests {
         _ = try await fixture.flows.answerVerification(
             subscriptionID: subscription.id, chargesStopped: true, now: now, today: today
         )
+        try await exerciseRefusals(fixture.flows, absent: try fixtureUUID(9_401), now: now, today: today)
 
         let lines = try Self.boundaryLines(since: since)
         try OttoLogProbe.requireDelivered(lines)
@@ -90,31 +91,85 @@ struct BoundaryLogTests {
             )
         }
 
+        assertLinesRecorded(lines, own: subscription.id.uuidString, absent: try fixtureUUID(9_401).uuidString)
+        assertPrivacyRule(over: lines, ownIdentifier: subscription.id.uuidString)
+    }
+
+    /// Which line must exist, and with which value.
+    ///
+    /// Split out to keep the scenario under SwiftLint's `function_body_length`;
+    /// the seam is "run the boundaries" against "say what they must have said".
+    private func assertLinesRecorded(_ lines: [String], own: String, absent: String) {
+        // ANY line in the window carrying both parts, never `.last`.
+        //
+        // The first version took the LAST line matching each prefix, and that is
+        // flaky by construction: `ExportServiceTests`, `SubscriptionFlowTests`
+        // and `VerificationFlowTests` exercise these same production paths,
+        // swift-testing runs suites in parallel, and `OSLogStore.position(date:)`
+        // reaches ~80 ms behind `since`. It passed in isolation and failed in
+        // `verify.sh`'s clean clone. The claim is about the PRODUCTION
+        // statement, so a line a sibling emitted from the same path is the same
+        // evidence - and deleting the statement removes every one of them,
+        // which is what the falsification measures.
+        func expectLine(_ needle: String, _ field: String) {
+            #expect(
+                lines.contains { $0.contains(needle) && $0.contains(field) },
+                "no \(needle) line in the window carried \(field)"
+            )
+        }
+
         // The VALUES, not just the field names. An earlier version of the flake
         // fix dropped `subscriptions=1` to `subscriptions=` and
-        // `databaseEmpty=false` to `databaseEmpty=`, which made a line that
-        // always reported the database as empty pass - a real weakening, and
-        // one this ledger's closing statement denied making
-        // (`reviews-3/REVIEW-4.md` finding 5). The count is this fixture's
-        // discriminator: three subscriptions is a shape no sibling suite seeds.
+        // `databaseEmpty=false` to `databaseEmpty=`, so a line always reporting
+        // the database as empty would have passed - a real weakening, and one
+        // the ledger's closing statement denied making. Three subscriptions is
+        // this fixture's discriminator: no sibling suite seeds that many.
         expectLine("export kind=json", "subscriptions=3")
         expectLine("export kind=csv", "bytes=")
         expectLine("import preview", "databaseEmpty=false")
         expectLine("import begin", "strategy=merge")
         expectLine("import end", "subscriptions=")
-        // These two carry an identifier, so they can be pinned to THIS
-        // subscription rather than to the category.
-        expectLine("cancellation started", subscription.id.uuidString)
-        expectLine("verification answered", subscription.id.uuidString)
+
+        // The REFUSAL lines. Deleting all five of the refusal statements added
+        // for `reviews-3/REVIEW-4.md` finding 3 left the suite 207/207 green -
+        // round 1's F2 shape, recorded in this target's own
+        // `NotificationActionLogTests` header, shipped again. Four of the seven
+        // are reachable from a missing subscription and are pinned here.
+        expectLine("cancellation refused reason=noSubscription", absent)
+        expectLine("cancellation abandon refused reason=noSubscription", absent)
+        expectLine("verification refused reason=noOpenAnswerableEpisode", absent)
+        expectLine("verification resumeDate refused", absent)
+
+        // These carry an identifier, so they pin to THIS subscription.
+        expectLine("cancellation started", own)
+        expectLine("verification answered", own)
         #expect(
             lines.contains {
-                $0.contains("verification answered")
-                    && $0.contains(subscription.id.uuidString)
-                    && $0.contains("chargesStopped=true")
+                $0.contains("verification answered") && $0.contains(own) && $0.contains("chargesStopped=true")
             }
         )
+    }
 
-        assertPrivacyRule(over: lines, ownIdentifier: subscription.id.uuidString)
+    /// The four refusal paths that a missing subscription reaches, so their log
+    /// lines have a guard rather than only a source comment.
+    ///
+    /// Split out to keep the scenario under SwiftLint's `function_body_length`.
+    /// The other three refusals - a lifecycle already past cancellation, an
+    /// un-cancel that cannot restore its interrupted status, and a dispute with
+    /// no watched date - need multi-step state and are recorded as unguarded in
+    /// `PROD-READINESS-3.md`.
+    private func exerciseRefusals(
+        _ flows: SubscriptionFlowService,
+        absent: UUID,
+        now: Date,
+        today: CalendarDay
+    ) async throws {
+        _ = try await flows.startCancellation(subscriptionID: absent, now: now, today: today)
+        try await flows.abandonCancellation(subscriptionID: absent, now: now, today: today)
+        _ = try await flows.answerVerification(
+            subscriptionID: absent, chargesStopped: true, now: now, today: today
+        )
+        try await flows.supplyPausedResumeDate(subscriptionID: absent, resumeDate: today, now: now)
     }
 
     /// The privacy rule `OttoLog` states, asserted over the whole window.
@@ -139,8 +194,14 @@ struct BoundaryLogTests {
             #expect(!entry.contains("$"))
             #expect(!entry.contains("/"))
         }
+        // With every UUID removed first. The shipped comment used to claim this
+        // loop controlled its whole population and it did not: `cancellation
+        // started … episode=<UUID()>` carries hex this test never chose, so the
+        // needle could be matched by a value the assertion is not about
+        // (`reviews-3/REVIEW-5.md` finding 4 - ~1.1e-5 per run rather than the
+        // 25 % the earlier `999` needle carried, but the same mistake).
         for entry in lines where entry.contains(ownIdentifier) {
-            #expect(!entry.contains("99999"))
+            #expect(!Self.withoutIdentifiers(entry).contains("99999"))
         }
     }
 
@@ -161,6 +222,16 @@ struct BoundaryLogTests {
             Issue.record("a real read error was not reported as a failure: \(failed)")
             return
         }
+    }
+
+    /// Every `<uuid>` removed, so an assertion about CONTENT is not matched by
+    /// randomly generated hex.
+    private static func withoutIdentifiers(_ line: String) -> String {
+        line.replacingOccurrences(
+            of: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
+            with: "<uuid>",
+            options: .regularExpression
+        )
     }
 
     /// The two new categories in one read.

@@ -209,11 +209,27 @@ extension SubscriptionFlowService {
     ) async throws {
         guard let subscription = try await subscriptions.subscription(withID: subscriptionID),
               let record = try await cancellations.openEpisode(forSubscription: subscriptionID)
-        else { return }
+        else {
+            // The sixth silent exit in this file, and the one that was still
+            // silent after the five `reviews-3/REVIEW-4.md` finding 3 named
+            // were fixed: the claim "logs every exit" was re-asserted without
+            // being re-derived (`reviews-3/REVIEW-5.md` finding 1). It is
+            // reached from a real button, so a deferred check that answered
+            // nothing looked exactly like one that recorded a resume date.
+            OttoLog.flows.notice("""
+                verification resumeDate refused reason=noSubscriptionOrOpenEpisode \
+                id=\(subscriptionID.uuidString, privacy: .public)
+                """)
+            return
+        }
         let supplied = record.supplyingResumeDate(resumeDate, for: subscription, at: now)
         if supplied != record {
             try await cancellations.save(supplied)
         }
+        OttoLog.flows.notice("""
+            verification resumeDate \(supplied != record ? "recorded" : "unchanged", privacy: .public) \
+            id=\(subscriptionID.uuidString, privacy: .public)
+            """)
     }
 
     // MARK: - The verification flow

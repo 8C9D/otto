@@ -258,16 +258,18 @@ One is P1 and is a defect in this stage's own change; it is fixed here.
 **One thing this stage does that it never claimed, credited because it cuts the other way.**
 For a **negative**-offset calendar the pre-stage behaviour was not "nothing is scheduled" - it was a materialization pass over a window centuries wide. With an unrepaired Japanese anchor and watermark at year 8 against a 2026 horizon, `expectedCharges` yields **24,220** rows for one subscription on one pass, against 3 for a healthy one. The new guard skips before `materializeEvents` is reached, so this stage prevents it. Only the Buddhist case was ever measured here, where `min(2569-08-06, today)` collapses the window to nothing - so the worse half of the defect was never seen by the person fixing it.
 
-### Baseline at the end of STAGE 2 (`e4f4872`) - all four, measured
+### Baseline at the end of STAGE 2 INCLUDING ITS REMEDIATION (`49ba021`) - all four, measured
 
 | measurement | `reviews-3/BASELINE-3.md` | at this stage | verdict |
 |---|---|---|---|
 | `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, 258 / 119 / 201 = **578** | +13, exactly this run's new tests |
 | `swiftlint --strict` | clean | clean | unchanged |
-| simulator suite | 108 / 70 / 31, 7 known issues | **113 / 72 / 31**, 7 known issues | +7 since baseline; an earlier draft recorded the second bucket as 70, which `reviews-3/REVIEW-3.md` measured as 72 |
+| simulator suite | 108 / 70 / 31, 7 known issues | **113 / 70 / 31**, 7 known issues | +5 since baseline |
 | non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
 
 The simulator's 108 → 113 is the first time that number has moved in this run, and it is recorded here rather than left for a later stage to discover against a stale baseline.
+
+**This table is measured at `49ba021`, not `e4f4872`.** It was headed "at this stage" with no commit, and the remediation for `reviews-3/REVIEW-4.md` finding 8 relabelled it `e4f4872` and changed the second simulator bucket 70 → 72 - both wrong. `e4f4872` is the reviewed head *before* stage 2's own remediation, where the host total is 256 / 119 / 201 = 576; the numbers here are `49ba021`'s, which is where they were taken. The `72` was `reviews-3/REVIEW-3.md`'s measurement at `b006d20`, a later commit, and the second bucket only reaches 72 once stage 3 adds two `OttoStoresTests`. `reviews-3/REVIEW-5.md` finding 3 caught the row being made wrong by the fix for its being unlabelled.
 The new tests also pass under all three non-Gregorian locales, including `ar_SA`: `CalendarDay.description` is `String(format:)` with no locale, so it does not render Arabic-Indic digits and the host-independence claim holds where it was most likely not to.
 
 ### What a non-Gregorian user's actual position is at the end of this run
@@ -418,7 +420,8 @@ It also corrects this ledger's own Baseline paragraph, which said "neither the c
 
 - **Two categories**: `transfer` (import/export) and `flows` (§5.4 cancellation and verification).
 - **`ExportService`** logs both exports with counts and byte sizes, the preview with its counts and whether the database was empty, and the import as a **begin/end pair** around the restore, plus an explicit failure line. The pair is the point: a begin with no end is exactly the state Gate 3 had to reconstruct by copying the container off the device.
-- **`SubscriptionFlowService`'s cancellation half** logs every exit - started, refused with a reason, abandoned with the day the watermark rewound to, and both verification answers with what they did.
+- **`SubscriptionFlowService`'s cancellation half** logs every non-throwing exit in `SubscriptionFlowService+Cancellation.swift` - started, refused with a reason, abandoned with the day the watermark rewound to, both verification answers, and the deferred-check resume date.
+  That sentence has been wrong twice. It first covered two exits of seven; `reviews-3/REVIEW-4.md` finding 3 named five more and they were fixed; `reviews-3/REVIEW-5.md` finding 1 then found a **sixth** method, `supplyPausedResumeDate`, reached from a real button, whose two exits were still silent - because the five were fixed against a list and the claim was never re-derived. It is now derived from the file rather than from the list, and the file is the boundary the claim is scoped to.
 - **R0-10(a)**: `importPickerOutcome(of:)` classifies the picker result into `.selected` / `.cancelled` / `.failed`, logs it, and the view routes a real failure to **the alert that was already there** (`SettingsView.swift`'s "Nothing was imported"). A dismissed picker stays silent - whether SwiftUI reports it as `CocoaError.userCancelled` or as no callback at all is a framework detail, so both are handled and only the real failure interrupts the user.
 
 **Never a file name, never an amount, never a vendor.**
@@ -514,6 +517,24 @@ Remediated here; a **different** fresh reviewer re-reviews, per the contract.
 
 **One correction to the reviewer, measured.**
 `reviews-3/REVIEW-3.md` reported the K sweep as 2 / 14 / 63; this ledger reports 3 / 7 / 15 / 64 from its own run, and `reviews-3/REVIEW-4.md` re-derived it to the digit. The ledger's figures stand.
+
+## Remediation after `reviews-3/REVIEW-5.md` - the re-review of the reject
+
+**Verdict: PASS-WITH-FINDINGS.**
+It confirmed both REJECT findings genuinely closed - 12 of 12 clean runs at `6d981f4` against the 3-of-12 that measured the flake, the watermark read falsified deterministically, and five further edge cases this ledger never claimed (a nil column beside a value, two corrupt rows beside a value, only-nil rows, ordering over three readable values, a negative packed value) all correct, with exactly two log lines for two corrupt rows.
+It also verified both function splits were **required**, by inlining them and measuring 59 and 56 lines against the 50-line rule.
+
+Four findings, all routed here:
+
+- **Finding 1 (P2) - "logs every exit" was still false, for a sixth method.**
+  `supplyPausedResumeDate` is in the same file, is reached from a real button (`CancellationSectionView` → `AppModel`), and both of its non-throwing exits were silent. The five exits `reviews-3/REVIEW-4.md` named were fixed and the claim was re-asserted without being re-derived - which is the characteristic failure of a remediation written against a list. Both exits now log, and the sentence is scoped to the file it can be derived from.
+- **Finding 2 (P2) - none of the five new refusal statements was guarded.**
+  Deleting all five left the OttoUI suite **207/207 green and lint clean**: round 1's F2 shape, recorded in this very target's `NotificationActionLogTests` header, shipped again by the run that quotes it.
+  Four of the seven refusals are reachable from a missing subscription and are now pinned in `BoundaryLogTests`' existing query, at no extra query cost. Falsified: deleting the refusal statements now fails with **4 issues**.
+  The remaining three - a lifecycle already past cancellation, an un-cancel that cannot restore its interrupted status, and a dispute with no watched date - need multi-step state and stay unguarded, recorded as **N3-12**.
+- **Finding 3 (P3) - the fix for `reviews-3/REVIEW-4.md` finding 8 made the table wrong.**
+  Relabelling it `e4f4872` and changing the simulator's second bucket 70 → 72 were both mistakes: the numbers were taken at `49ba021` (stage 2 *including* its remediation), and the `72` was a later commit's. The row that was right before the remediation was wrong after it. Corrected, with the commit named.
+- **Finding 4 (P3) - the amount tripwire still saw hex it did not control**, at ~1.1e-5 per run rather than the 25 % the `999` needle carried, and the needle had silently narrowed `999` → `99999` without disclosure. Every UUID is now stripped before the content check, and the narrowing is stated.
 
 ## VERIFICATION AFTER THE STAGE-4 REMEDIATION (`ef7e9b8`) - all four, measured
 
@@ -779,9 +800,10 @@ Reconciled item by item against round 2's list, not summarised.
 - **N3-6 (P2) - nothing tells a non-Gregorian user what to do.**
   The manual repair works (re-pick the dates; F1 makes the DatePicker write Gregorian) and is documented only in this ledger. Writing it into `docs/` is an edit to a narrative document this run is forbidden to make.
   **(b)** `NotificationCoordinator.start()` and the two `UNUserNotificationCenterDelegate` methods remain untested - `BGTaskScheduler.register`, `UNUserNotificationCenter.current()`, `UNNotification` and `UNNotificationResponse` have no test-safe construction. The timezone and significant-time-change triggers therefore still have no test; item 4 covered the pass they run.
-- **N3-7 (P3) - the trial, pause and usage flows are still unlogged.** F11 named cancellation and verification; those are closed. `confirmTrialConversion`, `pause`, `resume` and `recordUsage` change money state and record nothing.
+- **N3-7 (P3) - the trial, pause and usage flows are still unlogged.** F11 named cancellation and verification; those are closed **within `SubscriptionFlowService+Cancellation.swift`**, which is the scope the claim is now derived from rather than asserted over. `confirmTrialConversion`, `pause`, `resume` and `recordUsage` change money state and record nothing.
 - **N3-8 (P3) - six tests now read `OSLogStore`, and the cost is a property of the runner, not of the code.**
   The same 201-test suite measured **11.9 s and 91.4 s on this host in one session**, an 8x spread with no code change, because the readers run in parallel and all block on the same daemon. This deepens round 2's CANNOT ASSESS entry rather than adding to it: what is unbounded on an unknown CI runner is the read.
 - **N3-9 (P3) - `SettingsView`'s routing of a refused file to the alert has no test.** The classification is guarded host-side; nothing in the tree renders `SettingsView`, which is the same residual round 2 recorded for `TodayView`.
 - **N3-10 (P3) - two slack points in item 1's own guard.** `#expect(caught >= 10)` against a measured 11 lets the hand-maintained `Calendar.Identifier` list lose one entry silently, and `.swiftlint.yml`'s comment names three of the five files the F1 rule protects.
+- **N3-12 (P3) - three of the seven cancellation-flow refusal lines are unguarded.** A lifecycle already past cancellation, an un-cancel that cannot restore its interrupted status, and a dispute with no watched date each need multi-step state to reach; the four reachable from a missing subscription are pinned.
 - **N3-11 (P3) - the snooze `deadlinePassed` branch has no test.** Reaching it needs a snooze on the cancel-by day after the evening slot has passed; the branch is one `guard` beside the covered one.
