@@ -5,6 +5,22 @@ import OttoDomain
 import UIKit
 import UserNotifications
 
+/// The two calls the background-refresh handler makes on its task.
+///
+/// `BGAppRefreshTask` has no public initializer, so without this seam the whole
+/// background path - the pass, the completion latch, the expiration race, and
+/// whether the outcome is published at all - is reachable only from the OS.
+/// That is R4-2: the coordinator is inside `#if os(iOS)` and compiles to
+/// nothing under host `swift test`, and even on a simulator there was nothing a
+/// test could hand it. The seam is at the system boundary, not above the
+/// handler, so a fake cannot mock away the logic under test.
+public protocol BackgroundRefreshTask: AnyObject {
+    var expirationHandler: (() -> Void)? { get set }
+    func setTaskCompleted(success: Bool)
+}
+
+extension BGAppRefreshTask: BackgroundRefreshTask {}
+
 /// The app-side wiring for spec §6.2's reschedule triggers. The app target
 /// creates one of these at launch and keeps it alive; everything else - what to
 /// schedule, when it fires, what the actions do - lives below in the scheduler,
@@ -93,12 +109,12 @@ public final class NotificationCoordinator: NSObject {
             // A timezone change moves fire INSTANTS, never calendar days
             // (spec §4.1) - the full reschedule recomputes every instant in the
             // new zone.
-            MainActor.assumeIsolated { self?.rescheduleSoon(.timeZoneChange) }
+            MainActor.assumeIsolated { _ = self?.rescheduleSoon(.timeZoneChange) }
         }
         let timeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rescheduleSoon(.significantTimeChange) }
+            MainActor.assumeIsolated { _ = self?.rescheduleSoon(.significantTimeChange) }
         }
         // The coordinator lives for the app's entire lifetime (the composition
         // root retains it), so the tokens are held but never need removing.
@@ -106,12 +122,23 @@ public final class NotificationCoordinator: NSObject {
     }
 
     /// The foreground trigger - the scene phase change calls this.
-    public func appDidBecomeActive() {
-        rescheduleSoon(.foreground)
+    ///
+    /// Returns the pass's `Task` so a test can await it. R4-2: the pass ran in
+    /// a detached `Task` with no handle, so even on a simulator there was
+    /// nothing to wait for and no way to assert that the outcome reached
+    /// `onOutcome`. The app target discards the result and is unchanged.
+    @discardableResult
+    public func appDidBecomeActive() -> Task<Void, Never> {
+        let pass = rescheduleSoon(.foreground)
         scheduleNextBackgroundRefresh()
+        return pass
     }
 
-    private func rescheduleSoon(_ trigger: RescheduleTrigger) {
+    /// Not private since R4-2: the simulator-hosted coordinator tests reach it
+    /// through `@testable`, and returning the `Task` is what makes the pass
+    /// awaitable instead of a race.
+    @discardableResult
+    func rescheduleSoon(_ trigger: RescheduleTrigger) -> Task<Void, Never> {
         Task { [scheduler, now, today, timeZone, onOutcome] in
             // A failed pass is REPORTED as nil, not dropped. The old shape
             // discarded the failure entirely, so the store kept publishing the
@@ -146,7 +173,11 @@ public final class NotificationCoordinator: NSObject {
         }
     }
 
-    private func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+    /// Not private since R4-2, and taking the protocol rather than
+    /// `BGAppRefreshTask`, so the simulator-hosted tests can drive it. Returns
+    /// the pass's `Task` for the same reason `appDidBecomeActive` does.
+    @discardableResult
+    func handleBackgroundRefresh(_ task: any BackgroundRefreshTask) -> Task<Void, Never> {
         // This line is the §6.3 claim the spec has been unable to make since
         // Wave 4: not that the task registered, but that its handler BODY ran.
         OttoLog.background.notice("launched id=\(Self.refreshTaskIdentifier, privacy: .public)")
@@ -155,10 +186,19 @@ public final class NotificationCoordinator: NSObject {
         // end to do so.
         scheduleNextBackgroundRefresh()
         let completion = CompletionLatch()
-        let work = Task { [scheduler, now, today, timeZone] in
+        let work = Task { [scheduler, now, today, timeZone, onOutcome] in
             let outcome = try? await scheduler.reschedule(
                 now: now(), today: today(), timeZone: timeZone(), trigger: .backgroundRefresh
             )
+            // R4-2's second half. `rescheduleSoon` has reported its outcome -
+            // including a failure, as nil - since round 1's F3 fix, and this
+            // path never reported anything at all, so a failed background pass
+            // left the store publishing the last SUCCESSFUL outcome and Today
+            // stating coverage this pass had just failed to renew. Published
+            // BEFORE the latch: whether the OS has already reclaimed the task
+            // is bookkeeping about the task, and says nothing about whether the
+            // pass produced a result the UI should stop trusting.
+            onOutcome?(outcome)
             guard completion.claim() else {
                 // Expiration already ended the task. Say so rather than going
                 // quiet: this line means the pass outlived its expiration, and
@@ -181,6 +221,7 @@ public final class NotificationCoordinator: NSObject {
             OttoLog.background.notice("completing path=expiration success=false")
             task.setTaskCompleted(success: false)
         }
+        return work
     }
 }
 
@@ -223,7 +264,7 @@ extension NotificationCoordinator: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await MainActor.run { self.rescheduleSoon(.notificationDelivered) }
+        await MainActor.run { _ = self.rescheduleSoon(.notificationDelivered) }
         return [.banner, .sound, .list]
     }
 
