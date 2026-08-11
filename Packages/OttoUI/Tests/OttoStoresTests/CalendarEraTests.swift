@@ -24,12 +24,19 @@ import OttoDomain
 ///
 /// **That command does not exit 0, and did not before F1 either.** The
 /// non-Gregorian host has its own baseline of PRE-EXISTING failures, measured
-/// at `7a3cf54` and unchanged by F1: 1 issue under `th_TH@calendar=buddhist`
-/// and under `ja_JP@calendar=japanese`, 5 under `ar_SA@calendar=islamic-umalqura`
-/// - `DisplayFormattingTests.swift:49,59,68,69` and
-/// `NotificationReconciliationTests.swift:170`, all of which pin rendered
-/// strings that a non-Gregorian `Calendar.autoupdatingCurrent` legitimately
-/// writes differently. Read the named tests, not the exit code.
+/// at `7a3cf54` and unchanged by F1. Read the named tests, not the exit code:
+///
+///  - `th_TH@calendar=buddhist`, `ja_JP@calendar=japanese` — 1 issue,
+///    `DisplayFormattingTests.swift:49`. That one IS calendar-caused:
+///    `Date.FormatStyle` renders through the process calendar and a `.locale()`
+///    call does not override it, so the day reads "Aug 15, 2569 BE".
+///    `NotificationReconciliationTests.swift:170` is the same shape.
+///  - `ar_SA@calendar=islamic-umalqura` — 5 issues, the four above plus
+///    `DisplayFormattingTests.swift:59,68,69`. Those three are **not about the
+///    calendar at all**: they are Arabic-Indic numerals from the locale's
+///    numbering system ("Every ٤٥ days", "١ subscription"), reached through
+///    `String(localized:)` and `AttributedString(localized:)`, which never
+///    touch a date.
 @Suite("Calendar era: day conversions never resolve in the device calendar (F1)")
 struct CalendarEraTests {
 

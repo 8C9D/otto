@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import OttoDomain
 import OttoServices
+import OttoStores
 @testable import OttoUI
 
 // Wave 9A defect 1: Today's composition, pinned where the defect lived. The
@@ -166,5 +167,112 @@ struct TodaySectionPlanTests {
     func absentEngine() {
         #expect(plan(subscriptionsEmpty: true, permission: nil) == [.noSubscriptionsYet])
         #expect(plan(permission: nil) == [.needsAction])
+    }
+}
+
+/// R4-1's copy. Asserting the RENDERED string needs an accessibility tree this
+/// host does not vend, but choosing between the two wordings does not - and
+/// while that choice was private both could be swapped, so a whole failed pass
+/// rendered "0 subscriptions couldn't be updated", with every test green.
+@Suite("The coverage-gap card says the right one of its two things")
+struct CoverageGapCardTests {
+
+    @Test("⛔ a whole failed pass never claims a count, least of all zero")
+    func aWholePassFailureHasNoCount() {
+        let card = CoverageGapCard(failureCount: 0)
+        #expect(card.headline == "Reminders couldn't be updated")
+        // The sentence this branch exists to prevent.
+        #expect(!card.headline.contains("0"))
+        #expect(card.detail.contains("didn't finish"))
+    }
+
+    @Test("a partial failure names how many subscriptions, inflected, and no more than that")
+    func aPartialFailureNamesTheCount() {
+        let one = CoverageGapCard(failureCount: 1)
+        #expect(one.headline == "1 subscription couldn't be updated")
+        let three = CoverageGapCard(failureCount: 3)
+        #expect(three.headline == "3 subscriptions couldn't be updated")
+        // Wave 10 defect I: the inflection must be RESOLVED, not left as markup.
+        #expect(!three.headline.contains("^["))
+        #expect(three.detail.contains("their reminders"))
+    }
+}
+
+private struct SchedulerFailed: Error {}
+
+private struct ThrowingScheduler: ReminderScheduling {
+    func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome {
+        throw SchedulerFailed()
+    }
+}
+
+private struct AuthorizedClient: NotificationClient {
+    func permission() async -> NotificationPermission { .authorized }
+    func requestAuthorization() async -> NotificationPermission { .authorized }
+    func pendingRequests() async -> [NotificationRequestSpec] { [] }
+    func deliveredIdentifiers() async -> [String] { [] }
+    func add(_ spec: NotificationRequestSpec) async throws {}
+    func removePendingRequests(withIdentifiers identifiers: [String]) async {}
+}
+
+/// The mapping from the stores to `TodaySection.Input`, which used to live in a
+/// private method on `TodayView` where nothing could reach it. Deleting the
+/// notification half of it left all 185 tests green, so the plan tests above
+/// were guarding a rule nothing was feeding.
+@MainActor
+@Suite("Today reads its input from the stores")
+struct TodayInputTests {
+
+    private var overview: TodayOverview {
+        TodayOverview(needsAction: [], next30Days: [], later: [])
+    }
+
+    private func input(_ notifications: NotificationStatusStore?) -> TodaySection.Input {
+        TodaySection.input(
+            overview: overview,
+            subscriptionsEmpty: false,
+            unreadableCount: 0,
+            hasReadRepairs: false,
+            notifications: notifications
+        )
+    }
+
+    @Test("⛔ a pass that failed reaches Today - the flag is read from the store, not defaulted")
+    func aFailedPassReachesTheScreen() async throws {
+        let store = NotificationStatusStore(
+            scheduler: ThrowingScheduler(), client: AuthorizedClient(),
+            dates: .fixed(today: try #require(CalendarDay(year: 2026, month: 8, day: 6)))
+        )
+        // Before any pass: nothing has failed, so nothing is claimed.
+        #expect(!input(store).lastPassFailed)
+        #expect(!TodaySection.plan(input(store)).contains(.coverageGap))
+
+        await store.reschedule()
+
+        // The whole chain, end to end: the pass threw, the store recorded it,
+        // the input carried it, and Today plans the card that says so.
+        #expect(input(store).lastPassFailed)
+        #expect(TodaySection.plan(input(store)).contains(.coverageGap))
+    }
+
+    @Test("the permission and the outcome come from the store too, and an absent engine is not a crash")
+    func theRestOfTheMappingIsRead() async throws {
+        let store = NotificationStatusStore(
+            scheduler: ThrowingScheduler(), client: AuthorizedClient(),
+            dates: .fixed(today: try #require(CalendarDay(year: 2026, month: 8, day: 6)))
+        )
+        let horizon = try #require(CalendarDay(year: 2026, month: 11, day: 4))
+        store.apply(ScheduleOutcome(
+            permission: .authorized, scheduledCount: 3,
+            truncatedAfter: nil, coveredThrough: horizon
+        ))
+
+        #expect(input(store).permission == .authorized)
+        #expect(input(store).scheduleOutcome?.coveredThrough == horizon)
+        #expect(TodaySection.plan(input(store)).contains(.coverage))
+
+        #expect(input(nil).permission == nil)
+        #expect(input(nil).scheduleOutcome == nil)
+        #expect(!input(nil).lastPassFailed)
     }
 }

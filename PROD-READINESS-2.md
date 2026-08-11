@@ -45,6 +45,7 @@ Round 1's `RF-2` was a systematic blind spot: each stage's range started at what
 |---|---|---|---|
 | 0 | — (baseline only, `a15336a`) | — | no review |
 | 1 — F1 | `7a3cf54..a82d4e0` | `a82d4e0` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-1.md`) |
+| 2 — R4-1 | `a82d4e0..100c508` | `100c508` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-2.md`) |
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read. Stage 1's own remediation commit lands **after** the reviewed head `a82d4e0` and is therefore inside stage 2's range, not orphaned between them.
 
@@ -153,19 +154,25 @@ Two wordings, because a whole failed pass has no per-subscription count and "0 s
 
 **Predicted and confirmed observable difference.** Healthy authorized: unchanged. Fresh launch before the first pass: unchanged — no card. Denied / not-determined: unchanged, `.notificationStatus` already says something truer. Empty database: unchanged. Authorized or provisional with a failed pass or a failed ledger: the new card, where previously nothing.
 
-**Falsified, at the wiring rather than at a helper.**
+**Falsified.**
 
 | what was reverted | result |
 |---|---|
 | `plan`'s `.coverageGap` branch | `(ledgerFailed → [needsAction, next30Days]).contains(.coverageGap)` fails, plus the provisional and pass-failed cases — 3 issues. The failure message *is* the finding. |
 | `lastPassFailed = outcome == nil` in the store | `(store).lastPassFailed → false` after a failed pass |
 | a fixed `.frame(height: 44)` on the card | `(accessibility → 44.0) > (regular * factor → 66.0)` fails in both wordings |
+| `TodaySection.input`'s read of the store (**the wiring**) | `.lastPassFailed → false` and `plan → [needsAction]` after a pass that threw |
+| the two wordings swapped | `(card.headline → "0 subscriptions couldn't be updated")` — the exact sentence this branch exists to prevent |
+
+The last two were added in remediation. `reviews-2/REVIEW-2.md` finding 1 was right that the first three did **not** reach the wiring: an earlier draft of this section claimed they did, while `TodaySection.Input`'s construction was still a private method on a `View`, and the reviewer deleted the whole notification half of it with all 185 tests green. `TodaySection.input` is now a static factory over the stores, and `CoverageGapCard.headline`/`.detail` are no longer private — the same treatment `InsightsView.monthText` got one stage earlier, for the same reason.
+
+**Still unguarded, stated rather than papered over.** Nothing in the tree renders `TodayView`, so `coverageGapSection`'s one-line body can be replaced with `EmptyView()` and every test stays green. Closing that needs a view-hosting test for `TodayView`, and on this host it could only assert that it does not crash — the accessibility tree that would let it assert the card *appears* is exactly what this machine does not vend, which is why `EmptyStateTests` carries 7 known issues. Recorded as a residual, not as an environment excuse: the two consequential seams either side of it (the input mapping and the card's own copy) are guarded.
 
 **What is NOT verified.** The *rendered strings* are not asserted: this host vends no accessibility tree, which is the same limitation `reviews/BASELINE.md` recorded and why `EmptyStateTests` has 7 known issues. What the simulator does prove is that the card renders and grows correctly at `.accessibility5` in both wordings.
 
 **The card fires for every trigger except one, and that one is pre-existing.** `rescheduleSoon` reports a failure as `onOutcome?(nil)`, so `.foreground`, `.timeZoneChange`, `.significantTimeChange`, `.notificationDelivered` and `.notificationAction` all set the flag, and `appDidBecomeActive` runs a fresh pass on every foreground — so a persistent failure surfaces the next time the user opens the app. `handleBackgroundRefresh` never calls `onOutcome` on either path, so a failed `BGAppRefreshTask` pass still publishes nothing. That is round 1's **R4-2**, unchanged by this item and still in NEXT ROUND; the coordinator is inside `#if os(iOS)` and compiles to nothing under host `swift test`, so that wiring remains untested.
 
-**A file was split rather than a lint rule relaxed.** The card pushed `TodayView.swift` to 440 lines, past SwiftLint's 400-line `file_length`. `.swiftlint.yml` is untouched; `TodaySection` moved to `TodaySectionPlan.swift`, which is the seam the type already documents — the pure composition decision, holding no view, and the thing `TodaySectionPlanTests` exercises.
+**A file was split rather than a lint rule relaxed.** The card pushed `TodayView.swift` past SwiftLint's 400-line `file_length`. Reconstructing the unsplit file at the stage's end gives **456** lines, and SwiftLint confirms it: `File should contain 400 lines or less: currently contains 456`. (An earlier draft of this paragraph said 440, a number measured at an intermediate working state and never re-derived — the same class of defect `reviews-2/REVIEW-1.md` finding 5 raised, recurring in the document written to correct it.) `.swiftlint.yml` is untouched; `TodaySection` moved to `TodaySectionPlan.swift`, which is the seam the type already documents — the pure composition decision, holding no view, and the thing `TodaySectionPlanTests` exercises.
 
 ---
 
@@ -185,6 +192,10 @@ Carried forward from round 1 and not touched by round 2, plus what round 2 disco
 
 ### Discovered by round 2
 
-- **N2-1 (P2, from stage 1)** — five tests pin rendered date strings that a non-Gregorian `Calendar.autoupdatingCurrent` legitimately writes differently, so they fail on any non-Gregorian host: `DisplayFormattingTests.swift:49,59,68,69` and `NotificationReconciliationTests.swift:170`. **Pre-existing** — reproduced identically at `7a3cf54` — and invisible until this run created a non-Gregorian host. They are over-specified assertions, not product defects: `Date.FormatStyle` renders through the process calendar and a `.locale()` call does not override it. Until they are fixed, the non-Gregorian harness has a non-zero baseline, which `CalendarEraTests.swift` now states.
+- **N2-1 (P2, from stage 1)** — five tests pin rendered strings that a non-default locale legitimately writes differently, so they fail under the non-Gregorian harness. All five are **pre-existing** — reproduced identically at `7a3cf54` — and invisible until this run created such a host. They are over-specified assertions, not product defects. **They divide into two unrelated causes, and the first version of this entry got three of them wrong:**
+  - **Calendar-caused, 2 tests.** `DisplayFormattingTests.swift:49` and `NotificationReconciliationTests.swift:170`. `Date.FormatStyle` renders through the process calendar and a `.locale()` call does not override it, so a day reads `"Aug 15, 2569 BE"`. These fail on **any** non-Gregorian host.
+  - **Numbering-system-caused, 3 tests, nothing to do with the calendar.** `DisplayFormattingTests.swift:59,68,69` render Arabic-Indic numerals under `ar_SA` — `"Every ٤٥ days"`, `"١ subscription"`, `"٣ subscriptions"` — through `String(localized:)` and `AttributedString(localized:)`, neither of which touches a date. They pass under `th_TH@calendar=buddhist` and `ja_JP@calendar=japanese`.
+
+  So the per-host baseline is **1 issue** under Buddhist and Japanese, **5** under `ar_SA`, which is what this ledger and `CalendarEraTests.swift` record. Whoever picks this up is fixing two different things, not one.
 - **N2-2 (P1, from stage 1)** — **R0-7 is now a prerequisite, not a follow-up.** F1 stops new corruption; a non-Gregorian device holding pre-fix data now plans zero reminders while Today claims coverage (mechanism traced under ITEM 1). R0-7 was rated P2 in round 1 as "the other half of F1". It is P1 the moment F1 ships to such a device. Required repair, concretely: for each stored day written under a non-Gregorian calendar, reinterpret the packed `yyyymmdd` by converting the era-numbered `(y, m, d)` back through the device calendar that wrote it into a Gregorian `(y, m, d)` — the inverse of `Calendar.current.dateComponents` — across `StoredSubscription` anchors and trial dates, `StoredBillingEvent.expectedDate`, `StoredCancellationEpisode` check dates, `StoredPriceChange.effectiveDate` and `StoredMaterializationWatermark.lastMaterializedThrough`. It needs a persisted marker of which calendar wrote the data, which the V3 schema does not carry — so it is a schema change and is **DEFERRED by the freeze**, exactly as round 1 concluded. A repair that guesses the writing calendar is not acceptable on billing dates.
 

@@ -41,15 +41,12 @@ struct TodayView: View {
     }
 
     private func overviewList(_ overview: TodayOverview, subscriptionsEmpty: Bool) -> some View {
-        let sections = TodaySection.plan(TodaySection.Input(
+        let sections = TodaySection.plan(TodaySection.input(
+            overview: overview,
             subscriptionsEmpty: subscriptionsEmpty,
-            permission: model.notifications?.permission,
             unreadableCount: model.subscriptionsStore.unreadableCount,
             hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
-            hasNext30Days: !overview.next30Days.isEmpty,
-            hasLater: !overview.later.isEmpty,
-            scheduleOutcome: model.notifications?.outcome,
-            lastPassFailed: model.notifications?.lastPassFailed ?? false
+            notifications: model.notifications
         ))
         return List {
             ForEach(sections, id: \.self) { section in
@@ -271,13 +268,18 @@ struct CoverageGapCard: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var headline: String {
+    /// Not private, for the same reason `InsightsView.monthText` is not: the
+    /// choice BETWEEN the two wordings needs no accessibility tree to assert,
+    /// and while it was private both could be swapped - rendering "0
+    /// subscriptions couldn't be updated" for a whole failed pass - with every
+    /// test on both the host and the simulator green.
+    var headline: String {
         failureCount > 0
             ? String(localized: "\(subscriptionCountText(failureCount)) couldn't be updated")
             : String(localized: "Reminders couldn't be updated")
     }
 
-    private var detail: String {
+    var detail: String {
         failureCount > 0
             ? String(localized: """
               Otto couldn't refresh their reminders on its last check, so some may be missing. \
