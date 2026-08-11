@@ -32,7 +32,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` + `d00c086` (the shipped predicate is `d00c086`'s) |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — `0b76d65` |
-| 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
+| 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | **RESOLVED** — see ITEM 6 |
 | 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded). There are no others.
@@ -287,6 +287,30 @@ Together those pin it from both ends: the call site must use the helper, and the
 
 ---
 
+## ITEM 6 — RF-3, the reasons for failures 2..n reach nothing
+
+**RESOLVED**, `<stage-6 commit>`. A regression from round 1's own F5 fix.
+
+**Reconfirmed at HEAD.** `reconcile` collects `(id, error)` for every refused `add`, then logs `failed=[\(OttoLog.list(failures.map(\.id)))]` — identifiers only — and rethrows `failures.first` alone. Measured by reverting the fix: `failed=[…|renewal …|renewal …|renewal]`, three rungs and no reason among them.
+
+**What changed.** `OttoLog.failures(_:)` renders `identifier=ErrorType` pairs, sorted; the log line takes it. The **type only, never the value** — an error can carry a payload, and that is the rule `NotificationActionHandler`'s failure line already follows and the rule item 5 had to restore in the persistence logger.
+
+**The caller half cannot be fixed and is not claimed.** `reconcile` can rethrow one error because the caller takes one, so the log is the only place the others can be recorded. The finding says the reasons reach "neither log nor caller"; this closes the log and states the caller as out of reach rather than silently narrowing the finding.
+
+**Guarded at the call site, not just at the helper.** `OttoLog.failures` could be correct and unused — the exact shape round 1 shipped for F2 and recorded as R5-2 — so the guard reads the line back out of the process's own log with `OSLogStore(scope: .currentProcessIdentifier)`.
+
+**Falsified**: with the call site back on bare identifiers the emitted line is `failed=[00000000-…-000000000077|2026-08-22|renewal …]` and both the `=AddRefused` assertion and the every-rung-has-a-reason assertion fail.
+
+**A pre-existing defect this surfaced, and did not fix.** The first version of the guard used a fixture producing a full 64-rung plan, and the emitted line came back as:
+
+```
+reconcile pending=0 desired=64 … added=[… <…>] failed=[<decode: missing data>]
+```
+
+`os_log`'s per-entry limit truncated the `added=` list and then **lost the `failed=` field entirely**. So on a device where a pass adds many rungs, the failure list — the field this item exists to enrich — can be dropped from the log altogether. Recorded as **N2-4**; not fixed, because it is a pre-existing property of the line's shape and wider than RF-3.
+
+---
+
 ## NOT DEFECTS
 
 *(a finding that no longer reproduces at HEAD is moved here with its evidence rather than fixed)*
@@ -308,5 +332,6 @@ Carried forward from round 1 and not touched by round 2, plus what round 2 disco
   - **Numbering-system-caused, 3 tests, nothing to do with the calendar.** `DisplayFormattingTests.swift:59,68,69` render Arabic-Indic numerals under `ar_SA` — `"Every ٤٥ days"`, `"١ subscription"`, `"٣ subscriptions"` — through `String(localized:)` and `AttributedString(localized:)`, neither of which touches a date. They pass under `th_TH@calendar=buddhist` and `ja_JP@calendar=japanese`.
 
   So the per-host baseline is **1 issue** under Buddhist and Japanese, **5** under `ar_SA`, which is what this ledger and `CalendarEraTests.swift` record. Whoever picks this up is fixing two different things, not one.
+- **N2-4 (P2, from stage 6)** — `os_log`'s per-entry limit can truncate `reconcile`'s line and drop the `failed=` field entirely. Observed on a 64-rung pass: `added=[… <…>] failed=[<decode: missing data>]`. The identifier lists are logged in full deliberately (a count cannot tell a correct three-rung replacement from a wipe), so the fix is not to shorten them but to emit `added=` and `failed=` as separate entries. Pre-existing; RF-3's enrichment makes the loss more costly, not more likely.
 - **N2-2 (P1, from stage 1)** — **R0-7 is now a prerequisite, not a follow-up.** F1 stops new corruption; a non-Gregorian device holding pre-fix data now plans zero reminders while Today claims coverage (mechanism traced under ITEM 1). R0-7 was rated P2 in round 1 as "the other half of F1". It is P1 the moment F1 ships to such a device. Required repair, concretely: for each stored day written under a non-Gregorian calendar, reinterpret the packed `yyyymmdd` by converting the era-numbered `(y, m, d)` back through the device calendar that wrote it into a Gregorian `(y, m, d)` — the inverse of `Calendar.current.dateComponents` — across `StoredSubscription` anchors and trial dates, `StoredBillingEvent.expectedDate`, `StoredCancellationEpisode` check dates, `StoredPriceChange.effectiveDate` and `StoredMaterializationWatermark.lastMaterializedThrough`. It needs a persisted marker of which calendar wrote the data, which the V3 schema does not carry — so it is a schema change and is **DEFERRED by the freeze**, exactly as round 1 concluded. A repair that guesses the writing calendar is not acceptable on billing dates.
 

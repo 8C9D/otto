@@ -59,6 +59,29 @@ public enum OttoLog {
     static func list(_ identifiers: [String]) -> String {
         identifiers.isEmpty ? "-" : identifiers.sorted().joined(separator: " ")
     }
+
+    /// Failed rungs as `identifier=ErrorType` pairs.
+    ///
+    /// The reason, not just the identifier. `reconcile` attempts every rung and
+    /// collects every failure, but it can rethrow only one, so a list of bare
+    /// identifiers left the reasons for failures 2..n reaching neither the log
+    /// nor the caller. On a device where two causes coexist - the 64-slot
+    /// ceiling refusing one rung and something else refusing another - an
+    /// investigation saw one error type and a list of names, and could not tell
+    /// that a second cause existed at all.
+    ///
+    /// The TYPE only, never the value, which is the rule
+    /// `NotificationActionHandler`'s failure line already follows: an error can
+    /// carry a payload, and this file's privacy rule is that nothing richer
+    /// than a control-flow outcome goes to the log.
+    static func failures(_ failures: [(id: String, error: any Error)]) -> String {
+        failures.isEmpty
+            ? "-"
+            : failures
+                .map { "\($0.id)=\(String(describing: type(of: $0.error)))" }
+                .sorted()
+                .joined(separator: " ")
+    }
 }
 
 /// Which §6.2 trigger started a scheduling pass. Logged so a later

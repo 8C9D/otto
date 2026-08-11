@@ -197,9 +197,13 @@ public actor NotificationScheduler: ReminderScheduling {
             snoozesSpared=\(pending.count - planned.count, privacy: .public) \
             removed=[\(OttoLog.list(stale.map(\.identifier)), privacy: .public)] \
             added=[\(OttoLog.list(added), privacy: .public)] \
-            failed=[\(OttoLog.list(failures.map(\.id)), privacy: .public)]
+            failed=[\(OttoLog.failures(failures), privacy: .public)]
             """)
         // After the log line, so an investigation sees which rungs landed.
+        //
+        // Only the FIRST failure can be rethrown - the caller takes one error -
+        // so the log is the only place the others can be recorded, and until it
+        // carried `id=ErrorType` pairs they were collected and dropped.
         if let first = failures.first { throw first.error }
     }
 
