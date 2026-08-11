@@ -38,7 +38,7 @@ Everything else in round 1's and round 2's NEXT ROUND stays in NEXT ROUND.
 |---|---|---|---|
 | 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | **RESOLVED as detection for 11 of 13 / DEFERRED as repair** - stage 2; the V3 freeze is NOT lifted |
 | 2 | **R0-9** | The migration guard cannot detect a missing stage | **RESOLVED** - stage 1 |
-| 3 | **F1's CI guard** | F1's four reading sites have no guard that runs on a Gregorian machine | pending |
+| 3 | **F1's CI guard** | F1's four reading sites have no guard that runs on a Gregorian machine | **RESOLVED** - stage 3 |
 | 4 | **R4-2** | `NotificationCoordinator` compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome` | pending |
 | 5 | **R0-5** | A corrupt stored watermark becomes "no watermark", unlogged | pending |
 | 6 | **F11 remainder + R0-10(a)** | Import/export and cancellation/verification unlogged; `.fileImporter`'s `.failure` half dropped | pending |
@@ -294,6 +294,63 @@ What is real, and worse than a fixed cost: the same 201-test suite measured **11
 This stage adds a **fifth** such test, so it adds one more waiter on an unbounded read, on CI runners this run cannot exercise.
 That sharpens the CANNOT ASSESS entry rather than softening it.
 Taken anyway, and disclosed rather than buried: the alternative is a new log line with no executable guard, which is round 2's own R5-2 shipped again in the run whose item 7 is the same defect class.
+
+## ITEM 3 - F1's reading sites have no guard that runs on a Gregorian machine
+
+**RESOLVED**, stage 3.
+This is the item round 2 was denied by its own ASSUMPTION 2, and the round-3 prompt overrules that reading (ASSUMPTION 2 here).
+
+**Reconfirmed at HEAD by executing the defect.**
+Two of F1's reading sites - `DateProvider.live`'s `today()` and `CalendarDayBinding.asDate`, the latter being the DatePicker **write** path - were reverted to `Calendar.current` on this Gregorian host:
+
+```
+✔ Test run with 201 tests in 37 suites passed after 11.920 seconds.
+--- swiftlint --strict ---
+LINT CLEAN (nothing noticed)
+```
+
+Everything green, on the kind of machine every CI runner is.
+F1's eight guards can only fail on a non-Gregorian host, which CI is not, so the headline fix of round 2 could be reverted without a single job going red.
+
+**What changed - one lint rule, and one source change to make it exemption-free.**
+
+`device_calendar_outside_conversion_seam` bans `Calendar.current` and `Calendar.autoupdatingCurrent` across every package's `Sources/` and the app target, at `severity: error`, which is what `verify.sh` and CI run.
+No existing rule is relaxed, disabled or re-thresholded, and the rule carries **no `excluded:` path**.
+
+It could not be written that way at first: `SettingsView`'s notification-time picker was the last `Calendar.current` in the packages, and excluding it would have been exactly the papering-over the prompt forbids.
+So the conversion moved to `SettingsStore.notificationTimeOfDay` / `setNotificationTime(from:)` and resolves in `CalendarDay.conversionCalendar`.
+**Behaviour-preserving**: the picker only shows and edits a time of day, and time of day is identical in every calendar for a given instant and zone.
+It is also more correct - `Calendar.current.date(from: DateComponents(year: 2000, …))` means year 2000 *of the device's era*, which on a Buddhist device is 1457 CE - and it puts the conversion somewhere a test can reach, since the view's binding lives in a `private struct` nothing can call.
+
+**`match_kinds: [identifier, typeidentifier]`, deliberately.**
+`CalendarDay.swift`, `DisplayFormatting.swift`, `LiveNotificationClient.swift`, `StoredDayPlausibility.swift` and `SettingsStore.swift` all name `Calendar.current` in doc comments, as the trap being described.
+Restricting the rule to code keeps those legible **and** closes a falsification hole round 2 recorded: one of its falsifications was invalid because it edited a doc comment containing the string it meant to break.
+
+**Falsified at every site, one at a time, on a Gregorian host** - `swiftlint --strict` violation counts:
+
+| site reverted to `Calendar.current` | violations |
+|---|---|
+| `DateProvider.swift` | 1 |
+| `DisplayFormatting.swift` (three defaults) | 3 |
+| `CalendarDayBinding.swift` | 1 |
+| `InsightsView.swift` | 1 |
+| `LiveNotificationClient.swift` (the trigger **write** site) | 1 |
+| `SettingsStore.swift` (this item's own new site) | 2 |
+
+Every one fails the build's own lint gate on the machine CI uses.
+Restored, and `swiftlint --strict` is clean again with all five doc comments still naming `Calendar.current` - which is the comment-immunity proved rather than asserted.
+
+**Two tests, and what they can and cannot do.**
+`SettingsStoreTests` gains an hour/minute round trip and an assertion on the **reference instant itself**, because the round trip survives a reverted calendar and only the instant catches it.
+Like `CalendarEraTests`, both are trivially true on a Gregorian host; they bite under the non-Gregorian harness, where they pass.
+The Gregorian-machine guard is the lint rule, not them.
+
+**What this does NOT do.**
+A regex cannot see an *implicit* device calendar.
+`Date.FormatStyle` renders through `Calendar.autoupdatingCurrent` when no calendar is named, and `DisplayFormattingTests.swift:49`'s pre-existing failure is exactly that; nothing here would catch a new site that formats a date without naming a calendar at all.
+Nor can it check that `conversionCalendar` is still Gregorian - that is `CalendarEraViewTests`' job, and it needs the non-Gregorian harness.
+
+**Cost.** Two tests, ~0.015 s. No suite time change.
 
 ## ITEM 2 - R0-9, the migration guard cannot detect a missing stage
 

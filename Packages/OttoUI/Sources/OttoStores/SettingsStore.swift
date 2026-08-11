@@ -84,6 +84,38 @@ public final class SettingsStore {
             ?? FireTimePolicy.standard.preferredMinute
     }
 
+    /// The stored hour and minute as the `Date` a wheel picker needs, and the
+    /// inverse. The one place settings touch a `Date`, and only for its clock
+    /// face - no calendar day is involved and none is produced.
+    ///
+    /// The reference day resolves in `CalendarDay.conversionCalendar`, not
+    /// `Calendar.current`. Both round-trip an hour and a minute correctly, since
+    /// time of day is the same in every calendar for a given instant and zone -
+    /// but `Calendar.current` reads `DateComponents(year: 2000, …)` as year 2000
+    /// OF THE DEVICE'S ERA, which on a Buddhist device is 1457 CE and in a
+    /// Japanese era is a year that does not exist. Nothing downstream depends on
+    /// which instant it is, so this changes no behaviour; what it removes is the
+    /// last `Calendar.current` in the packages, which is what lets the lint rule
+    /// guarding F1's reading sites be global instead of carrying an exemption.
+    ///
+    /// Lives here rather than in the view because the view's binding is inside a
+    /// `private struct` no test can reach, and F1's whole lesson is that an
+    /// unreachable conversion is an unguarded one.
+    public var notificationTimeOfDay: Date {
+        CalendarDay.conversionCalendar.date(
+            from: DateComponents(
+                year: 2000, month: 1, day: 1, hour: notificationHour, minute: notificationMinute
+            )
+        ) ?? Date(timeIntervalSinceReferenceDate: 0)
+    }
+
+    /// Stores the hour and minute of a picked instant, ignoring its date.
+    public func setNotificationTime(from picked: Date) {
+        let parts = CalendarDay.conversionCalendar.dateComponents([.hour, .minute], from: picked)
+        notificationHour = parts.hour ?? FireTimePolicy.standard.preferredHour
+        notificationMinute = parts.minute ?? FireTimePolicy.standard.preferredMinute
+    }
+
     /// The defaults the Add form starts new entries from.
     public var reminderDefaults: ReminderDefaults {
         ReminderDefaults(

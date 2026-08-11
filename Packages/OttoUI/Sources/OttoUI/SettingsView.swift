@@ -76,24 +76,14 @@ private struct ReminderDefaultsSection: View {
             : String(localized: "\(days) days before")
     }
 
-    /// The stored hour and minute as the `Date` a wheel picker needs - the one
-    /// place settings touch a `Date`, and only for its clock face.
+    /// The stored hour and minute as the `Date` a wheel picker needs. Both
+    /// directions live on the store, where a test can reach them - see
+    /// `SettingsStore.notificationTimeOfDay`.
     private var notificationTime: Binding<Date> {
         @Bindable var settings = model.settings
         return Binding<Date>(
-            get: {
-                Calendar.current.date(
-                    from: DateComponents(
-                        year: 2000, month: 1, day: 1,
-                        hour: settings.notificationHour, minute: settings.notificationMinute
-                    )
-                ) ?? Date(timeIntervalSinceReferenceDate: 0)
-            },
-            set: { picked in
-                let components = Calendar.current.dateComponents([.hour, .minute], from: picked)
-                settings.notificationHour = components.hour ?? FireTimePolicy.standard.preferredHour
-                settings.notificationMinute = components.minute ?? FireTimePolicy.standard.preferredMinute
-            }
+            get: { settings.notificationTimeOfDay },
+            set: { picked in settings.setNotificationTime(from: picked) }
         )
     }
 }
