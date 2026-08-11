@@ -28,7 +28,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | # | id | what | terminal state |
 |---|---|---|---|
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
-| 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — see ITEM 2 |
+| 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | *(pending)* |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | *(pending)* |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
@@ -130,7 +130,7 @@ Before this fix that device delivered, because the two errors cancelled. **F1 mu
 
 ## ITEM 2 — R4-1, an authorized user with a failing engine sees a healthy Today
 
-**RESOLVED**, `<stage-2 commit>`. This is the one item with a scope exception permitting new user-facing copy.
+**RESOLVED**, `eb4a13b`. This is the one item with a scope exception permitting new user-facing copy.
 
 **Reconfirmed at HEAD.** `TodaySection.plan` at `7a3cf54` emits `.notificationStatus` only for a permission other than authorized, and `.coverage` only when `canClaimCoverage`. Measured with a throwaway probe against the real `plan`, then deleted:
 
