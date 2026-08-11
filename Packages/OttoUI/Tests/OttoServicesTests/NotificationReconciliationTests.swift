@@ -106,6 +106,37 @@ struct NotificationReconciliationTests {
         #expect(kinds.contains(.conversionAnnouncement))
     }
 
+    /// One refused `add` must not starve the rungs ordered behind it. The order
+    /// is deterministic, so aborting the loop at the first failure meant the
+    /// same subscriptions lost their slot on every pass - permanently
+    /// unscheduled because an unrelated rung failed ahead of them.
+    @Test("a refused add does not abandon the rungs behind it - every desired rung is attempted")
+    func oneRefusedAddDoesNotStarveTheRest() async throws {
+        let (fixture, _) = try await trialWorld()
+        let today = try day(2026, 8, 6)
+        let now = try at(today, hour: 8)
+
+        // How many rungs this world wants, established by a clean pass.
+        _ = try await fixture.scheduler.reschedule(now: now, today: today, timeZone: torontoZone)
+        let desiredCount = await fixture.client.pendingRequests().count
+        #expect(desiredCount > 1, "the test needs more than one rung to be able to starve any")
+
+        // The same world again, on a device that refuses everything, so the
+        // whole desired set is attempted against a center accepting none of it.
+        let (empty, _) = try await trialWorld()
+        await empty.client.refuseAdds(after: 0)
+
+        await #expect(throws: FakeNotificationClient.AddRefused.self) {
+            _ = try await empty.scheduler.reschedule(now: now, today: today, timeZone: torontoZone)
+        }
+
+        // The pass still reports failure - but it tried every rung on the way.
+        // Aborting at the first refusal records exactly one attempt.
+        let attempted = await empty.client.addCalls
+        #expect(attempted.count == desiredCount)
+        #expect(Set(attempted.map(\.identifier)).count == desiredCount)
+    }
+
     @Test("a changed spec is replaced by add-over-the-top, never removed first")
     func changedContentReplacesInPlace() async throws {
         let fixture = SchedulerFixture()

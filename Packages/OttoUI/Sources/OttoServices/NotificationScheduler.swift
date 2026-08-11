@@ -177,9 +177,23 @@ public actor NotificationScheduler: ReminderScheduling {
         }
         let pendingByID = Dictionary(uniqueKeysWithValues: planned.map { ($0.identifier, $0) })
         var added: [String] = []
+        var failed: [String] = []
+        var firstFailure: (any Error)?
+        // Every rung is ATTEMPTED before the pass gives up. Throwing from
+        // inside the loop abandoned every spec ordered after the first refusal,
+        // and the order is deterministic, so the same rungs lost their slot on
+        // every pass - a subscription could go permanently unscheduled because
+        // an unrelated one failed ahead of it. The pass still reports failure
+        // afterwards (the outcome is not published, so Today stops claiming
+        // coverage), but the device now holds everything that could be added.
         for spec in specs where pendingByID[spec.identifier] != spec {
-            try await client.add(spec)
-            added.append(spec.identifier)
+            do {
+                try await client.add(spec)
+                added.append(spec.identifier)
+            } catch {
+                failed.append(spec.identifier)
+                if firstFailure == nil { firstFailure = error }
+            }
         }
         // The evidence that this is a diff and not the old remove-all: over an
         // unchanged plan both lists are empty while `pending` is not.
@@ -189,8 +203,12 @@ public actor NotificationScheduler: ReminderScheduling {
             reconcile pending=\(planned.count, privacy: .public) desired=\(specs.count, privacy: .public) \
             snoozesSpared=\(pending.count - planned.count, privacy: .public) \
             removed=[\(OttoLog.list(stale.map(\.identifier)), privacy: .public)] \
-            added=[\(OttoLog.list(added), privacy: .public)]
+            added=[\(OttoLog.list(added), privacy: .public)] \
+            failed=[\(OttoLog.list(failed), privacy: .public)]
             """)
+        // Reported only after the log line above, so an investigation can see
+        // exactly which rungs made it and which did not.
+        if let firstFailure { throw firstFailure }
     }
 
     private func isTodaysAnnouncement(_ spec: NotificationRequestSpec, today: CalendarDay) -> Bool {

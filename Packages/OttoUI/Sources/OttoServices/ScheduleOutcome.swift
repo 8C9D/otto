@@ -20,6 +20,17 @@ public struct ScheduleOutcome: Hashable, Sendable {
     /// swallowed.
     public let ledgerFailures: [UUID]
 
+    /// Whether `coveredThrough` may be STATED to the user.
+    ///
+    /// A pass that reconciled the ledger for only some subscriptions still
+    /// returns normally, with `coveredThrough` at the full horizon - it
+    /// describes the plan, not the subscriptions that fell out of it. A
+    /// subscription whose materialization threw has no rows and no reminders
+    /// this pass, so a screen that reads `coveredThrough` alone tells the user
+    /// their reminders are scheduled for the next ninety days when some of them
+    /// are not scheduled at all.
+    public var canClaimCoverage: Bool { ledgerFailures.isEmpty }
+
     public init(
         permission: NotificationPermission,
         scheduledCount: Int,

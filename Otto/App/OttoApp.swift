@@ -82,6 +82,8 @@ struct OttoApp: App {
         to model: AppModel,
         notifications: NotificationStatusStore
     ) {
+        // A nil outcome means the pass failed; the store drops its previous
+        // one rather than letting Today keep stating that pass's coverage.
         coordinator.onOutcome = { [weak notifications] outcome in
             notifications?.apply(outcome)
         }

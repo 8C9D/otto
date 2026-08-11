@@ -107,6 +107,59 @@ struct NotificationActionTests {
         #expect(await subscriptions.savedValues.filter { $0.id == subscription.id }.count == 1)
     }
 
+    /// A snooze must keep the interruption level of the rung it repeats. The
+    /// cancel-by day's warnings are time-sensitive so they break through Focus
+    /// (spec §6.3), and "remind me later" is the user asking to be told again
+    /// about that exact deadline - a repeat that a Focus mode can hold is not
+    /// the reminder they asked for, and the money is unrecoverable.
+    @Test("a snoozed deadline warning keeps its time-sensitive level; a snoozed ordinary rung does not gain one")
+    func snoozeKeepsTheKindsInterruptionLevel() async throws {
+        let fixture = SchedulerFixture()
+        let (subscription, trial) = try await seedTrial(fixture.subscriptions)
+        let today = try day(2026, 8, 6)
+        let now = try fixtureNow()
+
+        // The cancel-by morning rung: time-sensitive in the plan.
+        #expect(PlannedReminder.Kind.trialDayOfMorning.isTimeSensitive)
+        _ = try await fixture.handler.handle(
+            actionIdentifier: NotificationAction.remindLater.rawValue,
+            notificationIdentifier: NotificationPlanIdentifier.planned(
+                PlannedReminder(
+                    subscriptionID: subscription.id, day: trial.cancelByDate, kind: .trialDayOfMorning
+                )
+            ),
+            now: now, today: today, timeZone: torontoZone
+        )
+        let deadlineSnooze = try #require(
+            await fixture.client.pendingRequests()
+                .first { NotificationPlanIdentifier.isSnooze($0.identifier) }
+        )
+        #expect(deadlineSnooze.isTimeSensitive)
+
+        // And the level is derived, not blanket-applied: the lead rung is not
+        // time-sensitive, so its snooze must not be either.
+        #expect(!PlannedReminder.Kind.trialLead.isTimeSensitive)
+        _ = try await fixture.handler.handle(
+            actionIdentifier: NotificationAction.remindLater.rawValue,
+            notificationIdentifier: NotificationPlanIdentifier.planned(
+                PlannedReminder(
+                    subscriptionID: subscription.id,
+                    day: trial.cancelByDate.adding(days: -5),
+                    kind: .trialLead
+                )
+            ),
+            now: now, today: today, timeZone: torontoZone
+        )
+        let leadSnooze = try #require(
+            await fixture.client.pendingRequests()
+                .first {
+                    NotificationPlanIdentifier.isSnooze($0.identifier)
+                        && NotificationPlanIdentifier.kind(of: $0.identifier) == .trialLead
+                }
+        )
+        #expect(!leadSnooze.isTimeSensitive)
+    }
+
     @Test("'Remind me later' can never move past the cancel-by date, however often it is invoked")
     func snoozeNeverPassesCancelBy() async throws {
         let fixture = SchedulerFixture()

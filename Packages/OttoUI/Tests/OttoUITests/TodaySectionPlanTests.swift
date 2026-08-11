@@ -17,7 +17,7 @@ struct TodaySectionPlanTests {
         hasReadRepairs: Bool = false,
         hasNext30Days: Bool = false,
         hasLater: Bool = false,
-        hasScheduleOutcome: Bool = false
+        canClaimCoverage: Bool = false
     ) -> [TodaySection] {
         TodaySection.plan(TodaySection.Input(
             subscriptionsEmpty: subscriptionsEmpty,
@@ -26,7 +26,7 @@ struct TodaySectionPlanTests {
             hasReadRepairs: hasReadRepairs,
             hasNext30Days: hasNext30Days,
             hasLater: hasLater,
-            hasScheduleOutcome: hasScheduleOutcome
+            canClaimCoverage: canClaimCoverage
         ))
     }
 
@@ -80,12 +80,12 @@ struct TodaySectionPlanTests {
 
     @Test("the coverage footer needs a schedule outcome AND a permission that can deliver")
     func coverageFooterConditions() {
-        #expect(plan(hasScheduleOutcome: true).contains(.coverage))
-        #expect(plan(permission: .provisional, hasScheduleOutcome: true).contains(.coverage))
-        #expect(!plan(permission: .denied, hasScheduleOutcome: true).contains(.coverage))
-        #expect(!plan(hasScheduleOutcome: false).contains(.coverage))
+        #expect(plan(canClaimCoverage: true).contains(.coverage))
+        #expect(plan(permission: .provisional, canClaimCoverage: true).contains(.coverage))
+        #expect(!plan(permission: .denied, canClaimCoverage: true).contains(.coverage))
+        #expect(!plan(canClaimCoverage: false).contains(.coverage))
         // An empty database schedules nothing worth a horizon statement.
-        #expect(!plan(subscriptionsEmpty: true, hasScheduleOutcome: true).contains(.coverage))
+        #expect(!plan(subscriptionsEmpty: true, canClaimCoverage: true).contains(.coverage))
     }
 
     @Test("no notification engine means no notification surface, never a crash")

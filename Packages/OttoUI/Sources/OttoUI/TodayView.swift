@@ -33,7 +33,9 @@ enum TodaySection: Hashable {
         var hasReadRepairs = false
         var hasNext30Days = false
         var hasLater = false
-        var hasScheduleOutcome = false
+        /// A pass produced an outcome AND that outcome may be stated -
+        /// see `ScheduleOutcome.canClaimCoverage`.
+        var canClaimCoverage = false
     }
 
     static func plan(_ input: Input) -> [TodaySection] {
@@ -58,7 +60,7 @@ enum TodaySection: Hashable {
         if input.hasLater {
             sections.append(.later)
         }
-        if input.hasScheduleOutcome,
+        if input.canClaimCoverage,
            input.permission == .authorized || input.permission == .provisional {
             sections.append(.coverage)
         }
@@ -110,7 +112,7 @@ struct TodayView: View {
             hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
             hasNext30Days: !overview.next30Days.isEmpty,
             hasLater: !overview.later.isEmpty,
-            hasScheduleOutcome: model.notifications?.outcome != nil
+            canClaimCoverage: model.notifications?.outcome?.canClaimCoverage ?? false
         ))
         return List {
             ForEach(sections, id: \.self) { section in

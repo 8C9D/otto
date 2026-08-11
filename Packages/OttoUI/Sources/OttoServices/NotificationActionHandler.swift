@@ -156,7 +156,15 @@ public actor NotificationActionHandler {
             day: target.day,
             hour: hour,
             minute: minute,
-            isTimeSensitive: false,
+            // From the KIND, exactly as the scheduler derives it. Hard-coding
+            // false silently demoted the one rung where it matters most: the
+            // cancel-by day's morning and evening warnings are time-sensitive
+            // so they break through Focus (spec §6.3), and "remind me later" is
+            // the user asking to be told again about that same deadline. The
+            // repeat arrived without the breakthrough the original had, so a
+            // Focus mode or Scheduled Summary could hold the last warning
+            // before unrecoverable money moves.
+            isTimeSensitive: kind.isTimeSensitive,
             categoryIdentifier: NotificationCategory.actionable
         ))
     }

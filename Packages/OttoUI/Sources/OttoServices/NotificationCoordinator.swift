@@ -32,8 +32,10 @@ public final class NotificationCoordinator: NSObject {
     /// cancellation URL). Set by the composition root.
     public var onFollowUp: ((NotificationActionFollowUp) -> Void)?
     /// Latest outcome, published so the store layer can surface permission and
-    /// coverage without re-running a pass.
-    public var onOutcome: ((ScheduleOutcome) -> Void)?
+    /// coverage without re-running a pass. `nil` means the pass FAILED - the
+    /// store drops the previous outcome rather than leaving the UI asserting
+    /// coverage an earlier pass earned and this one did not renew.
+    public var onOutcome: ((ScheduleOutcome?) -> Void)?
 
     public init(
         scheduler: any ReminderScheduling,
@@ -111,11 +113,15 @@ public final class NotificationCoordinator: NSObject {
 
     private func rescheduleSoon(_ trigger: RescheduleTrigger) {
         Task { [scheduler, now, today, timeZone, onOutcome] in
-            if let outcome = try? await scheduler.reschedule(
+            // A failed pass is REPORTED as nil, not dropped. The old shape
+            // discarded the failure entirely, so the store kept publishing the
+            // last successful outcome and Today went on stating coverage that
+            // this pass had just failed to renew. The pass itself is already
+            // logged by the trigger-tagged wrapper (OttoLog).
+            let outcome = try? await scheduler.reschedule(
                 now: now(), today: today(), timeZone: timeZone(), trigger: trigger
-            ) {
-                onOutcome?(outcome)
-            }
+            )
+            onOutcome?(outcome)
         }
     }
 

@@ -41,17 +41,30 @@ public final class NotificationStatusStore {
             )
             apply(outcome)
         } catch {
-            // The pass failed before it could produce an outcome; the permission
-            // is still worth refreshing so the UI never shows stale state.
+            // The pass failed before it could produce an outcome. DROP the old
+            // one: it describes a pass that is no longer the last word, and
+            // Today renders "Reminders scheduled through <day>" straight from
+            // it - so keeping it means the screen keeps asserting coverage
+            // earned by an earlier pass while this one failed to renew it. No
+            // claim beats a false one. The permission is still worth refreshing
+            // so the UI never shows stale state.
+            apply(nil)
             permission = await client.permission()
         }
     }
 
     /// Publishes an outcome produced elsewhere (the coordinator's background and
     /// lifecycle passes), so there is one source of truth for the UI.
-    public func apply(_ outcome: ScheduleOutcome) {
+    ///
+    /// `nil` means a pass ran and failed, i.e. nothing is currently known about
+    /// coverage. The permission is left alone in that case - a failed pass says
+    /// nothing about whether notifications are allowed, and the caller refreshes
+    /// it from the system where it matters.
+    public func apply(_ outcome: ScheduleOutcome?) {
         self.outcome = outcome
-        permission = outcome.permission
+        if let outcome {
+            permission = outcome.permission
+        }
     }
 
     /// Shows the system prompt; a grant is a reschedule trigger (spec §6.2).
