@@ -27,7 +27,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 
 | # | id | what | terminal state |
 |---|---|---|---|
-| 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `<stage-1 remediation>`; see F1 below for the two boundaries it does **not** cover |
+| 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | *(pending)* |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | *(pending)* |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | *(pending)* |
