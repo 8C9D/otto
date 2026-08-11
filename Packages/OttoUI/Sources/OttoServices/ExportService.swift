@@ -14,6 +14,43 @@ public struct ImportPreview: Hashable, Sendable {
     public let paymentMethodCount: Int
 }
 
+/// What the document picker handed back (R0-10(a)).
+///
+/// The `.failure` half of `.fileImporter`'s result used to be dropped on the
+/// floor - no log, no alert - so a genuine read error on the RECOVERY path was
+/// indistinguishable from the user changing their mind. Both now have a name,
+/// and only one of them is worth interrupting the user for.
+public enum ImportPickerOutcome: Equatable {
+    case selected(URL)
+    case cancelled
+    case failed(String)
+}
+
+/// Classifies a document-picker result and records it.
+///
+/// Lives here rather than in the view because the view's handler is inside a
+/// `private struct` nothing can call, and an unreachable decision is an
+/// unguarded one - the lesson round 2 relearned three times.
+///
+/// Whether SwiftUI reports a dismissed picker as `CocoaError.userCancelled` or
+/// as no callback at all is a detail of the framework version, so both are
+/// handled; only the real failure is surfaced to the user.
+public func importPickerOutcome(of result: Result<URL, any Error>) -> ImportPickerOutcome {
+    switch result {
+    case .success(let url):
+        return .selected(url)
+    case .failure(let error) where (error as? CocoaError)?.code == .userCancelled:
+        OttoLog.dataTransfer.notice("import picker cancelled")
+        return .cancelled
+    case .failure(let error):
+        OttoLog.dataTransfer.error("""
+            import picker FAILED \
+            error=\(String(describing: type(of: error)), privacy: .public)
+            """)
+        return .failed(error.localizedDescription)
+    }
+}
+
 /// Layer 4 for export/import (spec §3.4): every serialization decision lives in
 /// the domain (`exportData`, `decodeExport`, `resolveImport`, `chargesCSV`);
 /// this actor only moves bytes between the repository and files. Export files
@@ -34,14 +71,29 @@ public actor ExportService {
     public func exportJSONFile(exportedAt: Date, today: CalendarDay) async throws -> URL {
         let snapshot = try await transfer.completeSnapshot()
         let data = try exportData(from: snapshot, exportedAt: exportedAt)
-        return try write(data, filename: "Otto-Export-\(today).json")
+        let url = try write(data, filename: "Otto-Export-\(today).json")
+        // Counts and bytes, never the path: an export lands under a dated Otto
+        // name but the same helper writes wherever it is told, and a path can
+        // carry the user's name.
+        OttoLog.dataTransfer.notice("""
+            export kind=json subscriptions=\(snapshot.subscriptions.count, privacy: .public) \
+            events=\(snapshot.billingEvents.count, privacy: .public) \
+            bytes=\(data.count, privacy: .public)
+            """)
+        return url
     }
 
     /// The lossy, one-way charge-history CSV, for reading in a spreadsheet.
     public func exportChargesCSVFile(today: CalendarDay) async throws -> URL {
         let snapshot = try await transfer.completeSnapshot()
         let csv = chargesCSV(from: snapshot)
-        return try write(Data(csv.utf8), filename: "Otto-Charges-\(today).csv")
+        let data = Data(csv.utf8)
+        let url = try write(data, filename: "Otto-Charges-\(today).csv")
+        OttoLog.dataTransfer.notice("""
+            export kind=csv events=\(snapshot.billingEvents.count, privacy: .public) \
+            bytes=\(data.count, privacy: .public)
+            """)
+        return url
     }
 
     // MARK: - Import
@@ -49,14 +101,29 @@ public actor ExportService {
     /// Reads and fully validates the file, returning what the UI needs to ask
     /// the merge-or-replace question. Touches nothing.
     public func importPreview(from url: URL) async throws -> ImportPreview {
-        let incoming = try importedSnapshot(from: readSecurityScoped(url))
-        let current = try await transfer.completeSnapshot()
-        return ImportPreview(
-            databaseIsEmpty: current.isEmpty,
-            subscriptionCount: incoming.subscriptions.count { $0.deletedAt == nil },
-            billingEventCount: incoming.billingEvents.count { $0.deletedAt == nil },
-            paymentMethodCount: incoming.paymentMethods.count { $0.deletedAt == nil }
-        )
+        do {
+            let incoming = try importedSnapshot(from: readSecurityScoped(url))
+            let current = try await transfer.completeSnapshot()
+            let preview = ImportPreview(
+                databaseIsEmpty: current.isEmpty,
+                subscriptionCount: incoming.subscriptions.count { $0.deletedAt == nil },
+                billingEventCount: incoming.billingEvents.count { $0.deletedAt == nil },
+                paymentMethodCount: incoming.paymentMethods.count { $0.deletedAt == nil }
+            )
+            OttoLog.dataTransfer.notice("""
+                import preview subscriptions=\(preview.subscriptionCount, privacy: .public) \
+                events=\(preview.billingEventCount, privacy: .public) \
+                databaseEmpty=\(preview.databaseIsEmpty, privacy: .public)
+                """)
+            return preview
+        } catch {
+            // A file that cannot be read is the recovery path failing at its
+            // first step, and it used to reach only an alert the user dismisses.
+            OttoLog.dataTransfer.error(
+                "import preview FAILED error=\(String(describing: type(of: error)), privacy: .public)"
+            )
+            throw error
+        }
     }
 
     /// Decode → resolve → atomic restore. Any failure before the restore leaves
@@ -98,11 +165,36 @@ public actor ExportService {
         // tombstones - it is only the WATERMARK decision that must follow the
         // principle rather than the record count.
         let reconstruct = strategy == .replace || current.hasNoLiveSubscriptions
-        try await transfer.restore(
-            resolved.snapshot, at: now,
-            watermarks: reconstruct ? .reconstruct : .keep
-        )
-        return resolved.summary
+        // BEFORE the restore, so an import that dies mid-transaction still
+        // leaves a record of what was attempted. The pair of lines is the
+        // point: a begin with no end is exactly the state Gate 3 had to
+        // reconstruct by copying the container off the device.
+        OttoLog.dataTransfer.notice("""
+            import begin strategy=\(strategy.rawValue, privacy: .public) \
+            watermarks=\(reconstruct ? "reconstruct" : "keep", privacy: .public) \
+            incoming=\(incoming.subscriptions.count, privacy: .public)
+            """)
+        do {
+            try await transfer.restore(
+                resolved.snapshot, at: now,
+                watermarks: reconstruct ? .reconstruct : .keep
+            )
+        } catch {
+            OttoLog.dataTransfer.error("""
+                import FAILED - nothing was applied \
+                error=\(String(describing: type(of: error)), privacy: .public)
+                """)
+            throw error
+        }
+        let summary = resolved.summary
+        OttoLog.dataTransfer.notice("""
+            import end subscriptions=\(summary.subscriptions.added, privacy: .public)\
+            +\(summary.subscriptions.updated, privacy: .public) \
+            events=\(summary.billingEvents.added, privacy: .public)\
+            +\(summary.billingEvents.updated, privacy: .public) \
+            removed=\(summary.subscriptions.removed, privacy: .public)
+            """)
+        return summary
     }
 
     // MARK: - Files

@@ -223,8 +223,17 @@ private struct ImportSection: View {
             """))
         }
         .fileImporter(isPresented: $isPicking, allowedContentTypes: [.json]) { result in
-            if case .success(let url) = result {
+            // R0-10(a): the `.failure` half used to be dropped entirely - no
+            // log, no alert - so a genuine read failure on the RECOVERY path
+            // was indistinguishable from the user changing their mind. The
+            // alert it raises is the one that was already here (:275-285).
+            switch importPickerOutcome(of: result) {
+            case .selected(let url):
                 Task { await preview(url) }
+            case .cancelled:
+                break
+            case .failed(let description):
+                failure = description
             }
         }
         .confirmationDialog(

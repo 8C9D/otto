@@ -47,6 +47,29 @@ public enum OttoLog {
     /// a fixed constant, so neither says what the user pays for.
     public static let actions = Logger(subsystem: subsystem, category: "actions")
 
+    /// Import and export (spec §3.5, F11): which direction, which strategy,
+    /// how many records, and whether it finished.
+    ///
+    /// This is the recovery path, and it was completely silent: after a restore
+    /// that went wrong while nobody was watching, the device held no record that
+    /// a restore had even been attempted. Gate 3 was settled by counting rows in
+    /// a copied container, because there was nothing else to read.
+    ///
+    /// Counts and outcomes only. A file NAME is never logged - an export lands
+    /// under a dated Otto filename but an import is whatever the user picked,
+    /// and a path can carry their name or a vendor's.
+    public static let dataTransfer = Logger(subsystem: subsystem, category: "transfer")
+
+    /// The §5.4 cancellation and verification lifecycle (F11).
+    ///
+    /// The other boundary round 1 named and nothing recorded. A cancellation
+    /// that failed to open its episode, a verification that archived the
+    /// subscription, an un-cancel that restored it - all of them changed money
+    /// state and left the same silence behind. Opaque identifiers and
+    /// control-flow outcomes, like everything else here: never the vendor, the
+    /// amount, or the evidence note the user typed.
+    public static let flows = Logger(subsystem: subsystem, category: "flows")
+
     /// A `CalendarDay?` as log text - "none" reads better than an empty slot
     /// when the question being asked is whether a watermark exists at all.
     static func dayText(_ day: CalendarDay?) -> String {
