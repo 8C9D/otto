@@ -40,6 +40,48 @@ struct TodaySectionPlanTests {
         #expect(!plan(scheduleOutcome: try healthyOutcome(ledgerFailures: [UUID()])).contains(.coverage))
     }
 
+    /// R4-1. Withdrawing the coverage sentence was right, but `.notificationStatus`
+    /// renders only for a permission other than authorized, so what an authorized
+    /// user with a broken engine saw afterwards was a screen with no notification
+    /// surface on it at all - the same screen a healthy engine produces, minus one
+    /// line they had no way to miss.
+    @Test("⛔ an authorized user with a failing engine is NOT shown a healthy Today")
+    func aFailingEngineIsVisibleToAnAuthorizedUser() throws {
+        let healthy = plan(hasNext30Days: true, scheduleOutcome: try healthyOutcome())
+        let ledgerFailed = plan(
+            hasNext30Days: true,
+            scheduleOutcome: try healthyOutcome(ledgerFailures: [UUID()])
+        )
+        let passFailed = plan(hasNext30Days: true, lastPassFailed: true)
+
+        // The whole finding in one line: before the gap card, both of these
+        // equalled `healthy` minus `.coverage` and carried nothing in its place.
+        #expect(ledgerFailed != healthy)
+        #expect(passFailed != healthy)
+        #expect(ledgerFailed.contains(.coverageGap))
+        #expect(passFailed.contains(.coverageGap))
+        #expect(!healthy.contains(.coverageGap))
+        // Never both: the screen states coverage or states that it could not be
+        // earned, never one under the other.
+        #expect(!ledgerFailed.contains(.coverage))
+    }
+
+    @Test("the gap card does not fire before the first pass has run, or where nothing can be delivered")
+    func theGapCardDoesNotCryWolf() throws {
+        // Fresh launch: no pass has run, `outcome` is nil and nothing failed.
+        // A warning here would appear on every cold start.
+        #expect(!plan(scheduleOutcome: nil).contains(.coverageGap))
+        // Denied and not-determined already have `.notificationStatus`, which
+        // says something truer and more actionable.
+        #expect(!plan(permission: .denied, lastPassFailed: true).contains(.coverageGap))
+        #expect(!plan(permission: .notDetermined, lastPassFailed: true).contains(.coverageGap))
+        #expect(!plan(permission: nil, lastPassFailed: true).contains(.coverageGap))
+        // Provisional can deliver, so it gets the same honesty as authorized.
+        #expect(plan(permission: .provisional, lastPassFailed: true).contains(.coverageGap))
+        // An empty database has no reminders to be missing.
+        #expect(!plan(subscriptionsEmpty: true, lastPassFailed: true).contains(.coverageGap))
+    }
+
     private func plan(
         subscriptionsEmpty: Bool = false,
         permission: NotificationPermission? = .authorized,
@@ -47,7 +89,8 @@ struct TodaySectionPlanTests {
         hasReadRepairs: Bool = false,
         hasNext30Days: Bool = false,
         hasLater: Bool = false,
-        scheduleOutcome: ScheduleOutcome? = nil
+        scheduleOutcome: ScheduleOutcome? = nil,
+        lastPassFailed: Bool = false
     ) -> [TodaySection] {
         TodaySection.plan(TodaySection.Input(
             subscriptionsEmpty: subscriptionsEmpty,
@@ -56,7 +99,8 @@ struct TodaySectionPlanTests {
             hasReadRepairs: hasReadRepairs,
             hasNext30Days: hasNext30Days,
             hasLater: hasLater,
-            scheduleOutcome: scheduleOutcome
+            scheduleOutcome: scheduleOutcome,
+            lastPassFailed: lastPassFailed
         ))
     }
 

@@ -3,75 +3,8 @@ import OttoDomain
 import OttoServices
 import OttoStores
 
-/// The sections Today's list composes, in render order - extracted from the
-/// view builder because Wave 9A defect 1 lived exactly there: the empty-database
-/// branch returned a bare placeholder and silently dropped the permission
-/// surface, a decision no store-level test could see.
-enum TodaySection: Hashable {
-    /// §6 constraint 3's surface: the denied banner, the not-yet-asked request
-    /// button, or the provisional note. Present for EVERY database state,
-    /// including an empty one - a first-launch user with nothing entered yet
-    /// must be able to reach the permission request from Today.
-    case notificationStatus
-    case unreadableRecords
-    case readRepairs
-    /// Spec §7.1's empty state, INSIDE the list so the surfaces above survive.
-    case noSubscriptionsYet
-    case needsAction
-    case next30Days
-    case later
-    /// The horizon, stated honestly (spec §6.1 point 4).
-    case coverage
-
-    /// Everything the composition depends on, in one value - so the test can
-    /// state a whole screen state in one place.
-    struct Input {
-        var subscriptionsEmpty = false
-        /// Nil when no notification engine exists at all.
-        var permission: NotificationPermission?
-        var unreadableCount = 0
-        var hasReadRepairs = false
-        var hasNext30Days = false
-        var hasLater = false
-        /// The latest pass's outcome, or nil when no pass has succeeded since
-        /// the last failure. Whether it may be STATED is decided in `plan`,
-        /// not by the caller - the mapping from an outcome to a coverage claim
-        /// is the rule this type exists to pin, and computing it at the call
-        /// site put it in a SwiftUI body where no test can reach it.
-        var scheduleOutcome: ScheduleOutcome?
-    }
-
-    static func plan(_ input: Input) -> [TodaySection] {
-        var sections: [TodaySection] = []
-        if let permission = input.permission, permission != .authorized {
-            sections.append(.notificationStatus)
-        }
-        if input.unreadableCount > 0 {
-            sections.append(.unreadableRecords)
-        }
-        if input.hasReadRepairs {
-            sections.append(.readRepairs)
-        }
-        guard !input.subscriptionsEmpty else {
-            sections.append(.noSubscriptionsYet)
-            return sections
-        }
-        sections.append(.needsAction)
-        if input.hasNext30Days {
-            sections.append(.next30Days)
-        }
-        if input.hasLater {
-            sections.append(.later)
-        }
-        if input.scheduleOutcome?.canClaimCoverage == true,
-           input.permission == .authorized || input.permission == .provisional {
-            sections.append(.coverage)
-        }
-        return sections
-    }
-}
-
 /// The home screen (spec §7.1 item 1): Needs action, Next 30 days, Later.
+/// Which sections it composes is decided in `TodaySectionPlan.swift`.
 struct TodayView: View {
     @Environment(AppModel.self) private var model
 
@@ -115,7 +48,8 @@ struct TodayView: View {
             hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
             hasNext30Days: !overview.next30Days.isEmpty,
             hasLater: !overview.later.isEmpty,
-            scheduleOutcome: model.notifications?.outcome
+            scheduleOutcome: model.notifications?.outcome,
+            lastPassFailed: model.notifications?.lastPassFailed ?? false
         ))
         return List {
             ForEach(sections, id: \.self) { section in
@@ -149,6 +83,8 @@ struct TodayView: View {
             entriesSection(String(localized: "Later"), entries: overview.later)
         case .coverage:
             coverageSection
+        case .coverageGap:
+            coverageGapSection
         }
     }
 
@@ -196,6 +132,12 @@ struct TodayView: View {
                 let coveredThrough = outcome.coveredThrough.displayText()
                 Text(String(localized: "Reminders scheduled through \(coveredThrough)."))
             }
+        }
+    }
+
+    private var coverageGapSection: some View {
+        Section {
+            CoverageGapCard(failureCount: model.notifications?.outcome?.ledgerFailures.count ?? 0)
         }
     }
 
@@ -296,6 +238,58 @@ struct TodayView: View {
 }
 
 /// One Today card: what it is, why it is here, and when.
+/// The coverage sentence's counterpart, in the aggregate-card shape
+/// `unreadableRecordsSection` established: say that reminders could not be
+/// updated, and how many subscriptions it touched.
+///
+/// A count and nothing else. Naming the vendors would put subscription content
+/// on a screen readable at a glance, and the user does not need it to know
+/// something is wrong - `ledgerFailures` carries only UUIDs anyway.
+///
+/// Its own `View` rather than a method on `TodayView`, following `TodayEntryRow`:
+/// a private `@ViewBuilder` that reads `model` cannot be rendered by a test, and
+/// this card is new copy that has to be seen to be believed.
+struct CoverageGapCard: View {
+    /// Zero when the whole pass failed, so there is no per-subscription count to
+    /// give - a different sentence, because "0 subscriptions couldn't be
+    /// updated" is not what happened.
+    let failureCount: Int
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(headline)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var headline: String {
+        failureCount > 0
+            ? String(localized: "\(subscriptionCountText(failureCount)) couldn't be updated")
+            : String(localized: "Reminders couldn't be updated")
+    }
+
+    private var detail: String {
+        failureCount > 0
+            ? String(localized: """
+              Otto couldn't refresh their reminders on its last check, so some may be missing. \
+              Nothing was deleted, and it will try again.
+              """)
+            : String(localized: """
+              Otto's last check didn't finish, so some reminders may be missing. \
+              Nothing was deleted, and it will try again.
+              """)
+    }
+}
+
 struct TodayEntryRow: View {
     let entry: TodayEntry
 

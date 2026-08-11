@@ -17,6 +17,13 @@ public final class NotificationStatusStore {
     /// scheduled through 12 Nov" renders from. Nil until a pass has run.
     public private(set) var outcome: ScheduleOutcome?
 
+    /// Whether the last pass FAILED, as distinct from no pass having run yet.
+    /// Both leave `outcome` nil, and Today has to tell them apart: withdrawing
+    /// the coverage sentence on a failure (F3) left an authorized user with a
+    /// broken engine looking at a screen identical to a healthy one, and the
+    /// replacement must not fire before the first pass has even finished.
+    public private(set) var lastPassFailed = false
+
     private let scheduler: any ReminderScheduling
     private let client: any NotificationClient
     private let dates: DateProvider
@@ -62,6 +69,10 @@ public final class NotificationStatusStore {
     /// it from the system where it matters.
     public func apply(_ outcome: ScheduleOutcome?) {
         self.outcome = outcome
+        // Derived here rather than set by each caller: every path that knows a
+        // pass failed already expresses that as `apply(nil)`, so there is one
+        // place this can disagree with itself and it is this line.
+        lastPassFailed = outcome == nil
         if let outcome {
             permission = outcome.permission
         }

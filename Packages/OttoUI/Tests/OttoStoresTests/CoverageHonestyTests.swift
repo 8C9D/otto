@@ -70,4 +70,27 @@ struct CoverageHonestyTests {
         #expect(store.permission == .denied)
     }
 
+    /// R4-1's store half. `outcome == nil` means two opposite things - "no pass
+    /// has run yet" and "the last pass failed" - and Today has to tell them
+    /// apart, or the replacement for the withdrawn coverage sentence would fire
+    /// on every cold start before the first pass finished.
+    @Test("a failed pass is distinguishable from no pass having run yet")
+    func failureIsDistinguishableFromNotYetRun() async throws {
+        let store = NotificationStatusStore(
+            scheduler: ThrowingScheduler(), client: FixedClient(),
+            dates: .fixed(today: try day(2026, 8, 6))
+        )
+        // Fresh: nothing has run, so nothing has failed.
+        #expect(store.outcome == nil)
+        #expect(!store.lastPassFailed)
+
+        await store.reschedule()
+        #expect(store.outcome == nil)
+        #expect(store.lastPassFailed)
+
+        // And a later successful pass clears it, so the warning does not
+        // outlive the failure it describes.
+        store.apply(outcome(coveredThrough: try day(2026, 11, 4)))
+        #expect(!store.lastPassFailed)
+    }
 }

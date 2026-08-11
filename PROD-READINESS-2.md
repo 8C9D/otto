@@ -28,7 +28,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | # | id | what | terminal state |
 |---|---|---|---|
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
-| 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | *(pending)* |
+| 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — see ITEM 2 |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | *(pending)* |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | *(pending)* |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
@@ -125,6 +125,47 @@ Before this fix that device delivered, because the two errors cancelled. **F1 mu
 - **"against real iOS UserNotifications"** overstates a run that injects a fake center. Real framework types, not the subsystem.
 
 `LiveNotificationClient.swift`'s comment cited `reviews-2/REVIEW-1.md` — a file that did not exist at commit time and is the reviewer's output, not the builder's. Repointed at this ledger.
+
+---
+
+## ITEM 2 — R4-1, an authorized user with a failing engine sees a healthy Today
+
+**RESOLVED**, `<stage-2 commit>`. This is the one item with a scope exception permitting new user-facing copy.
+
+**Reconfirmed at HEAD.** `TodaySection.plan` at `7a3cf54` emits `.notificationStatus` only for a permission other than authorized, and `.coverage` only when `canClaimCoverage`. Measured with a throwaway probe against the real `plan`, then deleted:
+
+```
+healthy       : [needsAction, next30Days, coverage]
+ledger failed : [needsAction, next30Days]
+pass failed   : [needsAction, next30Days]
+```
+
+Both failing states carry **no notification surface at all** — the coverage line is simply absent, and a user cannot notice the absence of a sentence they have never been shown.
+
+**What changed.** A `.coverageGap` section, rendered as `CoverageGapCard` in the aggregate-card shape `unreadableRecordsSection` established (the precedent the scope exception names). It states that reminders could not be updated and how many subscriptions it touched — **a count, never a vendor or an amount**; `ledgerFailures` carries only UUIDs, so naming anything else would have meant going and fetching it.
+
+Two wordings, because a whole failed pass has no per-subscription count and "0 subscriptions couldn't be updated" is not what happened:
+
+- some ledgers failed → *"3 subscriptions couldn't be updated"* / *"Otto couldn't refresh their reminders on its last check, so some may be missing. Nothing was deleted, and it will try again."*
+- the pass failed outright → *"Reminders couldn't be updated"* / *"Otto's last check didn't finish, so some reminders may be missing. Nothing was deleted, and it will try again."*
+
+**The one piece of new state, and why it is needed.** `outcome == nil` meant two opposite things — "no pass has run yet" and "the last pass failed" — and a warning that cannot tell them apart fires on every cold start. `NotificationStatusStore.lastPassFailed` is derived inside `apply` as `outcome == nil`, so there is exactly one line where it can disagree with itself. No new setting, no new screen, no new navigation, **no SwiftData anything**.
+
+**Predicted and confirmed observable difference.** Healthy authorized: unchanged. Fresh launch before the first pass: unchanged — no card. Denied / not-determined: unchanged, `.notificationStatus` already says something truer. Empty database: unchanged. Authorized or provisional with a failed pass or a failed ledger: the new card, where previously nothing.
+
+**Falsified, at the wiring rather than at a helper.**
+
+| what was reverted | result |
+|---|---|
+| `plan`'s `.coverageGap` branch | `(ledgerFailed → [needsAction, next30Days]).contains(.coverageGap)` fails, plus the provisional and pass-failed cases — 3 issues. The failure message *is* the finding. |
+| `lastPassFailed = outcome == nil` in the store | `(store).lastPassFailed → false` after a failed pass |
+| a fixed `.frame(height: 44)` on the card | `(accessibility → 44.0) > (regular * factor → 66.0)` fails in both wordings |
+
+**What is NOT verified.** The *rendered strings* are not asserted: this host vends no accessibility tree, which is the same limitation `reviews/BASELINE.md` recorded and why `EmptyStateTests` has 7 known issues. What the simulator does prove is that the card renders and grows correctly at `.accessibility5` in both wordings.
+
+**The card fires for every trigger except one, and that one is pre-existing.** `rescheduleSoon` reports a failure as `onOutcome?(nil)`, so `.foreground`, `.timeZoneChange`, `.significantTimeChange`, `.notificationDelivered` and `.notificationAction` all set the flag, and `appDidBecomeActive` runs a fresh pass on every foreground — so a persistent failure surfaces the next time the user opens the app. `handleBackgroundRefresh` never calls `onOutcome` on either path, so a failed `BGAppRefreshTask` pass still publishes nothing. That is round 1's **R4-2**, unchanged by this item and still in NEXT ROUND; the coordinator is inside `#if os(iOS)` and compiles to nothing under host `swift test`, so that wiring remains untested.
+
+**A file was split rather than a lint rule relaxed.** The card pushed `TodayView.swift` to 440 lines, past SwiftLint's 400-line `file_length`. `.swiftlint.yml` is untouched; `TodaySection` moved to `TodaySectionPlan.swift`, which is the seam the type already documents — the pure composition decision, holding no view, and the thing `TodaySectionPlanTests` exercises.
 
 ---
 

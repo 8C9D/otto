@@ -126,6 +126,15 @@ struct DynamicTypeTests {
         assertGrows(ConvertingTrialRow(entry: converting, currencyCode: "CAD"))
     }
 
+    /// R4-1's new copy. This is the only surface an authorized user gets when
+    /// the engine has failed, so it has to survive the largest type size - and
+    /// the long-count sentence is the longest string on Today.
+    @Test("the coverage-gap card grows to the largest accessibility size, in both wordings")
+    func coverageGapCard() {
+        assertGrows(CoverageGapCard(failureCount: 3))
+        assertGrows(CoverageGapCard(failureCount: 0))
+    }
+
     @Test("the payment-method row grows to the largest accessibility size")
     func paymentMethodRow() throws {
         let method = PaymentMethod(
