@@ -134,6 +134,9 @@ Provenance: **INDEPENDENT** = found by reading the code in this run. **CONTAMINA
 
   **Required change, for whoever picks this up:** make the era explicit at *both* ends in one commit — Gregorian components in `DateProvider`/`CalendarDayBinding`/`DisplayFormatting`/`InsightsView`, **and** `components.calendar = Calendar(identifier: .gregorian)` on the trigger in `LiveNotificationClient.add`, checking that `pendingRequests()`'s readback at `:147-157` still round-trips. Verify on a device with the calendar set to Buddhist. Until then the app is correct on Gregorian devices and wrong on others, which is where it already was.
 
+- **R5-1 (from `reviews/REVIEW-5.md`, P2)** — `handle`'s new success line cannot be told from a snooze that scheduled nothing: `snooze`'s two non-throwing early returns (`NotificationActionHandler.swift:161-163`, `:179-182`) reach the success branch, so a "Remind me later" that produced no reminder logs `handled action=otto.action.remindLater` exactly like one that worked. Only `snoozesSpared=` in the `scheduling` category contradicts it, indirectly.
+- **R5-2 (from `reviews/REVIEW-5.md`, P2)** — F2's log emission has **no executable guard**: deleting both `OttoLog.actions` statements leaves the whole suite green. Review 5 showed a guard is achievable with `OSLogStore(scope: .currentProcessIdentifier)`, which read the exact line back inside the test process; it was not added here because it costs 11-27 s against a ~2 s suite and depends on the log daemon being readable. Whoever adds it should weigh that against the fact that an unguarded log line is precisely what rots unnoticed.
+
 - **R4-1 (from `reviews/REVIEW-4.md`, P1)** — R0-1's coverage gate is all-or-nothing, so one subscription's ledger failure withdraws a statement that is still accurate for every other subscription. Worse, `.notificationStatus` renders only for a permission other than authorized (`TodayView.swift:63-65`), so for an authorized user whose engine has been failing since install, Today is **identical** to a healthy one: no coverage line, no anything. This run traded a false claim for silence, which is the lesser evil but still not right. Saying something true in its place is new user-facing copy, which the scope constraint forbids.
 - **R4-2 (from `reviews/REVIEW-4.md`, P2)** — F3's coordinator half is unverified: `NotificationCoordinator` is inside `#if os(iOS)` and compiles to nothing under host `swift test`, so reverting `rescheduleSoon` to its pre-fix shape leaves all tests green. That path carries every unattended trigger (foreground, timezone, significant time change, notification delivered/acted on); only `.stateChange` reaches the tested store. Separately, `handleBackgroundRefresh` never calls `onOutcome` at all, so a background pass publishes nothing either way. This is the same gap `docs/next-wave.md` already carries as "simulator-hosted `NotificationCoordinator` tests".
 - **R4-3 (from `reviews/REVIEW-4.md`, P2)** — `ScheduleOutcome.truncatedAfter` has no consumer anywhere: the budget can silently drop rungs past the truncation point and no surface says so. And `ledgerFailures` reaches the log only as a bare count (`OttoLog.swift:87`), so an investigation learns that some subscription failed but never which.
@@ -154,7 +157,7 @@ Frozen at Review 0 (`reviews/REVIEW-0.md`, verdict PASS-WITH-FINDINGS). The P0 a
 | 2 | R0-1 | 4 | **RESOLVED** — `c7bfe46`, re-tested after Review 4 |
 | 3 | F3 | 4 | **RESOLVED (store path)** — `c7bfe46`; coordinator path UNVERIFIED, see NEXT ROUND |
 | 4 | F5 | 4 | **RESOLVED** — `c7bfe46` |
-| 5 | F2 | 5 | **RESOLVED** — log line verified as a real artifact |
+| 5 | F2 | 5 | **RESOLVED** — `58695c2`; emission evidenced by a unified-log artifact on **macOS host only**, UNVERIFIED on device, and carries no executable guard (see NEXT ROUND) |
 | 6 | F6 | 3 | **RESOLVED** — `b15b0a6`, remediated after Review 3 |
 | 7 | F1 | 2 | **DEFERRED** — pass 2 rejected and reverted |
 | 8 | F7 | — | DEFERRED at freeze |
@@ -169,7 +172,7 @@ P2 findings (F8, F9, F10, F11, R0-2..R0-11) are documented and **not fixed**, pe
 | 2 — Correctness (Swift 6) | present | **RAN, REVERTED.** F1's fix was rejected by Review 2 as a regression and reverted at `b582d94`; F1 is DEFERRED. |
 | 3 — Data and persistence | present | **RUNS** — F6. Schema frozen: migration findings are described, never implemented. |
 | 4 — Failure behavior | present | **RUNS** — F3, F4, F5, R0-1. |
-| 5 — Observability | present | **RAN** — F2. |
+| 5 — Observability | present | **RAN — F2 only.** The pass's brief also names import/export and cancellation verification as boundaries that must be observable; both are still unlogged at HEAD, because they are F11, a P2, and P2s are documented and not fixed. |
 | 6 — Build and shippability | present | **SKIPPED**: no frozen finding touches it. Stage 0 verified no `#if DEBUG` behavior divergence on any shipping path and a clean-clone reproducible build. Release-on-device is prohibited this run and is recorded under CANNOT ASSESS. |
 | 7 — Tests | — | **FOLDED INTO EACH PASS** rather than run separately, so every pass's diff is self-verifying and its reviewer sees the fix and its test together. Every test added is falsified — the fix is broken, the failure observed and recorded in the commit message, then restored. |
 
