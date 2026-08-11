@@ -63,7 +63,8 @@ Round 2's reviewers raised the missing row four consecutive times; the start is 
 | 1 - R0-9 | `8806853..87d6508` | `87d6508` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-1.md`) |
 | 2 - R0-7 / N2-2 | `87d6508..e4f4872` | `e4f4872` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-2.md`) |
 | 3 - F1's CI guard | `e4f4872..b006d20` | `b006d20` | **PASS-WITH-FINDINGS** (`reviews-3/REVIEW-3.md`) |
-| 4 - R4-2 + R0-5 + F11/R0-10(a) + R5-1 | `b006d20..` | pending | pending |
+| 4 - R4-2 + R0-5 + F11/R0-10(a) + R5-1 | `b006d20..ce66bf7` | `ce66bf7` | **REJECT** (`reviews-3/REVIEW-4.md`) |
+| 4r - stage-4 remediation | `ce66bf7..` | pending | pending (a DIFFERENT fresh reviewer, per the contract) |
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read.
 That is round 2's arrangement, kept.
@@ -257,13 +258,13 @@ One is P1 and is a defect in this stage's own change; it is fixed here.
 **One thing this stage does that it never claimed, credited because it cuts the other way.**
 For a **negative**-offset calendar the pre-stage behaviour was not "nothing is scheduled" - it was a materialization pass over a window centuries wide. With an unrepaired Japanese anchor and watermark at year 8 against a 2026 horizon, `expectedCharges` yields **24,220** rows for one subscription on one pass, against 3 for a healthy one. The new guard skips before `materializeEvents` is reached, so this stage prevents it. Only the Buddhist case was ever measured here, where `min(2569-08-06, today)` collapses the window to nothing - so the worse half of the defect was never seen by the person fixing it.
 
-### Baseline at the end of this stage - all four, measured
+### Baseline at the end of STAGE 2 (`e4f4872`) - all four, measured
 
 | measurement | `reviews-3/BASELINE-3.md` | at this stage | verdict |
 |---|---|---|---|
 | `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, 258 / 119 / 201 = **578** | +13, exactly this run's new tests |
 | `swiftlint --strict` | clean | clean | unchanged |
-| simulator suite | 108 / 70 / 31, 7 known issues | **113** / 70 / 31, 7 known issues | +5, this stage's OttoUI tests |
+| simulator suite | 108 / 70 / 31, 7 known issues | **113 / 72 / 31**, 7 known issues | +7 since baseline; an earlier draft recorded the second bucket as 70, which `reviews-3/REVIEW-3.md` measured as 72 |
 | non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
 
 The simulator's 108 → 113 is the first time that number has moved in this run, and it is recorded here rather than left for a later stage to discover against a stale baseline.
@@ -432,11 +433,13 @@ The flows logging pushed `SubscriptionFlowService.swift` past the 400-line `file
 
 | what was broken | result |
 |---|---|
-| the `import begin`/`end` lines deleted | `lines.last { $0.contains(needle) } → nil` |
+| the `import begin`/`end` lines deleted | `lines.contains { $0.contains(needle) && $0.contains(field) }` fails |
 | the `cancellation started` line deleted | same, at the same assertion |
 | `importPickerOutcome` made to treat every failure as a cancel | `(failed → .cancelled) != .cancelled` fails, and the `.failed` case check records an issue |
 
 **One query for both categories**, because a query costs seconds and four separate tests would have cost four.
+
+Both rows above are quoted from the **re-measurement** after the flake fix below; an earlier draft quoted the pre-fix assertion (`lines.last { … } → nil`), which the fix had deleted.
 
 **This test was flaky by construction and `verify.sh` caught it, not the local suite.**
 Its first version took `lines.last { $0.contains(needle) }` for each prefix.
@@ -483,16 +486,47 @@ Round 2 recorded this exact shape for its first emission test; this is its secon
 **What this does NOT do.**
 The `deadlinePassed` branch has no test. Reaching it needs a snooze on the cancel-by day after the evening slot has passed, which the fixture clock makes awkward to arrange, and the branch is one `guard` beside the one that is covered. Stated rather than papered over; NEXT ROUND.
 
+## Remediation after `reviews-3/REVIEW-4.md` - the one REJECT of this run
+
+**Verdict: REJECT**, on two findings, both defects in this stage's own work.
+Remediated here; a **different** fresh reviewer re-reviews, per the contract.
+
+- **Finding 1 (P1) - the stage shipped a test that fails about one run in four, in the commit whose message is "Stop the boundary log guard depending on which suite logged last".**
+  `BoundaryLogTests` asserted `!entry.contains("999")` over **every** line in the shared log window. `SubscriptionFlowService+Cancellation.swift` logs `episode=<UUID()>`, a fresh random hex string on every call; `999` appears in a UUID about 0.5 % of the time and a full-suite window holds ~25 of them. Measured by the reviewer: **3 failures in 12 unmutated runs**, every one on a sibling suite's episode id, none involving this test's fixture at all.
+  My own four `verify.sh` runs passed, which at 25 % has probability 0.32 - a single green run is not evidence about an event of that rate, and I treated it as one.
+  **The commit that created it was the fix for the previous flake**: widening the loop from "this test's lines" to "every line in the window" traded a false pass for a false fail, and the comment I added reasons about the first and not the second.
+  Fixed: the global assertions keep only needles a sibling cannot produce by accident - `Zzyzx` (letters outside hex), `$` and `/` (impossible in a UUID) - and the amount is checked only on lines carrying this test's own subscription identifier.
+- **Finding 2 (P2) - the R0-5 read fix made the case it is about worse than before.**
+  `watermarkDay` took `min()` over the **raw Ints and validated afterwards**, so a corrupt duplicate row deterministically discarded a readable one: `0` is smaller than every real packed day. Reproduced here before fixing - two rows, `20260601` and `0`, read as `nil` at `ce66bf7` where the pre-fix `rows.first` shape returned `2026-06-01`. `nil` means materialize from TODAY, which is F6's signature and the exact failure the item exists to remove a third route into; it also contradicts the comment three lines above it ("errs earlier, never later").
+  **The correct shape was in the same commit.** `reconstructWatermarksNow` filters on `CalendarDay(yyyymmdd:) != nil` *before* its `min`, with a comment explaining this hazard. The read path did not get the same treatment, because the two defects fixed in that method - "log the unreadable value" and "make duplicate selection deterministic" - were each falsified with a fixture containing only its own defect, and their interaction had no fixture.
+  Fixed: validate first, take the minimum of the readable values, and log **every** unreadable row rather than only the one that would have won. `aCorruptRowDoesNotShadowAReadableOne` now covers the mixed case.
+- **Finding 3 (P2) - "logs every exit" was false for five exits.**
+  `startCancellation` had two silent `guard let … else { return nil }`, `abandonCancellation` two, and `answerVerification` one. The worst is `openingCancellationEpisode` returning nil when the lifecycle is already past cancellation: a "Cancel this" that opened no watch returned the same nil as a missing record and reached the action handler as `effect=notApplicable`, with nothing anywhere saying which. All five now log a reason.
+  Two methods passed `function_body_length` as a result and were split - `watchingEpisode(for:evidenceNote:now:today:)` and `recordStillCharging(_:for:now:)`. `.swiftlint.yml` is untouched by this remediation.
+- **Finding 4 (P2) - the R5-1 test's "a snooze that worked" line came from a sibling.**
+  `aHandledActionIsRecorded` and `aSnoozeThatScheduledNothingSaysSo` snoozed the identical rung of the identical `seedTrial` fixture, so deleting the second test's own working snooze left it passing 3 runs of 3. It now seeds its own subscription (index 8801), and that deletion fails at `lines.last { $0.contains(workingIdentifier) } → nil`.
+  The same flakiness was diagnosed for `BoundaryLogTests` one commit earlier; the diagnosis was scoped to the file that failed rather than to the technique.
+- **Finding 5 (P2) - the flake fix weakened two assertions' content and the ledger disclosed only the selector change.**
+  `subscriptions=1` became `subscriptions=`, and `databaseEmpty=false` became `databaseEmpty=` - so a regression always reporting the database as empty would have passed. The stage's closing statement said no test was weakened, and that was wrong.
+  Fixed by making the fixture identify itself instead: it now seeds **three** subscriptions, so `subscriptions=3` is this test's own line, and `databaseEmpty=false` is asserted again.
+- **Findings 6, 7, 8 (P3)** - the simulator delta was +16 recorded as +14; ITEM 6's falsification table quoted the pre-fix assertion; the stage-2 table was unlabelled and carried `70` where the reviewer measured `72`. All three corrected above.
+- **Finding 9 (P3)** - `zeroIsUnreadable` passed with the whole read fix reverted, because `CalendarDay(yyyymmdd: 0)` was already nil. It is renamed `aLoneUnreadableRowIsNil` and labelled in the source as characterisation, not a regression guard.
+
+**One correction to the reviewer, measured.**
+`reviews-3/REVIEW-3.md` reported the K sweep as 2 / 14 / 63; this ledger reports 3 / 7 / 15 / 64 from its own run, and `reviews-3/REVIEW-4.md` re-derived it to the digit. The ledger's figures stand.
+
 ## VERIFICATION AT THE END OF STAGE 4 - all four, measured
 
 | measurement | `reviews-3/BASELINE-3.md` | at `4380736` | verdict |
 |---|---|---|---|
 | `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, **258 / 123 / 207 = 588** | +23, this run's new host tests |
 | `swiftlint --strict` | clean | clean | unchanged |
-| simulator suite | 108 / 70 / 31, 7 known issues | **117 / 72 / 36**, 7 known issues, `** TEST SUCCEEDED **` | +14, this run's new simulator tests |
+| simulator suite | 108 / 70 / 31 = 209, 7 known issues | **117 / 72 / 36 = 225**, 7 known issues, `** TEST SUCCEEDED **` | **+16** since baseline, this run's new simulator tests |
 | non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
 
-No pre-existing test was skipped, disabled or weakened; one existing assertion was strengthened (ITEM 7) and one existing fixture corrected (stage-3 remediation).
+No pre-existing test was skipped or disabled.
+One existing assertion was strengthened (ITEM 7) and one existing fixture corrected (stage-3 remediation).
+**Two assertions of this run's own were weakened and are restored** - see the stage-4 remediation, finding 5; the earlier version of this sentence claimed nothing had been weakened and was wrong.
 No lint rule was relaxed; one `custom_rules` entry was added.
 
 ## ITEM 3 - F1's reading sites have no guard that runs on a Gregorian machine

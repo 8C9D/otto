@@ -65,10 +65,33 @@ extension SerializedPersistenceTests {
             #expect(!line.lowercased().contains(absentID.uuidString.lowercased()))
         }
 
-        @Test("zero is unreadable too - the shape a partially written row takes")
-        func zeroIsUnreadable() async throws {
+        @Test("⛔ a corrupt row must not shadow a readable one beside it")
+        func aCorruptRowDoesNotShadowAReadableOne() async throws {
             let (store, containers) = try makeStore()
             let subscriptionID = try fixtureUUID(3)
+            // Zero is smaller than every real packed day, so a `min` taken over
+            // the raw Ints picks it and the readable row is discarded - which
+            // reads as nil and materializes from TODAY, the exact failure this
+            // suite exists to remove a route into. `reviews-3/REVIEW-4.md`
+            // finding 2 measured it: nil here, `2026-06-01` under the pre-fix
+            // `rows.first`, so the first version of the fix was WORSE than what
+            // it replaced for this input.
+            try seedRawWatermark(20_260_601, forSubscription: subscriptionID, in: containers)
+            try seedRawWatermark(0, forSubscription: subscriptionID, in: containers)
+
+            #expect(
+                try await store.materializationWatermark(forSubscription: subscriptionID)
+                    == (try day(2026, 6, 1))
+            )
+        }
+
+        @Test("a row whose only value is unreadable still reads as nil")
+        func aLoneUnreadableRowIsNil() async throws {
+            let (store, containers) = try makeStore()
+            let subscriptionID = try fixtureUUID(6)
+            // Characterisation, not a regression guard: `CalendarDay(yyyymmdd: 0)`
+            // was already nil before this item. It is here because the branch
+            // above must not turn "nothing readable" into something invented.
             try seedRawWatermark(0, forSubscription: subscriptionID, in: containers)
             #expect(try await store.materializationWatermark(forSubscription: subscriptionID) == nil)
         }

@@ -40,7 +40,14 @@ struct BoundaryLogTests {
             cancellationURL: URL(string: "https://zzyzx.example.com/cancel")
         )
         await fixture.subscriptions.seed([subscription])
-        let service = ExportService(transfer: Transfer(OttoDataSnapshot(subscriptions: [subscription])))
+        // Three, so `subscriptions=3` identifies THIS fixture's export line in a
+        // window that also holds ExportServiceTests' (which seeds one).
+        let snapshot = OttoDataSnapshot(subscriptions: [
+            subscription,
+            try makeSubscription(index: 92, name: "Zzyzx Two", cycleStartDay: try day(2026, 8, 7)),
+            try makeSubscription(index: 93, name: "Zzyzx Three", cycleStartDay: try day(2026, 8, 8))
+        ])
+        let service = ExportService(transfer: Transfer(snapshot))
         let today = try day(2026, 8, 11)
         let now = try fixtureNow()
 
@@ -83,9 +90,16 @@ struct BoundaryLogTests {
             )
         }
 
-        expectLine("export kind=json", "subscriptions=")
+        // The VALUES, not just the field names. An earlier version of the flake
+        // fix dropped `subscriptions=1` to `subscriptions=` and
+        // `databaseEmpty=false` to `databaseEmpty=`, which made a line that
+        // always reported the database as empty pass - a real weakening, and
+        // one this ledger's closing statement denied making
+        // (`reviews-3/REVIEW-4.md` finding 5). The count is this fixture's
+        // discriminator: three subscriptions is a shape no sibling suite seeds.
+        expectLine("export kind=json", "subscriptions=3")
         expectLine("export kind=csv", "bytes=")
-        expectLine("import preview", "databaseEmpty=")
+        expectLine("import preview", "databaseEmpty=false")
         expectLine("import begin", "strategy=merge")
         expectLine("import end", "subscriptions=")
         // These two carry an identifier, so they can be pinned to THIS
@@ -100,16 +114,33 @@ struct BoundaryLogTests {
             }
         )
 
-        // The same privacy rule as every other category: opaque identifiers,
-        // calendar days, counts and control-flow outcomes. Never what the user
-        // pays for, and never a file path. Asserted over EVERY line in the
-        // window rather than only this test's - a sibling breaking it would be
-        // the same defect in the same category.
+        assertPrivacyRule(over: lines, ownIdentifier: subscription.id.uuidString)
+    }
+
+    /// The privacy rule `OttoLog` states, asserted over the whole window.
+    ///
+    /// Split out because the scenario outgrew SwiftLint's 50-line
+    /// `function_body_length`; the seam is scenario versus rule, and the rule is
+    /// the half worth reading on its own.
+    ///
+    /// Every line in the window, because a sibling breaking it would be the same
+    /// defect in the same category - but ONLY on needles a sibling cannot
+    /// produce by accident. `999` was not one of those: the flows category logs
+    /// `episode=<random UUID>`, a hex string carries the substring `999` about
+    /// 0.5 % of the time, and a full-suite window holds ~25 of them, so an
+    /// earlier version of this loop failed 3 runs in 12
+    /// (`reviews-3/REVIEW-4.md` finding 1). `Zzyzx` contains letters outside
+    /// hex, and `$` and `/` cannot appear in a UUID at all. The amount is
+    /// checked only where this test controls the whole population: the lines
+    /// carrying its own subscription's identifier.
+    private func assertPrivacyRule(over lines: [String], ownIdentifier: String) {
         for entry in lines {
             #expect(!entry.contains("Zzyzx"))
-            #expect(!entry.contains("999"))
             #expect(!entry.contains("$"))
             #expect(!entry.contains("/"))
+        }
+        for entry in lines where entry.contains(ownIdentifier) {
+            #expect(!entry.contains("99999"))
         }
     }
 

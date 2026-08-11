@@ -33,7 +33,10 @@ extension SubscriptionFlowService {
         today: CalendarDay
     ) async throws -> CancellationStart? {
         guard var subscription = try await subscriptions.subscription(withID: subscriptionID) else {
-            // F11: every exit from this flow says which one it was. A
+            // F11: every non-throwing exit from this flow says which one it
+            // was. The five that stayed silent are `reviews-3/REVIEW-4.md`
+            // finding 3; the claim was written from the two exits that are
+            // visible at the top and bottom of the method. A
             // cancellation that quietly did nothing looked, from every surface
             // outside this actor, exactly like one that opened a watch.
             OttoLog.flows.notice("""
@@ -43,44 +46,11 @@ extension SubscriptionFlowService {
             return nil
         }
         let url = subscription.cancellationURL
-
-        var episode: CancellationEpisode
-        if let existing = try await cancellations.openEpisode(forSubscription: subscriptionID) {
-            episode = existing
-            // Redelivery never blanks or overwrites captured evidence; the UI's
-            // deliberate edits go through the evidence methods below. A note is
-            // only added when the episode has none, so a redelivered start
-            // cannot duplicate the capture.
-            if let evidenceNote, episode.liveEvidenceNotes.isEmpty {
-                episode.evidenceNotes.append(EvidenceNote(
-                    id: UUID(), text: evidenceNote, createdAt: now, updatedAt: now
-                ))
-                episode.updatedAt = now
-                try await cancellations.save(episode)
-            }
-        } else {
-            if subscription.effectiveStatus(asOf: today) == .cancellationPending
-                || subscription.effectiveStatus(asOf: today) == .cancelled {
-                // Cancelling-with-no-open-episode is an un-cancel that died
-                // between its two writes: complete the restore, then cancel
-                // from the restored truth.
-                let lastAbandoned = try await cancellations.episodes(forSubscription: subscriptionID)
-                    .first { $0.outcome == .abandoned }
-                guard let restored = subscription.abandoningCancellation(
-                    restoringTo: lastAbandoned?.statusAtStart, at: now
-                ) else { return nil }
-                try await subscriptions.save(restored)
-                subscription = restored
-            }
-            let evidence = evidenceNote.map {
-                EvidenceNote(id: UUID(), text: $0, createdAt: now, updatedAt: now)
-            }
-            guard let opened = subscription.openingCancellationEpisode(
-                id: UUID(), evidence: evidence, asOf: today, at: now
-            ) else { return nil }
-            episode = opened
-            try await cancellations.save(episode)
-        }
+        guard let resolved = try await watchingEpisode(
+            for: subscription, evidenceNote: evidenceNote, now: now, today: today
+        ) else { return nil }
+        let episode = resolved.episode
+        subscription = resolved.subscription
 
         if let pending = subscription.markingCancellationPending(at: now) {
             try await subscriptions.save(pending)
@@ -91,6 +61,76 @@ extension SubscriptionFlowService {
             checkDay=\(OttoLog.dayText(episode.nextChargeDateIfNotCancelled), privacy: .public)
             """)
         return CancellationStart(record: episode, cancellationURL: url)
+    }
+
+    /// The open watching episode for a cancellation - the existing one, or a
+    /// newly opened one - together with the subscription it should be recorded
+    /// against, which the un-cancel repair below can replace.
+    ///
+    /// Split out of `startCancellation`, which passed SwiftLint's 50-line
+    /// `function_body_length` once every non-throwing exit gained a log line;
+    /// the seam is "find or open the watch" against "flip the status and
+    /// report". Nil means no watch exists and none can be opened, and each
+    /// reason says which.
+    private func watchingEpisode(
+        for subscription: Subscription,
+        evidenceNote: String?,
+        now: Date,
+        today: CalendarDay
+    ) async throws -> (episode: CancellationEpisode, subscription: Subscription)? {
+        var subscription = subscription
+        let subscriptionID = subscription.id
+        if var existing = try await cancellations.openEpisode(forSubscription: subscriptionID) {
+            // Redelivery never blanks or overwrites captured evidence; the UI's
+            // deliberate edits go through the evidence methods. A note is only
+            // added when the episode has none, so a redelivered start cannot
+            // duplicate the capture.
+            if let evidenceNote, existing.liveEvidenceNotes.isEmpty {
+                existing.evidenceNotes.append(EvidenceNote(
+                    id: UUID(), text: evidenceNote, createdAt: now, updatedAt: now
+                ))
+                existing.updatedAt = now
+                try await cancellations.save(existing)
+            }
+            return (existing, subscription)
+        }
+
+        if subscription.effectiveStatus(asOf: today) == .cancellationPending
+            || subscription.effectiveStatus(asOf: today) == .cancelled {
+            // Cancelling-with-no-open-episode is an un-cancel that died between
+            // its two writes: complete the restore, then cancel from the
+            // restored truth.
+            let lastAbandoned = try await cancellations.episodes(forSubscription: subscriptionID)
+                .first { $0.outcome == .abandoned }
+            guard let restored = subscription.abandoningCancellation(
+                restoringTo: lastAbandoned?.statusAtStart, at: now
+            ) else {
+                OttoLog.flows.notice("""
+                    cancellation refused reason=cannotRestoreInterruptedStatus \
+                    id=\(subscriptionID.uuidString, privacy: .public)
+                    """)
+                return nil
+            }
+            try await subscriptions.save(restored)
+            subscription = restored
+        }
+        let evidence = evidenceNote.map {
+            EvidenceNote(id: UUID(), text: $0, createdAt: now, updatedAt: now)
+        }
+        guard let opened = subscription.openingCancellationEpisode(
+            id: UUID(), evidence: evidence, asOf: today, at: now
+        ) else {
+            // The lifecycle is already past cancellation, so no watch was
+            // opened - and the caller gets the same nil the missing-record
+            // branch returns. Without this line the two are one event.
+            OttoLog.flows.notice("""
+                cancellation refused reason=lifecyclePastCancellation \
+                id=\(subscriptionID.uuidString, privacy: .public)
+                """)
+            return nil
+        }
+        try await cancellations.save(opened)
+        return (opened, subscription)
     }
 
     /// The un-cancel (spec §5.4, §5.3a): the open episode closes with
@@ -111,7 +151,13 @@ extension SubscriptionFlowService {
         now: Date,
         today: CalendarDay
     ) async throws {
-        guard let subscription = try await subscriptions.subscription(withID: subscriptionID) else { return }
+        guard let subscription = try await subscriptions.subscription(withID: subscriptionID) else {
+            OttoLog.flows.notice("""
+                cancellation abandon refused reason=noSubscription \
+                id=\(subscriptionID.uuidString, privacy: .public)
+                """)
+            return
+        }
         let reference: CancellationEpisode?
         if let open = try await cancellations.openEpisode(forSubscription: subscriptionID),
            let closed = open.abandoning(at: now) {
@@ -125,7 +171,14 @@ extension SubscriptionFlowService {
               let restored = subscription.abandoningCancellation(
                   restoringTo: reference.statusAtStart, at: now
               )
-        else { return }
+        else {
+            OttoLog.flows.notice("""
+                cancellation abandon refused \
+                reason=\(reference == nil ? "noEpisodeToAbandon" : "cannotRestoreInterruptedStatus", privacy: .public) \
+                id=\(subscriptionID.uuidString, privacy: .public)
+                """)
+            return
+        }
         // The rewind is the explicit device-store operation (spec §5.3, Wave
         // 6B-Prep) and runs BEFORE the status restore: a crash between the two
         // leaves only a regressed watermark, the harmless direction. Rewinding
@@ -214,13 +267,37 @@ extension SubscriptionFlowService {
             return nil
         }
 
+        return try await recordStillCharging(record, for: subscription, now: now)
+    }
+
+    /// The verification NO-path (spec §5.4): the record flips to
+    /// `.stillCharging`, the charge that arrived gets its retrospective
+    /// `.unexpectedCharge` ledger row - created at most once, this being that
+    /// state's only producer - and the dispute summary comes back for the UI.
+    ///
+    /// Split out of `answerVerification`, which passed SwiftLint's 50-line
+    /// `function_body_length` once every non-throwing exit gained a log line;
+    /// the seam is the yes-path against the no-path.
+    private func recordStillCharging(
+        _ record: CancellationEpisode,
+        for subscription: Subscription,
+        now: Date
+    ) async throws -> DisputeSummary? {
+        let subscriptionID = subscription.id
         let disputed = record.reportingStillCharging(at: now)
         if disputed != record {
             try await cancellations.save(disputed)
         }
-        // A deferred check refuses the transition and keeps a nil date; there is
-        // no charge to record and nothing to dispute yet.
-        guard let chargeDay = disputed.nextChargeDateIfNotCancelled else { return nil }
+        guard let chargeDay = disputed.nextChargeDateIfNotCancelled else {
+            // A deferred check never watched a date, so there is no charge to
+            // record and nothing to dispute yet - which is not the same event
+            // as a dispute that produced a summary.
+            OttoLog.flows.notice("""
+                verification answered chargesStopped=false outcome=noWatchedDate \
+                id=\(subscriptionID.uuidString, privacy: .public)
+                """)
+            return nil
+        }
         let existing = try await billingEvents.events(forSubscription: subscriptionID)
         if !existing.contains(where: { $0.state == .unexpectedCharge && $0.expectedDate == chargeDay }) {
             try await billingEvents.save(BillingEvent(

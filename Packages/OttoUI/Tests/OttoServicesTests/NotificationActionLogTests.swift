@@ -113,7 +113,20 @@ struct NotificationActionLogTests {
     @Test("⛔ a snooze that scheduled nothing does not log what a snooze that worked logs")
     func aSnoozeThatScheduledNothingSaysSo() async throws {
         let fixture = SchedulerFixture()
-        let (subscription, trial) = try await seedTrial(fixture.subscriptions)
+        // A subscription of this test's OWN, not `seedTrial`'s shared index 88.
+        // `aHandledActionIsRecorded` snoozes the identical rung of the identical
+        // fixture, so the "a snooze that worked" line this test looked for was
+        // being supplied by a sibling: deleting this test's own working snooze
+        // left it passing 3 runs out of 3 (`reviews-3/REVIEW-4.md` finding 4).
+        let workingTrial = try makeTrialTerm(index: 501, startDate: try day(2026, 7, 27), lengthDays: 14)
+        let working = try makeSubscription(
+            index: 8_801, status: .trial, cycleStartDay: try day(2026, 7, 27),
+            reminderLeadDays: 5, trial: workingTrial
+        )
+        _ = try await seedTrial(fixture.subscriptions)
+        await fixture.subscriptions.seed([working])
+        let trial = workingTrial
+        let subscription = working
         let workingIdentifier = NotificationPlanIdentifier.planned(
             PlannedReminder(
                 subscriptionID: subscription.id, day: trial.cancelByDate, kind: .trialDayOfMorning
