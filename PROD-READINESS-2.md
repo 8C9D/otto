@@ -23,7 +23,7 @@ Both reproduce the round-1 prediction exactly. Full output and the environment t
 
 ## VERIFICATION AT HEAD
 
-`scripts/verify.sh` from a clean clone: **exit 0 — OttoDomain 251, OttoPersistence 118, OttoUI 196, total 565**, `swiftlint --strict` clean.
+`scripts/verify.sh` at `aa92ca7` from a clean clone: **exit 0 — OttoDomain 251, OttoPersistence 118, OttoUI 196, total 565**, `swiftlint --strict` clean.
 Simulator suite from `Packages/OttoUI/`: exit 0, `** TEST SUCCEEDED **`, **108 / 70 / 31 tests, the same 7 known issues** (the AX-client limitation, unchanged).
 Non-Gregorian harness: **1 / 1 / 5** under `th_TH@calendar=buddhist`, `ja_JP@calendar=japanese`, `ar_SA@calendar=islamic-umalqura` — the documented pre-existing baseline, unmoved.
 
@@ -61,7 +61,7 @@ Round 1's `RF-2` was a systematic blind spot: each stage's range started at what
 | 3 — R0-6 | `100c508..62b4128` | `62b4128` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-3.md`) |
 | 4 — R3-1 | `62b4128..989ece0` | `989ece0` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-4.md`) |
 | 5 — R0-4 | `989ece0..5d8ed6a` | `5d8ed6a` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-5.md`) |
-| 6 — RF-3 + R5-2 | `5d8ed6a..<head>` | *(pending)* | *(pending)* |
+| 6 — RF-3 + R5-2 | `5d8ed6a..3ce3e01` | `3ce3e01` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-6.md`) |
 
 **The range start is recorded when the stage opens, not when its verdict lands.** Four consecutive reviewers raised the missing row, each time because the table was being kept as a record of *completed reviews* rather than of *ranges issued* — which is round 1's `RF-2` in miniature, in the table built to prevent it. The start is knowable from the stage's first commit; only the head and the verdict have to wait.
 
