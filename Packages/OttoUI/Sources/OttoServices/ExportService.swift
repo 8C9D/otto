@@ -75,9 +75,22 @@ public actor ExportService {
         // store owns the whole sequence - dirty flag, restore, reconstruction -
         // so the v2.2 crash window between its two saves self-heals instead of
         // depending on this caller's ordering.
+        //
+        // An import into an EMPTY database reconstructs too, whatever the
+        // strategy says. The policy is about whether this device has ledger
+        // progress worth keeping, and an empty database has none - "keep" keeps
+        // nothing. It matters because the empty database IS the recovery case:
+        // the UI does not ask merge-or-replace when there is nothing to merge
+        // with (SettingsView), so restoring after a reinstall arrives here as a
+        // merge, and .keep left every watermark nil. A nil watermark makes
+        // materializeEvents start from TODAY and skip the window back to the
+        // last real charge (OttoStore+BillingEvents), so the restored ledger
+        // silently loses the rows between the file's last charge and today -
+        // on the one path whose entire purpose is getting them back.
+        let reconstruct = strategy == .replace || current.isEmpty
         try await transfer.restore(
             resolved.snapshot, at: now,
-            watermarks: strategy == .replace ? .reconstruct : .keep
+            watermarks: reconstruct ? .reconstruct : .keep
         )
         return resolved.summary
     }

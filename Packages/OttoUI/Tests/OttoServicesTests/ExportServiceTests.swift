@@ -113,6 +113,39 @@ struct ExportServiceTests {
         #expect(await transfer.restoredWatermarkPolicies == [.keep])
     }
 
+    /// The recovery case: restoring into a fresh install. The UI never asks
+    /// merge-or-replace when there is nothing to merge with, so the restore
+    /// that matters most arrives here as a `.merge` - and `.keep` kept nothing,
+    /// leaving every watermark nil and making the ledger materialize from today
+    /// instead of from the file's last charge.
+    ///
+    /// The assertion is the POLICY, because the policy is the decision this
+    /// seam owns; what `.reconstruct` then does to the stored watermarks is
+    /// proved against the real store in OttoPersistence's DataTransferTests
+    /// ("watermarks reconstruct from the ledger: latest LIVE row, anchor when
+    /// none, never today").
+    @Test("a merge into an EMPTY database reconstructs anyway - the empty database is the recovery case")
+    func mergeIntoEmptyDatabaseReconstructsWatermarks() async throws {
+        // No seed: this is a fresh install, exactly as SettingsView finds it.
+        let transfer = MockTransfer()
+        let service = ExportService(transfer: transfer)
+        let incoming = try seededSnapshot()
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("otto-empty-merge-test.json")
+        try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
+
+        _ = try await service.performImport(
+            from: file, strategy: .merge, now: Date(timeIntervalSince1970: 11_000)
+        )
+
+        #expect(await transfer.restoredWatermarkPolicies == [.reconstruct])
+        // And the data itself still arrived, so this is not reconstruction
+        // bought by dropping the import.
+        let stored = await transfer.snapshot
+        #expect(stored.subscriptions.count == 1)
+        #expect(stored.billingEvents.count == 1)
+    }
+
     @Test("a replace import names the reconstruct policy, so the store runs the §5.3 sequence")
     func replaceImportReconstructsWatermarks() async throws {
         let transfer = MockTransfer(snapshot: try seededSnapshot())
