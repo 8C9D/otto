@@ -21,6 +21,18 @@ Both reproduce the round-1 prediction exactly. Full output and the environment t
 
 ---
 
+## VERIFICATION AT HEAD
+
+`scripts/verify.sh` from a clean clone: **exit 0 — OttoDomain 251, OttoPersistence 118, OttoUI 196, total 565**, `swiftlint --strict` clean.
+Simulator suite from `Packages/OttoUI/`: exit 0, `** TEST SUCCEEDED **`, **108 / 70 / 31 tests, the same 7 known issues** (the AX-client limitation, unchanged).
+Non-Gregorian harness: **1 / 1 / 5** under `th_TH@calendar=buddhist`, `ja_JP@calendar=japanese`, `ar_SA@calendar=islamic-umalqura` — the documented pre-existing baseline, unmoved.
+
+Against `reviews-2/BASELINE-2.md` (533 host / 101-65-20 simulator / lint clean): **+32 host tests, +45 simulator tests, no lint rule relaxed, no test skipped, disabled or weakened, and no new known issue.**
+
+Two costs this run added, both deliberate and both measured. The OttoUI suite goes from **0.069 s to ~11 s** and OttoPersistence from **~1.4 s to ~7 s**, because four tests read the unified log back; that is the price of F2 and R0-4 having an executable guard at all. And `.swiftlint.yml` is untouched, which cost four deliberate file splits — `TodaySectionPlan.swift`, `OttoStore+Watermarks.swift`, `RestoreIntoEmptyStoreTests.swift`, `PreviewRepository.swift`, `NotificationScheduler+Reconcile.swift`.
+
+**One commit on this branch does not compile.** `d00c086` renamed a predicate and missed one test call site; the repair shipped two commits later in `0b76d65`. HEAD is green and every other commit builds (`reviews-2/REVIEW-6.md` swept all 13). Recorded because CI runs exactly the command that fails there, and commits cannot be amended.
+
 ## THE WORK LIST — frozen by the round-2 prompt
 
 Seven items, in the order given. Everything else in round 1's NEXT ROUND stays in NEXT ROUND.
@@ -72,7 +84,7 @@ Stage 0's commit is deliberately inside stage 1's range rather than being treate
 - Real notification delivery, Focus breakthrough, interruption levels. Requires hardware.
 - Release-configuration behavior of any kind.
 - Accessibility-label rendering. No AX client on this host.
-- Whether `OSLogStore(scope: .currentProcessIdentifier)` is readable on the GitHub-hosted CI runner. `MappingLogPrivacyTests.theEmittedLineIsRedacted` depends on it and passed 17 times locally, including 6 concurrent runs; CI cannot be exercised from here because network calls are prohibited.
+- Whether `OSLogStore(scope: .currentProcessIdentifier)` is readable, and delivering, on the GitHub-hosted CI runners. **Four** tests depend on it — `MappingLogPrivacyTests.theEmittedLineIsRedacted`, `SchedulingLogTests.theEmittedReconcileLineCarriesReasons`, and both `NotificationActionLogTests` — across **four** jobs: `persistence-tests`, `ui-package-tests`, `dynamic-type-simulator` and `verify`. They passed 17+ times locally including concurrent runs, under all three non-Gregorian locales, and on the simulator. CI cannot be exercised from here because network calls are prohibited. **If CI goes red**, the canary tells you which failure it is: a failed `lines.contains { $0.contains(canary) }` means the runner is not delivering logs and the remedy is to gate those four tests on the canary rather than delete them; a failed target-line `#require` means someone removed a log statement.
 
 ---
 
@@ -204,10 +216,10 @@ Each extraction closed the shape it was pointed at and left the next one. That i
 **Falsified.** Reverting the fetch predicate produces exactly 2 issues, both watermark assertions and nothing else:
 
 ```
-✘ "watermarks reconstruct from the ledger…" DataTransferTests.swift:262
+✘ "watermarks reconstruct from the ledger…" DataTransferTests.swift:282
 ✘ "⛔ a subscription tombstoned at reconstruct time and resurrected later still has a watermark"
-   RestoreIntoEmptyStoreTests.swift:116
-✘ Test run with 114 tests in 23 suites failed with 2 issues.
+   RestoreIntoEmptyStoreTests.swift:166
+✘ (re-derived at HEAD: 2 issues in a run of 118 tests in 24 suites)
 ```
 
 The first falsification attempt was **invalid and is recorded rather than hidden**: the bare fetch line appears twice in the file, and patching the first occurrence broke `completeSnapshot` instead, producing `danglingReference` and tombstone-snapshot failures that had nothing to do with the fix. Re-done against the line inside `reconstructWatermarksNow`.
@@ -284,9 +296,11 @@ Together those pin it from both ends: the call site must use the helper, and the
 - **`d00c086` does not compile, and its message states a count that cannot have been measured there.** The rename of `hasNoLiveRecords` → `hasNoLiveSubscriptions` updated the domain and services call sites and missed `RestoreIntoEmptyStoreTests.swift:101`; the one-line repair shipped two commits later inside `0b76d65`, whose subject is the unrelated log fix. `swift test --package-path Packages/OttoPersistence` fails at `d00c086` with `error: fatalError`, and the message's "OttoPersistence 115" is `989ece0`'s number, not that commit's. **This matters beyond tidiness**: CI's `persistence-tests` job runs exactly that command on every push, `verify.sh` exists because a committed HEAD once did not compile while the local tree passed, and it is a bisect landmine on the file this run keeps returning to. Commits cannot be amended, so it is recorded here. The branch's HEAD compiles and is green; only that intermediate commit does not.
 - **"Together those pin it from both ends" overstates by one call site.** Both falsification rows exercise `OttoStore.mapSkippingFailures`. Reverting `CancellationEpisodeMapping.storedNoteAnywhere` alone leaves all 118 tests green: its `catch` fires only when a SwiftData `context.fetch` throws, which no test forces. The exposure there was theoretical — that error can never be a `MappingError`, so `mappingLogSummary` always returned a type name — but the *claim* was wrong, and an unguarded log line is this run's own item 7.
 - **The stated cause of the earlier flake was false.** The ledger and the test comment both blamed concurrent suites. The OttoPersistence target is `@Suite(.serialized)` throughout, so suites do **not** run concurrently. The real mechanism is that `OSLogStore.position(date:)` is approximate — measured reaching ~81 ms behind `since`, putting five earlier tests' lines in the window. The remedy adopted happens to tolerate the real mechanism, which is why nothing forced the diagnosis to be re-derived. Corrected in both places, and the test now makes its own line the discriminating assertion instead of asserting about output it did not produce.
-- **Round 1's reason for declining this technique was cited by half, and the dropped half is a live risk.** `PROD-READINESS.md` gives two: cost, **and** dependence on the log daemon being readable. `.github/workflows/ci.yml`'s `persistence-tests` job now runs a test requiring `OSLogStore` to be readable on a GitHub-hosted runner — an environment this run cannot exercise, and `docs/next-wave.md` records that CI's first run found a host-environment dependency twice. Kept anyway, because removing it leaves R0-4 with no executable guard at all, which is the failure round 1 was criticised for. **If CI goes red on it**, the failure will be `OSLogStore(scope:)` throwing rather than an assertion, and the remedy is to move `theEmittedLineIsRedacted` behind a host check rather than to delete it. Added to CANNOT ASSESS.
+- **Round 1's reason for declining this technique was cited by half, and the dropped half is a live risk.** `PROD-READINESS.md` gives two: cost, **and** dependence on the log daemon being readable. **Four** tests now read `OSLogStore`, and they run in **four** CI jobs (`persistence-tests`, `ui-package-tests`, `dynamic-type-simulator`, `verify`) on runners this run cannot exercise — and `docs/next-wave.md` records CI's first run finding a host-environment dependency twice. Kept anyway, because removing them leaves R0-4 and F2 with no executable guard at all, which is the failure round 1 was criticised for.
+
+  **The failure mode was stated wrongly and is now fixed in the code, not just corrected here.** An earlier draft said a CI failure "will be `OSLogStore(scope:)` throwing rather than an assertion". `reviews-2/REVIEW-6.md` measured the other half: on a host where the store is readable but **empty** (`OS_ACTIVITY_MODE=disable`), the tests failed at `#require(… ) → nil` — byte-identical to the signature of the regression they exist to catch, which is precisely the misdiagnosis the remedy sentence existed to prevent. Each log-reading test now emits a canary line on the category it is about to read and checks for it in the **same** query, so the two causes fail at different assertions with different messages. Verified both ways: under `OS_ACTIVITY_MODE=disable` the failure is `lines.contains { $0.contains(canary) }`; with the production log statements deleted it is the target-line `#require`. One query per test, because a query costs seconds.
 - **The offending value is now unrecoverable from any surface, which is a real trade.** `mapSkippingFailures` discards the caught error and nothing else carries it, so after this change the invalid value exists nowhere — not in the log, not under a private-data profile, not in a sysdiagnose. `description` keeping it has no reader. On the default read the fix is still strictly better, because `<private>` told an investigator nothing; but distinguishing a Feb-30 packing artifact from a zero from garbage is diagnosability this ledger should not have claimed as pure gain.
-- **A real card's issuer and last four were copied into a new source fixture**, in the stage whose subject is card details — `"Bank"` / `"XXXX"`, which `reviews-2/BASELINE-2.md` records as the real device's payment method. Not a new exposure (both already appear in committed documents, and no `.swift` file carried them before), but the surrounding fixture already used a synthetic value. Replaced with `"Test Issuer"` / `"4821"`.
+- **A real card's issuer and last four were copied into a new source fixture**, in the stage whose subject is card details — `"Bank"` / `"XXXX"`, which `reviews-2/BASELINE-2.md` records as the real device's payment method. Not a new exposure — `XXXX` appeared only in `docs/next-wave.md` and `reviews/BASELINE.md`, and `Bank` was already in ten `.swift` files including three production sources (`PaymentMethod.swift`, `PaymentMethodFormModel.swift`, `PaymentMethodsView.swift`). An earlier draft said no `.swift` file carried either, which is false for the issuer and was inherited from the review without being re-derived. The surrounding fixture already used a synthetic value. Replaced with `"Test Issuer"` / `"4821"`.
 
 ---
 
@@ -326,7 +340,7 @@ Both branches are pinned, not just the failure: a `handled` line for the success
 
 **Falsified**: with both statements deleted, both tests fail at the `#require`, `→ nil`.
 
-**Cost, and the risk round 1 named.** The OttoUI suite goes from ~0.05 s to ~5 s. Round 1 gave two reasons for declining: cost, and dependence on the log daemon being readable. The second is a real risk that this run now carries into CI on three tests, and is recorded in CANNOT ASSESS with the remedy if CI goes red. It was taken anyway because the alternative is what round 1 shipped: a fix whose only evidence rots the moment someone edits the file.
+**Cost, and the risk round 1 named.** The OttoUI suite goes from **0.069 s to 10.8-12.1 s** quiescent, and to ~27 s under load. (An earlier draft said "~5 s", measured mid-stage and never re-derived — the same class this ledger already records twice.) Round 1 gave two reasons for declining: cost, and dependence on the log daemon being readable. The second is a real risk that this run now carries into CI on three tests, and is recorded in CANNOT ASSESS with the remedy if CI goes red. It was taken anyway because the alternative is what round 1 shipped: a fix whose only evidence rots the moment someone edits the file.
 
 **What is still not guarded.** `reviews/REVIEW-5.md`'s R5-1 stands untouched: a snooze that returns early without scheduling anything still logs `handled` identically to one that worked. That is a NEXT ROUND item about what the line *says*, not about whether it exists, and this item is the latter.
 
@@ -334,17 +348,47 @@ Both branches are pinned, not just the failure: a `handled` line for the success
 
 ## NOT DEFECTS
 
-*(a finding that no longer reproduces at HEAD is moved here with its evidence rather than fixed)*
+A finding that no longer reproduced at HEAD would have been moved here with its evidence rather than fixed.
 
-- Nothing yet. All seven work-list items reconfirmed at HEAD so far.
+**None.** All seven work-list items were reconfirmed at `7a3cf54` before being touched, each by executing the defect rather than by reading the citation: F1 by measuring `nextTriggerDate() → nil` under a Buddhist host; R4-1 by a throwaway probe showing a failing engine plans `[needsAction, next30Days]`; R0-6 and R3-1 against real SwiftData stores; R0-4 by reading `Skipping unmappable record: <private>` back out of the log; RF-3 by reading `failed=[id id id]`; R5-2 by deleting both `OttoLog.actions` statements and watching the suite stay green.
 
 ## DEFERRED
 
-*(populated per stage)*
+**None of the seven.** All seven reached RESOLVED. The two items adjacent to this run's work that stay deferred are round 1's, unchanged:
+
+- **R0-7 — repairing calendar days already stored under a non-Gregorian device calendar.** Raised to **P1** by this run (see N2-2): it is now a *prerequisite* for shipping F1 to such a device, not a follow-up. It needs a persisted record of which calendar wrote the data, which V3 does not carry, so it is **deferred by the schema freeze** — the one constraint this run treats as prohibition rather than scope.
+- **F7 — clock monotonicity in merge resolution.** Scoped to the CloudKit wave; prior analysis in `docs/sync-safety.md`. Untouched.
 
 ## NEXT ROUND
 
-Carried forward from round 1 and not touched by round 2, plus what round 2 discovered. The full list is reconciled at the end of this document.
+The full carried-forward list, reconciled against round 1's own NEXT ROUND rather than summarised.
+
+### Carried forward from round 1, untouched by round 2
+
+Every one of these is still live and still has its evidence in `PROD-READINESS.md` and `reviews/`. Round 2 fixed four items off round 1's list (R4-1, R0-6, R3-1, R0-4) plus two of its own regressions (RF-3, R5-2); nothing else on the list was in scope.
+
+| id | what | sev |
+|---|---|---|
+| **R0-5** | A corrupt stored watermark reads as "no watermark", reproducing F6's signature by a third route. Neither path logs. | P2 |
+| **R0-7** | F1 repairs no calendar day already stored. **Now P1** — see DEFERRED and N2-2. | P1 |
+| **R0-9** | `CloudKitCompatibilityTests` never relates `stages` to `schemas`, so appending `OttoSchemaV4` without a stage stays green. | P2 |
+| **R0-10** | (a) `.fileImporter`'s `.failure` half is dropped with no log and no alert. (b) folded into F8. | P2 |
+| **R0-11** | `invalidateOutdatedUpcomingEvents` can leave uncommitted soft-deletes while reporting "nothing invalidated". | P2 |
+| **F8** | Both exports are written to `tmp` on every appearance of Settings, unrequested. | P2 |
+| **F9** | `csvField` does not neutralize a leading `=`, `+`, `-` or `@`. | P2 |
+| **F10** | `rescheduleSoon` spawns an unstructured `Task` per trigger with no coalescing. | P2 |
+| **F11** | No logging on import/export, cancellation/verification, or notification actions. **Partly addressed**: R0-4 and R5-2 touched the persistence and action boundaries, but import/export and cancellation remain unlogged. | P2 |
+| **R4-2** | `NotificationCoordinator` is inside `#if os(iOS)` and compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome`. **Still true** — see ITEM 2. | P2 |
+| **R4-3** | `ScheduleOutcome.truncatedAfter` has no consumer anywhere. **`ledgerFailures` is no longer only a count** — R4-1 surfaces it and RF-3 logs reasons — but `truncatedAfter` is untouched. | P2 |
+| **R5-1** | A snooze that scheduled nothing logs `handled` identically to one that worked. **Still true** — see ITEM 7. | P2 |
+| **RF-1** | A prohibited action inside round 1's review trail (`git ls-remote`). Historical; no round-2 reviewer repeated it. | P2 |
+| **RF-2** | Round 1's review-range blind spot. **Addressed by construction in round 2** (see REVIEW RANGES); recorded because the practice, not the incident, is the carry-forward. | P2 |
+| **RF-4** | `reviews/BASELINE.md` records a simulator command that fails from the repo root. Round 2 records the corrected form. | P2 |
+| — | Round 0 §4's two unconfirmed items: `SyncActivationService` is wired into nothing while `UIFileSharingEnabled` ships for it; `OttoMigrationPlan` verifies the V2→V3 carry-over from the context that just wrote it. | — |
+
+### Withdrawn
+
+- **N2-3** was filed in stage 4 and **withdrawn in stage 5**. It deferred the case of a device with no live subscriptions but a surviving payment method, describing it as "a narrower door" than R3-1. `reviews-2/REVIEW-4.md` finding 1 measured that it is the *wider* one — `deleteSubscription` cascades to every child but not to payment methods, so it is the state a user actually reaches — and that two of the three survivors it named cannot survive a delete at all. The predicate became `hasNoLiveSubscriptions`, which covers it. Recorded here rather than deleted, because `reviews-2/REVIEW-4.md` and `REVIEW-5.md` both reason about N2-3 by identifier.
 
 ### Discovered by round 2
 
@@ -353,6 +397,6 @@ Carried forward from round 1 and not touched by round 2, plus what round 2 disco
   - **Numbering-system-caused, 3 tests, nothing to do with the calendar.** `DisplayFormattingTests.swift:59,68,69` render Arabic-Indic numerals under `ar_SA` — `"Every ٤٥ days"`, `"١ subscription"`, `"٣ subscriptions"` — through `String(localized:)` and `AttributedString(localized:)`, neither of which touches a date. They pass under `th_TH@calendar=buddhist` and `ja_JP@calendar=japanese`.
 
   So the per-host baseline is **1 issue** under Buddhist and Japanese, **5** under `ar_SA`, which is what this ledger and `CalendarEraTests.swift` record. Whoever picks this up is fixing two different things, not one.
-- **N2-4 (P2, from stage 6)** — `os_log`'s per-entry limit can truncate `reconcile`'s line and drop the `failed=` field entirely. Observed on a 64-rung pass: `added=[… <…>] failed=[<decode: missing data>]`. The identifier lists are logged in full deliberately (a count cannot tell a correct three-rung replacement from a wipe), so the fix is not to shorten them but to emit `added=` and `failed=` as separate entries. Pre-existing; RF-3's enrichment makes the loss more costly, not more likely.
+- **N2-4 (P2, from stage 6) — FIXED in stage 6's remediation, not carried forward.** `os_log`'s per-entry budget truncated `reconcile`'s line and could drop the `failed=` field entirely: observed as `added=[… <…>] failed=[<decode: missing data>]` on a 64-rung pass. The first draft of this entry said RF-3's enrichment made the loss "more costly, not more likely". `reviews-2/REVIEW-6.md` measured that claim false — on an identical four-subscription pass the pre-fix line is complete at 991 characters and the enriched line truncates mid-identifier at the 1050-character cap, because `=AddRefused` adds ~11 bytes per failed rung and `failed=` was the last field. **Four subscriptions is a real user**, and a rung that fails and is then not named is exactly the loss RF-3 exists to repair, so this was not deferrable. The failure list now gets its own log entry with its own budget; the diff line carries `failedCount=` instead. Falsified: merging it back into the diff line fails the guard.
 - **N2-2 (P1, from stage 1)** — **R0-7 is now a prerequisite, not a follow-up.** F1 stops new corruption; a non-Gregorian device holding pre-fix data now plans zero reminders while Today claims coverage (mechanism traced under ITEM 1). R0-7 was rated P2 in round 1 as "the other half of F1". It is P1 the moment F1 ships to such a device. Required repair, concretely: for each stored day written under a non-Gregorian calendar, reinterpret the packed `yyyymmdd` by converting the era-numbered `(y, m, d)` back through the device calendar that wrote it into a Gregorian `(y, m, d)` — the inverse of `Calendar.current.dateComponents` — across `StoredSubscription` anchors and trial dates, `StoredBillingEvent.expectedDate`, `StoredCancellationEpisode` check dates, `StoredPriceChange.effectiveDate` and `StoredMaterializationWatermark.lastMaterializedThrough`. It needs a persisted marker of which calendar wrote the data, which the V3 schema does not carry — so it is a schema change and is **DEFERRED by the freeze**, exactly as round 1 concluded. A repair that guesses the writing calendar is not acceptable on billing dates.
 

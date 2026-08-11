@@ -46,6 +46,7 @@ struct NotificationActionLogTests {
         await fixture.client.refuseAdds(after: 0)
 
         let since = Date()
+        OttoLogProbe.emitCanary(to: OttoLog.actions)
         await #expect(throws: FakeNotificationClient.AddRefused.self) {
             _ = try await fixture.handler.handle(
                 actionIdentifier: NotificationAction.remindLater.rawValue,
@@ -54,8 +55,10 @@ struct NotificationActionLogTests {
             )
         }
 
+        let lines = try Self.actionLogLines(since: since)
+        try OttoLogProbe.requireDelivered(lines)
         let line = try #require(
-            Self.actionLogLines(since: since).last { $0.contains(identifier) },
+            lines.last { $0.contains(identifier) },
             "the handler recorded nothing for an action that threw"
         )
         #expect(line.contains("action FAILED"))
@@ -78,14 +81,17 @@ struct NotificationActionLogTests {
         )
 
         let since = Date()
+        OttoLogProbe.emitCanary(to: OttoLog.actions)
         _ = try await fixture.handler.handle(
             actionIdentifier: NotificationAction.remindLater.rawValue,
             notificationIdentifier: identifier,
             now: try fixtureNow(), today: try day(2026, 8, 6), timeZone: torontoZone
         )
 
+        let lines = try Self.actionLogLines(since: since)
+        try OttoLogProbe.requireDelivered(lines)
         let line = try #require(
-            Self.actionLogLines(since: since).last { $0.contains(identifier) },
+            lines.last { $0.contains(identifier) },
             "the handler recorded nothing for an action that succeeded"
         )
         #expect(line.hasPrefix("handled "))

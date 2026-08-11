@@ -53,6 +53,7 @@ struct SchedulingLogTests {
         await fixture.client.refuseAdds(after: 0)
 
         let since = Date()
+        OttoLogProbe.emitCanary(to: OttoLog.scheduling)
         await #expect(throws: FakeNotificationClient.AddRefused.self) {
             _ = try await fixture.scheduler.reschedule(
                 now: Date(timeIntervalSince1970: 1_786_000_000),
@@ -61,14 +62,19 @@ struct SchedulingLogTests {
             )
         }
 
+        // One read, checked for both the canary and the real line.
+        let lines = try Self.schedulingLogLines(since: since)
+        try OttoLogProbe.requireDelivered(lines)
+
         let mine = try fixtureUUID(77).uuidString.lowercased()
         let line = try #require(
-            Self.schedulingLogLines(since: since)
-                .last { $0.hasPrefix("reconcile ") && $0.lowercased().contains(mine) },
-            "the pass logged no reconcile line naming this subscription"
+            lines.last { $0.hasPrefix("reconcile failed=[") && $0.lowercased().contains(mine) },
+            "the pass logged no reconcile failure line naming this subscription"
         )
 
-        // The identifiers were always here. The reasons were not.
+        // The identifiers were always here. The reasons were not. They are on
+        // their own entry now, so `os_log`'s per-entry budget cannot truncate
+        // them away behind the (deliberately complete) added/removed lists.
         #expect(line.contains("failed=["))
         #expect(line.contains("=AddRefused"))
         // Not the bare-identifier shape: every failed rung is followed by its
@@ -83,7 +89,7 @@ struct SchedulingLogTests {
     /// Every `scheduling` line this process emitted since `since`.
     /// `.currentProcessIdentifier` reads only this process, so the assertion is
     /// about the app rather than about the host.
-    private static func schedulingLogLines(since: Date) throws -> [String] {
+    static func schedulingLogLines(since: Date) throws -> [String] {
         let store = try OSLogStore(scope: .currentProcessIdentifier)
         return try store
             .getEntries(
