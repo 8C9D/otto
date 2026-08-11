@@ -551,6 +551,9 @@ Four findings, all routed here:
 
 Twelve unmutated full `swift test --package-path Packages/OttoUI` runs at HEAD: **12 passed, 0 failed.**
 
+**Every one of this run's 20 commits builds all three packages** with `--build-tests`, swept in a detached worktree at the end of the run: 20 swept, 0 non-building.
+Round 2 shipped a commit that does not compile and recorded it; this run has none, and the sweep is the artifact rather than the claim.
+
 Against `reviews-3/BASELINE-3.md`: **+24 host tests, +16 simulator tests, no lint rule relaxed, no test skipped or disabled, and no new known issue.**
 One `custom_rules` entry was added and no existing rule touched.
 Two of this run's own assertions were weakened during a remediation and are restored; that is recorded rather than hidden.
