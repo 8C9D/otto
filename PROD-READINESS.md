@@ -187,4 +187,57 @@ Findings discovered after the Review 0 freeze. **Not fixed in this run, regardle
 
 ## Status
 
-*(Per-finding status is filled in at the final stage.)*
+Every frozen P0/P1 is in one of the three terminal states. There were no P0 findings.
+
+| id | terminal state | evidence |
+|---|---|---|
+| F1 — calendar | **DEFERRED** | Attempted (`75a8b31`), REJECTED by `reviews/REVIEW-2.md` as a regression, reverted (`b582d94`). Discovered scope recorded under DEFERRED. |
+| F2 — action failures unlogged | **RESOLVED** | `58695c2`. Log line read back out of the unified log (macOS host); no executable guard — see NEXT ROUND R5-2. |
+| F3 — stale coverage after a failed pass | **RESOLVED (store path)** | `c7bfe46`. Coordinator path UNVERIFIED — see NEXT ROUND R4-2. |
+| F4 — snoozed deadline demoted | **RESOLVED** | `c7bfe46`. **UNVERIFIED on hardware**: Focus breakthrough is not observable in the simulator. |
+| F5 — one refused add starves the rest | **RESOLVED** | `c7bfe46`, falsified at `attempted.count 1` against a desired set of 5. |
+| F6 — empty-database import skips reconstruction | **RESOLVED** | `b15b0a6`, end-to-end proof added at `c49ece2` after Review 3 showed the delegated proof was one link short. |
+| F7 — clock monotonicity in merge | **DEFERRED** | Scoped to the CloudKit wave; prior analysis in `docs/sync-safety.md`. Untouched by this run. |
+| R0-1 — ledger failures never withdraw the coverage claim | **RESOLVED** | `c7bfe46`, re-tested at `c140685` after Review 4 showed the first guard was unreachable. |
+
+### Verification at HEAD
+
+`scripts/verify.sh` at `412999b`, from a clean clone: **exit 0 — OttoDomain 246, OttoPersistence 113, OttoUI 174, total 533 tests**, lint clean under `--strict`. Simulator suite: **exit 0, `** TEST SUCCEEDED **`, 20 tests, the same 7 known issues** (the AX-client limitation, unchanged).
+
+Against `reviews/BASELINE.md` (526 host / 19 simulator / lint clean): **+7 host tests, +1 simulator test, nothing removed, nothing weakened, no lint rule relaxed.** No pass ended worse than baseline, with one exception caught and repaired inside its own stage: `c7bfe46` landed with three SwiftLint `--strict` violations and `d3eb18a` removed them.
+
+## PRIOR-KNOWN COMPARISON
+
+Read only after Review 0 froze the work list, from `docs/Subscription-Tracker-Spec.md` §9a, `DECISIONS.md`, `docs/sync-safety.md`, and `docs/next-wave.md`.
+
+**This comparison is badly damaged before it starts, and the damage is not the sweep's fault.** Stage 0 mandated running `scripts/verify.sh`, whose last act is to print `docs/next-wave.md` in full — which contains the open-defect list Stage 0 forbade reading. Both open ⛔ items were disclosed to this run before its first finding was written. The most informative output of the whole exercise was destroyed by the exercise's own instructions. See `reviews/BASELINE.md`.
+
+### What the record already had, and this run also has
+
+| prior-known | this run | independent? |
+|---|---|---|
+| ⛔ An import into an empty database silently runs as `.merge`, skipping watermark reconstruction (§9a) | **F6 — FIXED** | ❌ **No.** Leaked by the mandated `verify.sh` banner. This run confirmed the cited lines itself and fixed it, but claims no discovery credit. |
+| ⛔ Merge rules order on wall-clock timestamps (§9a, `docs/sync-safety.md`) | **F7 — DEFERRED** | ❌ **No.** Same leak. Not analysed further; the prior document is better than anything this run added. |
+| Carry-over: simulator-hosted `NotificationCoordinator` tests (`docs/next-wave.md`) | **R4-2** | ❌ **No.** Also present in this session's persistent memory before the repo was opened. |
+
+**Independent rediscovery of known open defects: zero out of two.** Whether an uncontaminated sweep would have found them is now unknowable.
+
+### What the record had that this run missed
+
+**Nothing that is still true.** §9a's one remaining non-⛔ open row — *"§5.4 paused-cancellation is specified but not implemented"* — is **stale**: the defer-and-ask UI exists at `CancellationSectionView.swift:166-184` and `:258`, wired through `AppModel.supplyPausedResumeDate`. The row was assigned to Wave 7 and Wave 7 landed without the table being updated. That is a documentation defect, not a missed code defect, and it is the kind of thing an independent read catches precisely because it does not already believe the table.
+
+### What this run found that the record did not
+
+This is the part the contamination did not touch, and it is the run's real output. **Six P1s and eleven P2s, none of them in any prior document.**
+
+| id | what | sev |
+|---|---|---|
+| F1 | Every `CalendarDay`↔instant conversion resolves through `Calendar.current`, so a non-Gregorian device calendar corrupts every billing date — and the notification trigger has a *compensating* error that makes a partial fix strictly worse | P1 |
+| F2 | A notification action whose state work throws is discarded with no log anywhere; "Remind me later" is terminal | P1 |
+| F3 | A failed pass left Today asserting coverage the previous pass earned | P1 |
+| F4 | A snoozed cancel-by warning silently lost its time-sensitive interruption level | P1 |
+| F5 | One refused `add` abandoned every rung ordered behind it, deterministically | P1 |
+| R0-1 | `ledgerFailures` reached no surface, so a *successful* pass could overstate coverage | P1 |
+| F8, F9, F10, F11, R0-2, R0-4, R0-5, R0-6, R0-9, R0-10, R0-11 | export-on-appearance, CSV formula injection, scheduler reentrancy, unlogged boundaries, a third `Logger` outside `OttoLog` that can log an amount and a vendor URL, corrupt-watermark-reads-as-nil, reconstruct's resurrection hole, a migration guard that cannot detect a missing stage, two more silent export/import paths, an escaping uncommitted delete | P2 |
+
+The single most useful result is **F1 together with its own rejection**: the sweep found a real defect the project did not know about, proposed a fix, and the adversarial review proved the fix would have converted a working device into a silently dead one. Neither half is worth much without the other.
