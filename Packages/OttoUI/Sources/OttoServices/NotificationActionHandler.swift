@@ -52,6 +52,42 @@ public actor NotificationActionHandler {
         today: CalendarDay,
         timeZone: TimeZone
     ) async throws -> NotificationActionFollowUp {
+        // The delegate that calls this discards the error (a notification
+        // response has nowhere to report one), so if it is not written down
+        // here it is written down nowhere: the user's answer disappears, the
+        // system has already consumed the notification, and no surface anywhere
+        // records that an answer was ever given. The error is rethrown
+        // unchanged - this observes, it does not handle.
+        let action = actionIdentifier.isEmpty ? "default" : actionIdentifier
+        do {
+            let followUp = try await route(
+                actionIdentifier: actionIdentifier,
+                notificationIdentifier: notificationIdentifier,
+                now: now, today: today, timeZone: timeZone
+            )
+            OttoLog.actions.notice("""
+                handled action=\(action, privacy: .public) \
+                id=\(notificationIdentifier, privacy: .public)
+                """)
+            return followUp
+        } catch {
+            OttoLog.actions.error("""
+                action FAILED - the user's answer was not recorded \
+                action=\(action, privacy: .public) \
+                id=\(notificationIdentifier, privacy: .public) \
+                error=\(String(describing: type(of: error)), privacy: .public)
+                """)
+            throw error
+        }
+    }
+
+    private func route(
+        actionIdentifier: String,
+        notificationIdentifier: String,
+        now: Date,
+        today: CalendarDay,
+        timeZone: TimeZone
+    ) async throws -> NotificationActionFollowUp {
         guard let subscriptionID = NotificationPlanIdentifier.subscriptionID(of: notificationIdentifier) else {
             return .none
         }

@@ -107,6 +107,44 @@ struct NotificationActionTests {
         #expect(await subscriptions.savedValues.filter { $0.id == subscription.id }.count == 1)
     }
 
+    /// The user answered from the lock screen and the state work threw. The
+    /// delegate that calls `handle` discards the error - a notification
+    /// response has nowhere to report one - so the only thing standing between
+    /// that answer and total silence is that `handle` refuses to pretend it
+    /// worked. It must THROW, never return a follow-up as if the work landed.
+    ///
+    /// The `os_log` record this pass added on the same path is not asserted
+    /// here: `Logger` has no injectable seam and reading the unified log from
+    /// `swift test` would assert about the host, not the app. It was verified
+    /// separately by reading the log back - see the commit message - and the
+    /// structure it depends on is what this test pins.
+    @Test("a failed action is reported to the caller, never reported as done")
+    func failedActionDoesNotLookLikeSuccess() async throws {
+        // "Remind me later" is the terminal case: the snooze IS the whole
+        // action, and the notification it repeats is already gone.
+        let fixture = SchedulerFixture()
+        let (subscription, trial) = try await seedTrial(fixture.subscriptions)
+        let identifier = NotificationPlanIdentifier.planned(
+            PlannedReminder(
+                subscriptionID: subscription.id,
+                day: trial.cancelByDate.adding(days: -5),
+                kind: .trialLead
+            )
+        )
+        await fixture.client.refuseAdds(after: 0)
+
+        await #expect(throws: FakeNotificationClient.AddRefused.self) {
+            _ = try await fixture.handler.handle(
+                actionIdentifier: NotificationAction.remindLater.rawValue,
+                notificationIdentifier: identifier,
+                now: try fixtureNow(), today: try day(2026, 8, 6), timeZone: torontoZone
+            )
+        }
+        // Nothing was scheduled, so the reminder really did cease to exist -
+        // this is the failure the log line exists to record.
+        #expect(await fixture.client.pendingRequests().isEmpty)
+    }
+
     /// A snooze must keep the interruption level of the rung it repeats. The
     /// cancel-by day's warnings are time-sensitive so they break through Focus
     /// (spec §6.3), and "remind me later" is the user asking to be told again

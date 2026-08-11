@@ -30,6 +30,23 @@ public enum OttoLog {
     /// diff it produced, and what the ledger watermarks did across it.
     public static let scheduling = Logger(subsystem: subsystem, category: "scheduling")
 
+    /// Notification actions (spec §6.4): what the user answered from the lock
+    /// screen, and whether the state work behind it succeeded.
+    ///
+    /// This is the one boundary where a failure is completely unobservable
+    /// otherwise. The delegate discards the handler's error, the system has
+    /// already consumed the notification, and the user has watched their answer
+    /// disappear into a banner - "Keeping it", "Yes - it stopped", "still using
+    /// it" and a snooze all look identical whether they were recorded or
+    /// thrown away. An acknowledgement that did not persist re-warns later and
+    /// is at least visible; a snooze that threw is the reminder simply ceasing
+    /// to exist.
+    ///
+    /// Same privacy rule as the rest of this file: the notification identifier
+    /// is the opaque `<uuid>|<day>|<kind>` triple and the action identifier is
+    /// a fixed constant, so neither says what the user pays for.
+    public static let actions = Logger(subsystem: subsystem, category: "actions")
+
     /// A `CalendarDay?` as log text - "none" reads better than an empty slot
     /// when the question being asked is whether a watermark exists at all.
     static func dayText(_ day: CalendarDay?) -> String {

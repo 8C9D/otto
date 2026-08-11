@@ -154,7 +154,7 @@ Frozen at Review 0 (`reviews/REVIEW-0.md`, verdict PASS-WITH-FINDINGS). The P0 a
 | 2 | R0-1 | 4 | **RESOLVED** — `c7bfe46`, re-tested after Review 4 |
 | 3 | F3 | 4 | **RESOLVED (store path)** — `c7bfe46`; coordinator path UNVERIFIED, see NEXT ROUND |
 | 4 | F5 | 4 | **RESOLVED** — `c7bfe46` |
-| 5 | F2 | 5 | |
+| 5 | F2 | 5 | **RESOLVED** — log line verified as a real artifact |
 | 6 | F6 | 3 | **RESOLVED** — `b15b0a6`, remediated after Review 3 |
 | 7 | F1 | 2 | **DEFERRED** — pass 2 rejected and reverted |
 | 8 | F7 | — | DEFERRED at freeze |
@@ -169,7 +169,7 @@ P2 findings (F8, F9, F10, F11, R0-2..R0-11) are documented and **not fixed**, pe
 | 2 — Correctness (Swift 6) | present | **RAN, REVERTED.** F1's fix was rejected by Review 2 as a regression and reverted at `b582d94`; F1 is DEFERRED. |
 | 3 — Data and persistence | present | **RUNS** — F6. Schema frozen: migration findings are described, never implemented. |
 | 4 — Failure behavior | present | **RUNS** — F3, F4, F5, R0-1. |
-| 5 — Observability | present | **RUNS** — F2. |
+| 5 — Observability | present | **RAN** — F2. |
 | 6 — Build and shippability | present | **SKIPPED**: no frozen finding touches it. Stage 0 verified no `#if DEBUG` behavior divergence on any shipping path and a clean-clone reproducible build. Release-on-device is prohibited this run and is recorded under CANNOT ASSESS. |
 | 7 — Tests | — | **FOLDED INTO EACH PASS** rather than run separately, so every pass's diff is self-verifying and its reviewer sees the fix and its test together. Every test added is falsified — the fix is broken, the failure observed and recorded in the commit message, then restored. |
 
