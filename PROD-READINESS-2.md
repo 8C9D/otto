@@ -29,7 +29,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 |---|---|---|---|
 | 1 | **F1** | The calendar defect, both ends together | **RESOLVED** — `a82d4e0` + `4b18420`; see F1 below for the two boundaries it does **not** cover |
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` |
-| 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — see ITEM 3 |
+| 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | *(pending)* |
 | 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
@@ -178,7 +178,7 @@ The last two were added in remediation. `reviews-2/REVIEW-2.md` finding 1 was ri
 
 ## ITEM 3 — R0-6, a resurrected subscription comes back with no watermark
 
-**RESOLVED**, `<stage-3 commit>`.
+**RESOLVED**, `db13abd` + `8ea8162`.
 
 **Reconfirmed at HEAD.** `OttoStore+DataTransfer.swift` fetches subscriptions with `deletedAt == nil`, deletes **every** watermark row unconditionally, then rebuilds one only for the subscriptions in that live fetch. A subscription tombstoned at reconstruct time therefore ends with no row; `ImportResolution` can clear `deletedAt` on a later merge and bring it back; `OttoStore+BillingEvents.swift:54`'s `min(storedWatermark ?? today, today)` then materializes from **today**. That is the founding v2.1 hazard and F6's exact failure signature by a second route.
 
@@ -198,6 +198,8 @@ The last two were added in remediation. `reviews-2/REVIEW-2.md` finding 1 was ri
 ```
 
 The first falsification attempt was **invalid and is recorded rather than hidden**: the bare fetch line appears twice in the file, and patching the first occurrence broke `completeSnapshot` instead, producing `danglingReference` and tombstone-snapshot failures that had nothing to do with the fix. Re-done against the line inside `reconstructWatermarksNow`.
+
+**A lint regression, caught and repaired inside the stage.** `db13abd` pushed both `OttoStore+DataTransfer.swift` and `DataTransferTests.swift` to 403 lines, past the 400-line `file_length`. `.swiftlint.yml` is untouched; `8ea8162` split the watermark reconstruction and the §5.3 dirty flag into `OttoStore+Watermarks.swift` (the seam is the store they write — those methods own the `deviceState` context while the rest writes the main one) and the empty-store restore suite into `RestoreIntoEmptyStoreTests.swift`. `markRestoreDirty` loses `private`, which is file-scoped, because `restoreThroughMainSave` still calls it.
 
 **Unrelated stderr, checked.** The persistence suite prints `CoreData: error:` lines about a model checksum and `deviceStateStoreUnavailable`. They appear identically with the fix present and reverted, and the suite passes in both, so they are pre-existing diagnostics from a deliberate migration-failure test, not a regression.
 
