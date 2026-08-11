@@ -31,7 +31,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` + `12fdcfc` + `c566ce6` |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` |
-| 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — see ITEM 5 |
+| 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — `0b76d65` |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
 | 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
 
@@ -48,6 +48,9 @@ Round 1's `RF-2` was a systematic blind spot: each stage's range started at what
 | 2 — R4-1 | `a82d4e0..100c508` | `100c508` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-2.md`) |
 | 3 — R0-6 | `100c508..62b4128` | `62b4128` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-3.md`) |
 | 4 — R3-1 | `62b4128..989ece0` | `989ece0` | **PASS-WITH-FINDINGS** (`reviews-2/REVIEW-4.md`) |
+| 5 — R0-4 | `989ece0..<head>` | *(pending)* | *(pending)* |
+
+**The range start is recorded when the stage opens, not when its verdict lands.** Four consecutive reviewers raised the missing row, each time because the table was being kept as a record of *completed reviews* rather than of *ranges issued* — which is round 1's `RF-2` in miniature, in the table built to prevent it. The start is knowable from the stage's first commit; only the head and the verdict have to wait.
 
 Stage 0's commit is deliberately inside stage 1's range rather than being treated as a reviewed parent, so no commit in this run is a range boundary that nobody read. Stage 1's own remediation commit lands **after** the reviewed head `a82d4e0` and is therefore inside stage 2's range, not orphaned between them.
 
@@ -249,7 +252,7 @@ The first falsification attempt was **invalid and is recorded rather than hidden
 
 ## ITEM 5 — R0-4, the persistence log can carry an amount and a vendor URL
 
-**RESOLVED**, `<stage-5 commit>`.
+**RESOLVED**, `0b76d65`.
 
 **Reconfirmed at HEAD.** `mappingLogger` is declared outside `OttoLog` entirely (`OttoStore.swift`), and both of its call sites interpolated `String(describing: error)` of a whole `MappingError`. `.invalidValue` carries the offending value, and two throw sites put user financial content in that slot: `SubscriptionMapping` throws `"\(lengthDays)/\(bufferDays)/\(convertsTo)"`, where `convertsTo` is a **trial conversion amount**; `URL.storedOptional` throws the raw string, reached for `vendorURL` and `cancellationURL` — **which vendor**.
 
