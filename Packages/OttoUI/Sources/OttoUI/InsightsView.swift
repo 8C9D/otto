@@ -139,7 +139,9 @@ struct InsightsView: View {
         components.year = month.year
         components.month = month.month
         components.day = 1
-        guard let date = Calendar.current.date(from: components) else {
+        // The projection's year and month are domain numbers, so they resolve in
+        // the domain's calendar; `.formatted` then renders in the reader's.
+        guard let date = CalendarDay.conversionCalendar.date(from: components) else {
             return "\(month.year)-\(month.month)"
         }
         return date.formatted(.dateTime.month(.wide).year())

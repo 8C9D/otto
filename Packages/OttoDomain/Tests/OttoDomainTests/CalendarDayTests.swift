@@ -2,6 +2,24 @@ import Foundation
 import Testing
 import OttoDomain
 
+@Suite("The calendar every CalendarDay conversion resolves in (F1)")
+struct ConversionCalendarTests {
+
+    @Test("it is Gregorian - the era CalendarDay's own arithmetic assumes")
+    func isGregorian() {
+        #expect(CalendarDay.conversionCalendar.identifier == .gregorian)
+    }
+
+    @Test("its timezone autoupdates, so a user who travels still gets their own day")
+    func followsTheDeviceTimeZone() {
+        // `Calendar(identifier:)` alone carries a SNAPSHOT of the zone in force
+        // when it was built. `Calendar.current`, which this replaced at four
+        // sites, re-reads the zone on every access - so anything less than
+        // autoupdating would be a behaviour change for a user who travels.
+        #expect(CalendarDay.conversionCalendar.timeZone == TimeZone.autoupdatingCurrent)
+    }
+}
+
 /// A raw year-month-day triple for validation tests - input that is not yet known
 /// to be a real date, so it cannot be a `CalendarDay`.
 struct DateTriple: Sendable, CustomTestStringConvertible {

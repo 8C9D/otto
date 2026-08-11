@@ -223,7 +223,17 @@ public final class LiveNotificationClient: NotificationClient {
             // fires a full reschedule anyway - so the pending request stays
             // legible and the one instant conversion happened upstream, in
             // exactly one place.
+            //
+            // The CALENDAR, unlike the timezone, must be explicit. iOS resolves
+            // components with a nil calendar in `Calendar.current`, so on a
+            // device set to a non-Gregorian calendar these Gregorian numbers
+            // would be read as era numbers: year 2026 on a Buddhist device is
+            // 1483 CE, `nextTriggerDate()` is nil, and the reminder can never
+            // fire. `conversionCalendar` carries an autoupdating timezone, so
+            // the fire instant still follows the device exactly as a nil
+            // calendar did. Measured both ways; see reviews-2/REVIEW-1.md.
             var components = DateComponents()
+            components.calendar = CalendarDay.conversionCalendar
             components.year = spec.year
             components.month = spec.month
             components.day = spec.day
