@@ -98,7 +98,7 @@ extension SerializedPersistenceTests {
             try await store.deleteSubscription(withID: doomed.id, at: Date(timeIntervalSince1970: 9_000))
             let snapshot = try await store.completeSnapshot()
             #expect(!snapshot.isEmpty)
-            #expect(snapshot.hasNoLiveRecords)
+            #expect(snapshot.hasNoLiveSubscriptions)
             return store
         }
 

@@ -119,7 +119,9 @@ public actor OttoStore {
             do {
                 return try transform(record)
             } catch {
-                mappingLogger.error("Skipping unmappable record: \(String(describing: error))")
+                mappingLogger.error(
+                    "Skipping unmappable record: \(mappingLogSummary(error), privacy: .public)"
+                )
                 return nil
             }
         }

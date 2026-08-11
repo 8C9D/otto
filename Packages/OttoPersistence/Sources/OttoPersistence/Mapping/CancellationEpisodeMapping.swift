@@ -181,7 +181,9 @@ extension OttoSchemaV3.StoredCancellationEpisode {
         do {
             return try context.fetch(descriptor).first
         } catch {
-            mappingLogger.error("Evidence-note reparent lookup failed: \(String(describing: error))")
+            mappingLogger.error(
+                "Evidence-note reparent lookup failed: \(mappingLogSummary(error), privacy: .public)"
+            )
             return nil
         }
     }

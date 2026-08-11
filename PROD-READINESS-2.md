@@ -31,7 +31,7 @@ Seven items, in the order given. Everything else in round 1's NEXT ROUND stays i
 | 2 | **R4-1** | An authorized user with a failing engine sees a Today identical to a healthy one | **RESOLVED** — `eb4a13b` + `12fdcfc` + `c566ce6` |
 | 3 | **R0-6** | `reconstructWatermarksNow` leaves a resurrected-after-tombstone subscription with a nil watermark | **RESOLVED** — `db13abd` + `8ea8162` |
 | 4 | **R3-1** | `current.isEmpty` counts tombstones, so an all-tombstoned database reproduces F6 | **RESOLVED** — `20d189a` |
-| 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | *(pending)* |
+| 5 | **R0-4** | `mappingLogger` can log a trial conversion amount and a raw vendor URL | **RESOLVED** — see ITEM 5 |
 | 6 | **RF-3** | Failed-`add` reasons for failures 2..n reach neither log nor caller | *(pending)* |
 | 7 | **R5-2** | F2's log line has no executable guard | *(pending)* |
 
@@ -244,6 +244,33 @@ The first falsification attempt was **invalid and is recorded rather than hidden
 **Proved against the real store, not only against the policy.** Round 1's Review 3 rejected a decision-variable assertion as one link short of its claim, so `RestoreIntoEmptyStoreTests` gains an end-to-end case: an all-tombstoned store restored with `.keep` leaves the watermark **nil**, and the same store with the same file under `.reconstruct` gets `2026-06-15`, the latest live imported row.
 
 **What this does NOT do.** The merge-or-replace prompt is unchanged, so an all-tombstoned database is still asked the question; only the watermark answer changed. The import still cannot distinguish a user who deliberately deleted everything from one recovering a reinstall — both answer Merge into a subscription-less device and both now reconstruct, which is the safe direction but not a read of intent.
+
+---
+
+## ITEM 5 — R0-4, the persistence log can carry an amount and a vendor URL
+
+**RESOLVED**, `<stage-5 commit>`.
+
+**Reconfirmed at HEAD.** `mappingLogger` is declared outside `OttoLog` entirely (`OttoStore.swift`), and both of its call sites interpolated `String(describing: error)` of a whole `MappingError`. `.invalidValue` carries the offending value, and two throw sites put user financial content in that slot: `SubscriptionMapping` throws `"\(lengthDays)/\(bufferDays)/\(convertsTo)"`, where `convertsTo` is a **trial conversion amount**; `URL.storedOptional` throws the raw string, reached for `vendorURL` and `cancellationURL` — **which vendor**.
+
+**What changed.** `MappingError.logSummary` renders the same fact with the value withheld, and `mappingLogSummary(_:)` extends that to any error — a `MappingError`'s summary, or any other error's **type name**, which is the convention F2's line already uses. Both call sites take it: `OttoStore.mapSkippingFailures` and `CancellationEpisodeMapping.storedNoteAnywhere`. `description` is deliberately unchanged: a thrown error still carries the value to a caller entitled to it, and only the **log** is redacted.
+
+**Marked `.public`, deliberately.** Entity and field names are schema constants, so the redacted line is safe to read — and it is now *more* useful than what it replaced. The pre-fix line rendered `Skipping unmappable record: <private>`, which told an investigator nothing at all; the fix says which field of which entity failed.
+
+That `<private>` is the whole point of the finding. Round 1 rated R0-4 P2 partly because `Logger` interpolation defaults to `.private`, so the amount was redacted on display. This project's own doctrine rejects that reasoning (`OttoLog`: *".private redaction is a display rule, not a guarantee about what was written"*), and a sysdiagnose is readable by anyone holding the device.
+
+**An executable guard, using the technique round 1 recorded as impossible.** `OSLogStore(scope: .currentProcessIdentifier)` reads only this process, so the test asserts about the app's code rather than about the host. `reviews/REVIEW-5.md` demonstrated this and round 1 declined it on cost; the cost is real and is recorded below.
+
+**Falsified in both directions.**
+
+| what was broken | result |
+|---|---|
+| the **call site**, back to `String(describing: error)` | the emitted line becomes `Skipping unmappable record: <private>` — the field assertion fails and the `<private>` assertion fails |
+| `logSummary`, made to interpolate the value again | the emitted line becomes `… holds an invalid value "20260230"` in **plaintext**, because the summary is `.public` — 3 issues across both the unit and the emission tests |
+
+Together those pin it from both ends: the call site must use the helper, and the helper must withhold the value.
+
+**Costs and limits, stated.** The `OSLogStore` read takes the OttoPersistence suite from ~1.5 s to ~7 s. The first version of the emission test was **flaky by construction** — it took the *first* skip line in the time window, and the log is process-wide, so a concurrently running suite's line was picked up instead (observed: `StoredSubscription.status is missing`). It now examines every skip line in the window and asserts the value is absent from **all** of them, which is both stable and stronger. What the guard cannot show on this host is that the raw value never entered the log buffer: pre-fix it rendered `<private>`, so the write is invisible to a reader without a private-data profile. What it does show is that the code path now writes only the summary.
 
 ---
 

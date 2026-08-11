@@ -25,6 +25,38 @@ enum MappingError: Error, CustomStringConvertible {
             "\(entity).\(field) holds invalid value \"\(value)\""
         }
     }
+
+    /// The same fact with the offending VALUE withheld - what goes to the log.
+    ///
+    /// `description` interpolates `value`, and two throw sites put user
+    /// financial content in that slot: `SubscriptionMapping` throws
+    /// `"\(lengthDays)/\(bufferDays)/\(convertsTo)"`, where `convertsTo` is a
+    /// trial conversion AMOUNT, and `URL.storedOptional` throws the raw string,
+    /// reached for `vendorURL` and `cancellationURL` - which vendor.
+    ///
+    /// `Logger` interpolation defaults to `.private`, so those rendered as
+    /// `<private>` on a normal read. That is not the question this project
+    /// asks: `OttoLog` states that ".private redaction is a display rule, not a
+    /// guarantee about what was written", and a sysdiagnose is readable by
+    /// anyone holding the device. The entity and field names are schema
+    /// constants, so what remains is safe to mark `.public` - and marking it so
+    /// makes the log MORE useful than the redacted form it replaces.
+    var logSummary: String {
+        switch self {
+        case .missingField(let entity, let field):
+            "\(entity).\(field) is missing"
+        case .invalidValue(let entity, let field, _):
+            "\(entity).\(field) holds an invalid value"
+        }
+    }
+}
+
+/// What may be written about an arbitrary error caught at a mapping boundary:
+/// a `MappingError`'s value-free summary, or any other error's TYPE name.
+/// Never `String(describing:)` of the error itself, which is what carried the
+/// amount and the URL into the log.
+func mappingLogSummary(_ error: any Error) -> String {
+    (error as? MappingError)?.logSummary ?? String(describing: type(of: error))
 }
 
 /// Unwraps a required stored field or throws `.missingField`.
