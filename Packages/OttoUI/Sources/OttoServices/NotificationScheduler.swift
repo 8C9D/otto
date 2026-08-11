@@ -223,6 +223,14 @@ public actor NotificationScheduler: ReminderScheduling {
             // nothing will ever charge. It is NOT repaired here: which
             // calendar wrote the day was never recorded, and guessing it is
             // not acceptable on billing dates (PROD-READINESS-3.md ITEM 1).
+            //
+            // Skipping suppresses `invalidateOutdatedUpcomingEvents` for this
+            // subscription too, so era-numbered `.upcoming` rows a pre-F1 pass
+            // already wrote are RETAINED rather than tombstoned, and stay
+            // visible on the detail screen's ledger. Deliberate: this stage
+            // prefers visible wrongness to a tidy lie, the rows are the same
+            // evidence the log line names, and they clear on the next pass
+            // once the user repairs the dates.
             let implausible = subscription.implausibleStoredDays(asOf: today)
             if !implausible.isEmpty {
                 failures.append(subscription.id)

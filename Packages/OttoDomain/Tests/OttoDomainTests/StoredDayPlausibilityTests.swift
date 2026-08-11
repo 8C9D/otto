@@ -17,30 +17,107 @@ import Testing
 @Suite("Implausible stored days (R0-7 / N2-2)")
 struct StoredDayPlausibilityTests {
 
-    /// The offsets every calendar Foundation offers applies to a Gregorian
-    /// year. The detector has to catch all of them; the threshold is not tuned
-    /// to any one.
-    private static let eraOffsets: [(name: String, offset: Int)] = [
-        ("Buddhist", 543),
-        ("Hebrew", 3760),
-        ("Islamic", -578),
-        ("Minguo / ROC", -1911),
-        ("Japanese (Reiwa)", -2018),
-        ("Persian", -621)
+    /// Every calendar identifier this SDK declares.
+    ///
+    /// `Calendar.Identifier` is not `CaseIterable`, so this list is the one
+    /// hand-maintained thing here - but the OFFSETS are not: each is derived by
+    /// asking Foundation what that calendar writes for a fixed instant, which
+    /// is exactly what a pre-F1 build did. A calendar added by a future SDK
+    /// must be added here; nothing else in this file needs updating.
+    private static let allIdentifiers: [(name: String, identifier: Calendar.Identifier)] = [
+        ("buddhist", .buddhist), ("chinese", .chinese), ("coptic", .coptic),
+        ("ethiopicAmeteMihret", .ethiopicAmeteMihret), ("ethiopicAmeteAlem", .ethiopicAmeteAlem),
+        ("gregorian", .gregorian), ("hebrew", .hebrew), ("indian", .indian),
+        ("islamic", .islamic), ("islamicCivil", .islamicCivil), ("islamicTabular", .islamicTabular),
+        ("islamicUmmAlQura", .islamicUmmAlQura), ("iso8601", .iso8601), ("japanese", .japanese),
+        ("persian", .persian), ("republicOfChina", .republicOfChina)
     ]
 
-    @Test("every calendar's era offset lands outside the plausible window")
-    func everyEraIsCaught() throws {
+    /// The calendars whose stored triple this rule provably CANNOT reject,
+    /// because their year offset is small enough that any window admitting an
+    /// ordinary long-held subscription admits them too.
+    ///
+    /// Pinned as a positive assertion, not left as an omission. If a future
+    /// change catches one of these, this test fails - and the right response is
+    /// to update this set and the ledger, not to delete the assertion.
+    private static let knownUncatchable: Set<String> = ["ethiopicAmeteMihret", "indian"]
+
+    /// The three integers a pre-F1 build packed into `yyyymmdd`.
+    private struct StoredTriple: Equatable {
+        let year: Int
+        let month: Int
+        let dayOfMonth: Int
+    }
+
+    /// What a pre-F1 build stored for one instant under each calendar, asked of
+    /// Foundation rather than recalled.
+    private func storedTriple(
+        under identifier: Calendar.Identifier, at instant: Date
+    ) -> StoredTriple? {
+        var calendar = Calendar(identifier: identifier)
+        calendar.timeZone = TimeZone(identifier: "America/Toronto") ?? .current
+        let parts = calendar.dateComponents([.year, .month, .day], from: instant)
+        guard let year = parts.year, let month = parts.month, let dayOfMonth = parts.day else { return nil }
+        return StoredTriple(year: year, month: month, dayOfMonth: dayOfMonth)
+    }
+
+    /// ⛔ The coverage of the rule, measured against Foundation on both sides.
+    ///
+    /// The first version of this test enumerated six era offsets in a literal -
+    /// the same six the doc comment used to justify the threshold. That made
+    /// the test the claim's own premise asserted back at itself: it could not
+    /// fail on a calendar the list omitted, and two of the omitted ones are
+    /// precisely the ones the rule does not catch. `reviews-3/REVIEW-2.md`
+    /// finding 1 measured it end to end against the real scheduler.
+    @Test("⛔ what the rule catches across Foundation's calendars, and what it provably cannot")
+    func coverageAcrossFoundationsCalendars() throws {
         let today = try day(2026, 8, 11)
-        for era in Self.eraOffsets {
-            let stored = try #require(
-                CalendarDay(year: 2026 + era.offset, month: 8, day: 6),
-                "\(era.name) produced an unrepresentable year"
-            )
-            #expect(
-                !stored.isPlausibleStoredDay(asOf: today),
-                "\(era.name) year \(stored.year) was accepted as a date near \(today)"
-            )
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = TimeZone(identifier: "America/Toronto") ?? .current
+        let instant = try #require(
+            gregorian.date(from: DateComponents(year: 2026, month: 8, day: 6, hour: 12))
+        )
+        let gregorianTriple = try #require(storedTriple(under: .gregorian, at: instant))
+
+        var missed: Set<String> = []
+        var caught = 0
+        for entry in Self.allIdentifiers {
+            guard let triple = storedTriple(under: entry.identifier, at: instant) else { continue }
+            // A calendar that writes the same numbers Gregorian does cannot
+            // corrupt anything, so it is not this rule's business.
+            guard triple != gregorianTriple else { continue }
+            guard let stored = CalendarDay(
+                year: triple.year, month: triple.month, day: triple.dayOfMonth
+            ) else { continue }
+            if stored.isPlausibleStoredDay(asOf: today) {
+                missed.insert(entry.name)
+            } else {
+                caught += 1
+            }
+        }
+
+        // A degenerate walk proves nothing: the loop must have reached real
+        // calendars for the comparison below to mean anything.
+        #expect(caught >= 10, "only \(caught) calendars were caught; the walk is not reaching them")
+        #expect(
+            missed == Self.knownUncatchable,
+            """
+            the set of calendars this rule cannot reject changed: measured \(missed.sorted()), \
+            recorded \(Self.knownUncatchable.sorted()). Update this set, the doc comment on \
+            plausibleStoredDayYears, and PROD-READINESS-3.md ITEM 1 together - the three must agree.
+            """
+        )
+    }
+
+    @Test("the two uncatchable calendars are uncatchable because no window separates them")
+    func noThresholdCatchesTheTwo() throws {
+        let today = try day(2026, 8, 11)
+        // Ethiopic writes 2018-11-30 for Gregorian 2026-08-06 and Indian
+        // writes 1948-05-15. A window narrow enough to reject either also
+        // rejects an ordinary subscription anchored on that same date, which is
+        // why this is a boundary of the approach and not a tuning mistake.
+        for stored in [try day(2018, 11, 30), try day(1948, 5, 15)] {
+            #expect(stored.isPlausibleStoredDay(asOf: today))
         }
     }
 
@@ -107,6 +184,26 @@ struct StoredDayPlausibilityTests {
                 status: .active, cycleStartDay: try day(2026, 8, 6), lastUsedDate: era(2569)
             ).implausibleStoredDays(asOf: today) == [try day(2569, 8, 6)]
         )
+    }
+
+    @Test("⛔ the reported days are deduplicated and in day order")
+    func reportedDaysAreDedupedAndSorted() throws {
+        let today = try day(2026, 8, 11)
+        // Ordinary shapes: a trial that started on the anchor, and a last-used
+        // date equal to it. Both are reachable, and the result is what a
+        // reader repairing the record actually sees in the log line.
+        let anchor = try day(2569, 8, 6)
+        let trial = try makeTrialTerm(startDate: anchor, lengthDays: 14)
+        let subscription = try makeSubscription(
+            status: .trial, cycleStartDay: anchor, trial: trial, lastUsedDate: anchor
+        )
+        let reported = subscription.implausibleStoredDays(asOf: today)
+
+        // The anchor, the trial start and the last-used date are the same day
+        // and must be named once; the derived conversion date is a second.
+        #expect(reported == [try day(2569, 8, 6), try day(2569, 8, 20)])
+        #expect(reported == reported.sorted())
+        #expect(Set(reported).count == reported.count)
     }
 
     @Test("a subscription on a device that was always Gregorian reports nothing")

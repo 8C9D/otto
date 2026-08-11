@@ -36,7 +36,7 @@ Everything else in round 1's and round 2's NEXT ROUND stays in NEXT ROUND.
 
 | # | id | what | terminal state |
 |---|---|---|---|
-| 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | **RESOLVED as detection / DEFERRED as repair** - stage 2; the V3 freeze is NOT lifted |
+| 1 | **R0-7 / N2-2** | Calendar days already stored under a non-Gregorian device calendar are never repaired | **RESOLVED as detection for 11 of 13 / DEFERRED as repair** - stage 2; the V3 freeze is NOT lifted |
 | 2 | **R0-9** | The migration guard cannot detect a missing stage | **RESOLVED** - stage 1 |
 | 3 | **F1's CI guard** | F1's four reading sites have no guard that runs on a Gregorian machine | pending |
 | 4 | **R4-2** | `NotificationCoordinator` compiles to nothing under host `swift test`; `handleBackgroundRefresh` never calls `onOutcome` | pending |
@@ -90,10 +90,11 @@ Recorded as they are made; this list is complete at the end of the run.
 
 ## ITEM 1 - R0-7 / N2-2, the days already stored under a non-Gregorian calendar
 
-**RESOLVED as a detection, DEFERRED as a repair.**
+**RESOLVED as a detection for 11 of the 13 calendars that can cause it, DEFERRED as a repair.**
 The V3 schema freeze is **not** lifted, and the reason is not caution: **`OttoSchemaV4` cannot supply the fact the repair needs.**
-The harm F1 created on such a device - zero reminders behind a Today that claims full coverage - is closed.
-The wrong dates are not.
+The harm F1 created on such a device - zero reminders behind a Today that claims full coverage - is closed for every calendar whose era offset is measured in centuries.
+It is **not** closed for Ethiopic (+8 years) or Indian/Saka (-78), which `reviews-3/REVIEW-2.md` found and which no distance threshold can reach; that residual is stated in full under the remediation below and carried to NEXT ROUND.
+The wrong dates are repaired in no case.
 
 ### Reconfirmed at HEAD by executing the defect
 
@@ -131,7 +132,7 @@ So the column adds cost and no information: **`Calendar.current` is already read
 The evidence that *does* exist is already in V3.
 Every record carries the §5.0 audit quartet, and `createdAt` is a `Date` - an absolute instant no calendar corrupts.
 A row created at a true instant in 2026 whose `expectedDate` is 2569 is detectably inconsistent **with its own record**, and that is inference from stored evidence rather than a guess about the device.
-It is also not enough to *repair* with: identifying which calendar produced a given `(y, m, d)` is only a year offset for Buddhist, Minguo and Persian, while Islamic months and days are not Gregorian ones shifted at all and Japanese year 8 is ambiguous across three eras.
+It is also not enough to *repair* with: identifying which calendar produced a given `(y, m, d)` is only a year offset for Buddhist, Minguo and Persian, while Islamic months and days are not Gregorian ones shifted at all and Japanese year 8 is ambiguous across five eras (Meiji 8, Taisho 8, Showa 8, Heisei 8, Reiwa 8) - though `createdAt` disambiguates those instantly, which is a correction recorded below.
 **The schema was never the limitation.** The limitation is that the writing calendar was not recorded and cannot be recovered, and V4 does not change that.
 
 **Against the four conditions, one by one:**
@@ -162,14 +163,14 @@ Predicted before the change: the corrupt device keeps `scheduledCount=0` (nothin
 
 Measured: all three hold.
 Every fixture year in `Packages/*/Tests` is 1896-2028, and the three pre-1900 ones are date-engine arithmetic tests that never reach a scheduler.
-Host suites went 256 / 119 / 200 with no pre-existing test touched.
+Host suites went 258 / 119 / **201** with no pre-existing test touched - `verify.sh` totals **578** after the remediation below added two more domain tests (256 / 576 before it), not the 575 an earlier draft's figures implied, because the fifth OttoUI test lands in the pre-existing `SchedulingLogTests` rather than the new file this section is about.
 
 ### Falsified, four ways, at the call site each time
 
 | what was broken | result |
 |---|---|
-| the **wiring** in `reconcileLedger` deleted, helper untouched | 5 issues across 3 tests: `(outcome.ledgerFailures → []) == ([corrupt.id] → …)`, `(outcome.canClaimCoverage → true) == false`, and `materializeCalls == [healthy.id]` |
-| `isPlausibleStoredDay` forced to `true` | 5 issues, including all four field cases |
+| the **wiring** in `reconcileLedger` deleted, helper untouched | **6 issues across 4 tests** on the whole suite: `ImplausibleStoredDayTests:45,46,84,111,112` and `SchedulingLogTests:119`. An earlier draft said 5 across 3 - it was measured with `--filter` on one file and omitted the log test, which the fourth row shows is load-bearing |
+| `isPlausibleStoredDay` forced to `true` | **12 issues in OttoDomain** plus 6 in OttoUI. An earlier draft said 5, again a filtered run |
 | the field list cut back to `cycleStartDay` alone | 3 issues - the trial, the pause resume and the last-used cases |
 | **only** the log statement deleted, failure reporting kept | `lines.last { $0.contains("reason=implausibleStoredDays") && … } → nil` - at the target-line `#require`, not at the canary |
 
@@ -186,6 +187,66 @@ The healthy-device test passes under every one of them, which is what makes it a
   The first attempt at falsification 1 located the end of the block with `s.index("                continue\n            }\n")` and no start offset, so it matched an earlier `continue` in the file and cut the wrong region; the suite stayed green and the falsification looked like a failure of the test.
   Re-done with the search anchored to the block, and the removal printed and the symbol count checked (`grep -c` → 0) before the run.
   This is round 2's own "patched the first of two identical lines" defect, in a different tool.
+
+### Remediation after `reviews-3/REVIEW-2.md`
+
+The verdict is PASS-WITH-FINDINGS over nine findings.
+One is P1 and is a defect in this stage's own change; it is fixed here.
+
+- **Finding 1 (P1) - the threshold's justification was a false universal, and the test written to guarantee it could not fail.**
+  The doc comment, this ledger and the guarding test all said *every* calendar Foundation offers is centuries from Gregorian, and all three used the **same six offsets**: the test was the claim's own premise asserted back at itself.
+  Re-derived independently rather than taken on the reviewer's word - asking each of the 16 identifiers this SDK declares what it writes for Gregorian 2026-08-06:
+
+  ```
+  buddhist  2569-8-6 (543)   chinese 43-6-24 (1983)   coptic 1742-11-30 (284)
+  hebrew    5786-12-23 (3760) islamic{,Civil,Tabular,UmmAlQura} 1448-2-2x (578)
+  japanese  8-8-6 (2018)     persian 1405-5-15 (621)  republicOfChina 115-8-6 (1911)
+  ethiopicAmeteMihret 2018-11-30 (8)   <- NOT caught, and representable
+  indian              1948-5-15  (78)  <- NOT caught, and representable
+  gregorian / iso8601 / ethiopicAmeteAlem  write the Gregorian numbers, so no corruption arises
+  ```
+
+  The reviewer drove both misses through the real scheduler: they schedule **four reminders on the wrong days** with `canClaimCoverage=true`, and the wrong anchor is not visible on the list either, because what the list renders is the derived next-charge date. That is worse than the Buddhist state this stage set out to close, not merely uncovered by it.
+
+  **Fixed three ways.** The doc comment now states the true coverage and names both misses. The test now **asks Foundation** - it derives each stored triple from the calendar rather than reciting an offset - and pins the uncatchable set as a positive assertion, so a future change that catches one of them fails the test and forces the record to be updated. A second test pins *why* they are uncatchable.
+
+  **The reviewer's proposed alternative was measured and is not an improvement.**
+  It suggests keying detection off `createdAt` - real evidence, and its 13/13 sensitivity is right. Its specificity was tested against six hand-picked legitimate fixtures and came back clean. Scanned systematically instead, over every ordinary Gregorian anchor in the 11 years before a 2026-08-06 creation:
+
+  ```
+  2018-11-30  FLAGGED by ethiopicAmeteMihret     <- "I've had this since Nov 2018"
+  2018-12-01  FLAGGED       2018-11-29  FLAGGED
+  2019-03-01  clean   2020-06-15 clean   1970-01-01 clean   2099-12-31 clean
+  scanned 4001 ordinary anchors; 64 would be FLAGGED as corrupt
+  ```
+
+  **1.6% false positives on ordinary data**, in a ~64-day band, because Ethiopic 2018-11-30 *is* Gregorian 2026-08-06 - the collision is exact, not approximate.
+  A false positive here silences reminders for a **working** subscription, which is a worse harm than the false negative it removes, and it lands on a shape as ordinary as "held since late 2018".
+  So the rule is not adopted. The measurement goes to NEXT ROUND with the design, so whoever picks it up starts from the constraint rather than from six clean fixtures.
+
+- **Finding 2 (P2) - three of the four baseline measurements were absent from this section**, and the one number that moved (simulator 108 → 113) was the one nobody wrote down. All four are now recorded under "Baseline at the end of this stage" below. The narrative was organised around predict-then-measure-the-change, which is a stronger discipline than a baseline re-run and displaced it.
+- **Finding 3 (P3)** - the host total was 200, measured 201; the run's cumulative total is 576. Corrected above.
+- **Finding 4 (P3)** - the cost figure attributed host noise to the change. Corrected above with the reviewer's controlled A/B; the real delta is ~+1 s.
+- **Finding 5 (P3)** - two falsification rows were measured with `--filter` and reported as whole-suite numbers. Corrected above; both err in the safe direction, the guard being stronger than the table said.
+- **Finding 6 (P3) - `deduplicated and in day order` was a documented contract with no test.** Removing the `Set` and the `.sorted()` left the suite green. Now guarded, and the falsification produces `[2569-08-06, 2569-08-06, 2569-08-20, 2569-08-06]` against the expected two-element result.
+- **Finding 7 (P3) - "exactly the fields the materializer reads" was not exact.** It omits the §5.3 watermark, which left the versioned schema in Wave 6A and is not on `Subscription` at all. The reviewer tried to make it bite and could not: a corrupt watermark widens the window without changing the sequence, because charges generate from the anchor rather than the window start. So the wording was wrong and the code was not; the doc comment now says which and why.
+- **Finding 8 (P3) - skipping also suppresses `invalidateOutdatedUpcomingEvents`,** so era-numbered `.upcoming` rows already written are retained rather than tombstoned. Deliberate on reflection and now stated in the code: this stage prefers visible wrongness to a tidy lie, and the rows clear on the next pass once the dates are repaired. It was not disclosed before, and the stage's own test asserted it without anyone noticing.
+- **Finding 9 (P3) - two supporting claims in the schema decision were wrong.** "Three eras" is five, and `createdAt` disambiguates all five - corrected above. "The schema was never the limitation" is true of repair and also true of detection, which is the sense in which finding 1 bites. The decision's load-bearing step - that a marker can only record `Calendar.current` at migration time - was attacked by the reviewer and survives; the Islamic variants disagree by up to two days on the same instant, which alone makes a repaired date a guess.
+
+**One thing this stage does that it never claimed, credited because it cuts the other way.**
+For a **negative**-offset calendar the pre-stage behaviour was not "nothing is scheduled" - it was a materialization pass over a window centuries wide. With an unrepaired Japanese anchor and watermark at year 8 against a 2026 horizon, `expectedCharges` yields **24,220** rows for one subscription on one pass, against 3 for a healthy one. The new guard skips before `materializeEvents` is reached, so this stage prevents it. Only the Buddhist case was ever measured here, where `min(2569-08-06, today)` collapses the window to nothing - so the worse half of the defect was never seen by the person fixing it.
+
+### Baseline at the end of this stage - all four, measured
+
+| measurement | `reviews-3/BASELINE-3.md` | at this stage | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 251 / 118 / 196 = 565 | exit 0, 258 / 119 / 201 = **578** | +13, exactly this run's new tests |
+| `swiftlint --strict` | clean | clean | unchanged |
+| simulator suite | 108 / 70 / 31, 7 known issues | **113** / 70 / 31, 7 known issues | +5, this stage's OttoUI tests |
+| non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
+
+The simulator's 108 → 113 is the first time that number has moved in this run, and it is recorded here rather than left for a later stage to discover against a stale baseline.
+The new tests also pass under all three non-Gregorian locales, including `ar_SA`: `CalendarDay.description` is `String(format:)` with no locale, so it does not render Arabic-Indic digits and the host-independence claim holds where it was most likely not to.
 
 ### What a non-Gregorian user's actual position is at the end of this run
 
@@ -215,9 +276,22 @@ The card plus the visible wrong dates plus a manual repair is a worse experience
 
 ### Cost, measured
 
-The OttoUI suite goes from **~12 s to 21-41 s** (two consecutive full runs: 40.8 s and 21.0 s).
-The new log-reading test alone is **11.5 s**; the pre-existing `reconcile` one is 7.5 s, and they contend rather than overlap.
-That is a **fifth** `OSLogStore(scope: .currentProcessIdentifier)` test, on runners this run cannot exercise, and it deepens the standing risk in CANNOT ASSESS by one test.
+**An earlier draft claimed "~12 s to 21-41 s" and that number is wrong.**
+It was two consecutive runs of a bimodal measurement read as a range, with every second of an unrelated slow log read booked to the new test.
+`reviews-3/REVIEW-2.md` finding 4 ran the controlled A/B this needed - alternating a worktree at `ddb04bb` (pre-change, 196 tests) with HEAD (201 tests), four runs back to back:
+
+```
+PRE-CHANGE (ddb04bb) run 1   196 tests passed after 13.366 seconds
+HEAD (e4f4872)       run 1   201 tests passed after 12.863 seconds
+PRE-CHANGE (ddb04bb) run 2   196 tests passed after 11.928 seconds
+HEAD (e4f4872)       run 2   201 tests passed after 14.802 seconds
+```
+
+**The delta attributable to this change is about +1 s**, not +9 to +29 s.
+
+What is real, and worse than a fixed cost: the same 201-test suite measured **11.9 s and 91.4 s on this host in one session**, an 8x spread with no code change, because the `OSLogStore` tests run in parallel and all block on the same log daemon - the suite's wall time simply *is* that read, whatever it costs that minute.
+This stage adds a **fifth** such test, so it adds one more waiter on an unbounded read, on CI runners this run cannot exercise.
+That sharpens the CANNOT ASSESS entry rather than softening it.
 Taken anyway, and disclosed rather than buried: the alternative is a new log line with no executable guard, which is round 2's own R5-2 shipped again in the run whose item 7 is the same defect class.
 
 ## ITEM 2 - R0-9, the migration guard cannot detect a missing stage

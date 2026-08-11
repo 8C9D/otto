@@ -27,14 +27,29 @@ extension CalendarDay {
     /// How far from today a stored day may be and still be a date Otto can
     /// schedule against.
     ///
-    /// Every calendar Foundation offers numbers its years with an offset of
-    /// hundreds of years from the Gregorian ones `CalendarDay` is built on -
-    /// Buddhist +543, Hebrew +3760, Islamic -578, Minguo -1911, Japanese Reiwa
-    /// -2018, Persian -621. A century separates every one of them from any
-    /// billing date a subscription can plausibly carry, and the nearest miss
-    /// (Islamic, 578 years) is still five times outside it. Deliberately
-    /// generous: this exists to catch a corruption class measured in centuries,
-    /// never to second-guess a user who entered an unusual date.
+    /// MOST calendars Foundation offers number their years hundreds of years
+    /// away from the Gregorian ones `CalendarDay` is built on, so a day written
+    /// under one and read as Gregorian lands far outside any window a real
+    /// billing date occupies. Measured against Foundation rather than asserted
+    /// from memory: for one instant, Buddhist writes +543 years, Hebrew +3760,
+    /// the four Islamic variants -578, Persian -621, Coptic -284, Minguo -1911,
+    /// Chinese -1983, Japanese -2018. A century is inside all of those and
+    /// outside any date a user could mean.
+    ///
+    /// **Two are not catchable this way, and no threshold makes them so.**
+    /// Ethiopic writes only **+8** years (2018-11-30 for Gregorian 2026-08-06)
+    /// and Indian (Saka) **-78** (1948-05-15). Both land inside any window wide
+    /// enough to admit an ordinary long-held subscription, and both leave a
+    /// stored triple indistinguishable from a legitimate Gregorian anchor of
+    /// that same date. `StoredDayPlausibilityTests` pins that boundary on both
+    /// sides rather than leaving it an omission, and `PROD-READINESS-3.md`
+    /// ITEM 1 records the measurement showing why the obvious alternative -
+    /// cross-checking the stored triple against the record's own `createdAt` -
+    /// is not an improvement.
+    ///
+    /// Deliberately generous within that limit: this catches a corruption class
+    /// measured in centuries, and must never second-guess a user who entered an
+    /// unusual date.
     public static let plausibleStoredDayYears = 100
 
     /// Whether this day could be a date Otto schedules against, as of `today`.
@@ -52,12 +67,21 @@ extension Subscription {
     /// The stored days this subscription schedules against that cannot be dates
     /// near `today` (R0-7 / N2-2), deduplicated and in day order.
     ///
-    /// Exactly the fields the planner and the materializer read as days to
-    /// schedule against: the stored anchor, the trial's entered start and its
-    /// derived conversion date, a pause's scheduled resume, and the last
-    /// recorded use (the §7.3 check-in counts from it). An amount, a name or a
-    /// URL cannot carry this corruption, and reporting a field nothing
-    /// schedules against would name a problem the user cannot act on.
+    /// The days a `Subscription` itself carries that the planner and the
+    /// materializer schedule against: the stored anchor, the trial's entered
+    /// start and its derived conversion date, a pause's scheduled resume, and
+    /// the last recorded use (the §7.3 check-in counts from it). An amount, a
+    /// name or a URL cannot carry this corruption, and reporting a field
+    /// nothing schedules against would name a problem the user cannot act on.
+    ///
+    /// **Not every stored day the materializer reads.** It also reads the §5.3
+    /// materialization watermark, which left the versioned schema in Wave 6A,
+    /// lives in the device-state store and is not on this value at all
+    /// (`OttoStore+BillingEvents.swift`, `deviceWatermark(for:)`). A corrupt
+    /// watermark widens the window without changing the sequence, because
+    /// charges are generated from the anchor rather than from the window start
+    /// - so it is currently harmless, and it is the wording here, not the code,
+    /// that would otherwise be wrong (`reviews-3/REVIEW-2.md` finding 7).
     ///
     /// The stored anchor is read directly rather than through
     /// `billingAnchor(asOf:)`, because that derivation compares the trial's
