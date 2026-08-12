@@ -62,7 +62,7 @@ Each later stage's range starts at the previous stage's **reviewed head**, and e
 | stage | range passed to the reviewer | reviewed head | verdict |
 |---|---|---|---|
 | 0 | - (baseline only) | - | no review; its commit is inside stage 1's range |
-| 1 - items 1 + 2 | `2d8913c..` | | |
+| 1 - items 1 + 2 | `2d8913c..a412a07` | `a412a07` | |
 | 2 - item 3 | | | |
 | 3 - item 4 | | | |
 | 4 - item 5 | | | |
@@ -92,3 +92,104 @@ Recorded as they are made; this list is complete at the end of the run.
 3. **Release configuration behaves as Debug** except where a finding says otherwise.
    No Release build was produced this run.
 4. **`2d8913c` is the intended starting point** and no prior branch is to be merged, rebased or pushed by this run.
+
+## ITEM 1 - F8 + R0-10(b), the complete financial record nobody asked for
+
+**RESOLVED**, stage 1, commit `f1237cc`.
+
+### Reconfirmed at HEAD by executing the defect
+
+Not by reading round 1's citation. `SettingsView` was rendered in a real `UIWindow` on the simulator and its `.task` modifiers were allowed to run:
+
+```
+F8REPRO permissionCalls=1            <- the control
+F8REPRO completeSnapshotCalls=2
+F8REPRO jsonExists=true
+F8REPRO csvExists=true
+F8REPRO fileSubscriptionsBeforeImport=0
+F8REPRO fileStillOfferedAfterImport=0 subscriptions
+F8REPRO importedSubscriptions=1
+```
+
+**F8**: arriving on Settings performed two `completeSnapshot()` reads and left `Otto-Export-2026-08-12.json` and `Otto-Charges-2026-08-12.csv` in the temporary directory. Nothing was asked for and nothing was shared.
+
+**R0-10(b)**: the file at the exact path the `ShareLink` holds contained **0 subscriptions before an import and 0 after one that restored 1**. The share sheet went on offering the pre-import copy.
+
+`permissionCalls=1` is the control and it is load-bearing: `NotificationPermissionSection` has its own `.task`, so a non-zero count proves the screen's tasks ran. Without it, "no export happened" would be equally true of a view that never appeared.
+`UIHostingController.sizeThatFits` - what `DynamicTypeTests` uses - runs a layout pass and no `.task` at all, which is why three rounds of view tests never saw this.
+
+### What changed
+
+- **`ExportSection` loses its `.task`.** Each row is a `Button` until an export exists for that kind, then a `ShareLink`.
+- **"Which exports were asked for" moves onto `AppModel`** as `prepared: [ExportKind: URL]`, with `preparedExport(_:)` to read and `withdrawPreparedExports()` to drop. A view's `@State` is reachable from nothing that knows an import happened, which is precisely why the stale file survived.
+- **`withdrawPreparedExports()` is called from `flowFinished()`** - every §5.4 flow and the import - **and from `subscriptionsStore.onMutation`** - create, edit, delete.
+- **That hook is now wired unconditionally.** It used to be installed only inside `if let notifications`, so "the data changed" was observable only on a model that could schedule reminders.
+- **`AppModel.exportJSONFile()` and `exportChargesCSVFile()` are gone.** `prepareExport(_:)` is the only path that writes an export file, so there is no second, unrecorded writer for the defect to come back through.
+- **`ExportKind`** is new public API in `OttoServices`, beside `ImportPickerOutcome`.
+
+**The scope exception was taken and is bounded.** The two rows become buttons - navigation the prompt's item-1 allowance explicitly permits - and the footer gains one sentence: *"Otto builds a file only when you ask for it, and stops offering it once your data changes - a backup is a complete copy of your finances, and a stale one is worse than none."* No settings key, no new screen, no dependency.
+
+### Falsified four ways, at the call site each time
+
+Each mutation printed the text it removed and asserted exactly one occurrence before running (process rule 2).
+
+| what was broken | result |
+|---|---|
+| an appearance-time `prepareExport` pair re-added to `ExportSection` | **3 issues** - `snapshotCalls == 0` fails, both `preparedExport(...) == nil` fail, and the two files are back in the simulator's `tmp` |
+| `withdrawPreparedExports()` deleted from `flowFinished()` | **2 issues** - the import withdraws neither export |
+| `withdrawPreparedExports()` deleted from the `onMutation` hook | **1 issue** - a delete no longer withdraws |
+| `prepareExport` stops recording the URL | **4 issues across 3 tests** |
+
+### What this does NOT do
+
+- **`ExportSection`'s own button wiring has no test.** The four tests pin the model and the appearance; a future edit that routes the button somewhere else would not fail. Nothing in the tree renders `SettingsView` for behaviour - this run adds the first test that renders it at all, and it renders it to prove an *absence*. Recorded as **N4-1**.
+- **The file is not deleted, only withdrawn.** A prepared export stays in the temporary directory until the system reclaims it. Deleting a file the share sheet may already be reading is a worse failure than leaving one behind, and the answer to "a complete record sits in `tmp`" is to stop writing it unasked, which is what this does.
+- **A notification-time change does not withdraw.** It changes no record. Stated in the code.
+
+## ITEM 2 - F9, a name a spreadsheet would run as a formula
+
+**RESOLVED**, stage 1, commit `a412a07`.
+
+### Reconfirmed at HEAD by executing the defect
+
+A snapshot of five hostile subscription names, exported and read back at `2d8913c`:
+
+```
+2026-01-15,	=1+1,charged,10.99,,CAD
+2026-01-15,+1234567890,charged,10.99,,CAD
+2026-01-15,-2+3+cmd|' /C calc'!A0,charged,10.99,,CAD
+2026-01-15,=1+1,charged,10.99,,CAD
+2026-01-15,@SUM(1+1)*cmd|' /C calc'!A0,charged,10.99,,CAD
+```
+
+Every one byte-for-byte. `-2+3+cmd|' /C calc'!A0` is the DDE shape that asks the spreadsheet to run a program, and `\t=1+1` is the leading-tab variant several importers strip before evaluating what is behind it.
+
+### What changed
+
+`csvField` becomes **neutralize, then quote**. The triggers are `=`, `+`, `-`, `@`, TAB and CR; the neutralizer is a leading apostrophe, which every spreadsheet reads as "the rest of this cell is text".
+
+**Applied to the cell, never to the stored name.** Nothing about the subscription changes and the JSON export - the one that round-trips - still carries the exact name. This file is already documented as lossy and one-way, so a display-level apostrophe in a file meant for reading is the cheap side of the trade.
+
+**Amounts deliberately do not go through it.** `decimalAmount` writes `-10.99` for a negative amount, and a leading minus in front of a number is a number to every spreadsheet; neutralizing that column would corrupt the figures the export exists to let someone add up. That is why the guard asserts the **whole row** rather than the name cell.
+
+### Falsified four ways
+
+| what was broken | result |
+|---|---|
+| the neutralizer not called at all | 5 issues over 2 tests |
+| the four triggers the finding names removed, TAB and CR kept | 5 issues over 2 tests |
+| neutralize **after** quoting instead of before | 2 issues - the apostrophe lands outside the quotes |
+| the neutralizer applied to the **amount** column | 8 issues - the control, and the reason the row is asserted whole |
+
+### Baseline at the end of STAGE 1 (`a412a07`) - all five, measured
+
+| measurement | `reviews-4/BASELINE-4.md` | at `a412a07` | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 258 / 124 / 207 = 589 | exit 0, **260 / 124 / 207 = 591** | +2, item 2's two domain tests |
+| `swiftlint --strict` | clean, 220 files | clean, **221 files** | unchanged; the new file is the simulator test |
+| simulator suite | 117 / 72 / 36, 7 known issues | **117 / 72 / 40**, 7 known issues, `** TEST SUCCEEDED **` | +4, item 1's four tests |
+| non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
+| flake rate | 12 of 12 | **12 of 12**, 13.9 s - 16.4 s | unchanged |
+
+Item 1's four tests are UIKit-hosted, so they land in the simulator's third bucket (36 → 40) and not in `verify.sh`'s total.
+Item 2's two tests are domain tests and land in both.
