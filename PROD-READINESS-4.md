@@ -62,7 +62,7 @@ Each later stage's range starts at the previous stage's **reviewed head**, and e
 | stage | range passed to the reviewer | reviewed head | verdict |
 |---|---|---|---|
 | 0 | - (baseline only) | - | no review; its commit is inside stage 1's range |
-| 1 - items 1 + 2 | `2d8913c..a412a07` | `a412a07` | |
+| 1 - items 1 + 2 | `2d8913c..6ef51ee` | `6ef51ee` | |
 | 2 - item 3 | | | |
 | 3 - item 4 | | | |
 | 4 - item 5 | | | |
@@ -78,6 +78,9 @@ Stage 5 groups items 6 and 7: both are a claim with no observer - a log read wit
 
 Stage 0's commit is deliberately inside stage 1's range rather than treated as a reviewed parent, so no commit in this run is a range boundary that nobody read - rounds 2 and 3's arrangement, kept.
 Each stage's remediation commits land after its reviewed head and are therefore inside the next stage's range - also kept.
+
+**A stage's reviewed head is the commit that RECORDS its measurements, not its last code commit**, so the numbers a reviewer is asked to check are inside the range it is given rather than only in the tree it is standing on.
+The one-line commit that writes the head into this table necessarily lands after it, and is therefore in the next stage's range; that is the same one-commit lag rounds 2 and 3 disclosed for their remediations, and it never leaves a **code** commit outside a range.
 
 ---
 
