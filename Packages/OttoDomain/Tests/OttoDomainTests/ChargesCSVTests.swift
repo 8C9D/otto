@@ -107,4 +107,60 @@ struct ChargesCSVTests {
     func emptyDatabase() {
         #expect(chargesCSV(from: OttoDataSnapshot()) == "date,subscription,state,expected amount,actual amount,currency\r\n")
     }
+
+    /// ⛔ F9. A subscription name is user text and this file is meant to be
+    /// opened in a spreadsheet, so a name beginning with a formula trigger is a
+    /// formula unless something stops it. Measured at `2d8913c`, before the
+    /// fix: every one of these came back byte-for-byte, including the DDE shape
+    /// `-2+3+cmd|' /C calc'!A0`, which asks the spreadsheet to run a program.
+    ///
+    /// The row is asserted whole, not just the name cell: the neutralizer must
+    /// not disturb the columns beside it, and the amount column in particular
+    /// must keep its leading minus, which is a number and not a formula.
+    @Test("⛔ a name a spreadsheet would run as a formula is neutralized, and only the name is")
+    func formulaInjectionIsNeutralized() throws {
+        let hostile = [
+            "=1+1": "'=1+1",
+            "+1234567890": "'+1234567890",
+            "-2+3+cmd|' /C calc'!A0": "'-2+3+cmd|' /C calc'!A0",
+            "@SUM(1+1)*cmd|' /C calc'!A0": "'@SUM(1+1)*cmd|' /C calc'!A0",
+            "\t=1+1": "'\t=1+1",
+            "\r=1+1": "\"'\r=1+1\"",
+            "Netflix": "Netflix",
+            "FoodApp (5% off)": "FoodApp (5% off)"
+        ]
+        for (index, entry) in hostile.sorted(by: { $0.key < $1.key }).enumerated() {
+            let subscription = try subscription(index + 1, name: entry.key)
+            let snapshot = OttoDataSnapshot(
+                subscriptions: [subscription],
+                billingEvents: [
+                    try event(
+                        100 + index, subscription: index + 1, date: try day(2026, 1, 15),
+                        cents: -1099, actualCents: -1150
+                    )
+                ]
+            )
+            let rows = chargesCSV(from: snapshot).components(separatedBy: "\r\n")
+            #expect(
+                rows.count > 1 && rows[1] == "2026-01-15,\(entry.value),charged,-10.99,-11.50,CAD",
+                "name \(entry.key.debugDescription) produced row \((rows.count > 1 ? rows[1] : "").debugDescription)"
+            )
+        }
+    }
+
+    /// The neutralizer runs BEFORE the quoting, so a hostile name that also
+    /// needs RFC 4180 quoting gets the apostrophe inside the quotes rather than
+    /// a stray one outside them.
+    @Test("⛔ a hostile name that also needs quoting is quoted around the neutralized text")
+    func neutralizingComposesWithQuoting() throws {
+        let snapshot = OttoDataSnapshot(
+            subscriptions: [try subscription(1, name: "=SUM(A1,B1) \"quoted\"")],
+            billingEvents: [
+                try event(101, subscription: 1, date: try day(2026, 1, 15), cents: 1099)
+            ]
+        )
+        let rows = chargesCSV(from: snapshot).components(separatedBy: "\r\n")
+        #expect(rows.count > 1)
+        #expect(rows[1] == "2026-01-15,\"'=SUM(A1,B1) \"\"quoted\"\"\",charged,10.99,,CAD")
+    }
 }
