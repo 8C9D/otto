@@ -2,6 +2,27 @@ Next wave: **6B - CloudKit activation**, specified in `docs/Subscription-Tracker
 Wave 10 (Notification Delivery & Check-Date Fixes, from the Aug 2026 device run) landed in between; 6B remains the next planned wave.
 Carry-over candidates for a later wave: simulator-hosted `NotificationCoordinator` tests (see `docs/implementation-notes/wave-10.md`, "Deliberately not done").
 
+---
+
+# If a device was set to a non-Gregorian calendar before this build
+
+**The repair is manual, it works, and nothing in the app says so.** This is the only place it is written down for a user rather than for a reviewer.
+
+Otto stores billing dates as plain year/month/day numbers. A build before F1 resolved those numbers through the *device's* calendar, so a phone set to Buddhist, Japanese, Islamic, Persian, Coptic, Minguo, Chinese, Hebrew or Indian wrote an era-numbered year into billing data - 2569 rather than 2026 on a Buddhist device, 1948 rather than 2026 on an Indian one. F1 stopped new writes from going wrong. **It repaired nothing already stored, and no automatic repair is possible**: which calendar wrote a given day was never recorded, and guessing it would rewrite dates that are correct. `PROD-READINESS-3.md` ITEM 1 has the full reasoning.
+
+**How to tell.** The subscription list and detail screens show the wrong dates in plain sight - "Aug 6, 2569". Today shows the coverage-gap card ("N subscriptions couldn't be updated"), and the unified log carries one line per affected subscription naming exactly which days are wrong:
+
+```
+log show --predicate 'subsystem == "com.arthurzhang.otto" AND category == "scheduling"' --last 1h
+[scheduling] ledger <uuid> SKIPPED reason=implausibleStoredDays today=2026-08-11 days=[2569-08-06 2569-08-20]
+```
+
+**How to fix it.** For each affected subscription, open it and **re-pick every date the log names** - the next charge date, and where they exist the trial start, the pause resume date, and the last-used date. Since F1 the date picker writes Gregorian whatever the device calendar is, so a re-picked date is stored correctly and that subscription starts scheduling again on the next pass. Nothing is deleted and no charge history is lost; only the stored dates change.
+
+**Two calendars leave no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders arrive on the wrong days. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
+
+---
+
 Gate 1 (2026-08-08) landed the GitHub remote and the first CI run; see `DECISIONS.md`, "Gate 1".
 Standing consequence for every later wave: **CI, not `verify.sh`, is now the gate.**
 `verify.sh` clones the committed code into the same locale on the same hardware, so it cannot see a host-environment dependency - which is exactly what CI's first run found twice.
