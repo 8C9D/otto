@@ -66,6 +66,47 @@ struct ImplausibleStoredDayTests {
         #expect(outcome.coveredThrough == today.adding(days: 90))
     }
 
+    /// ⛔ N3-1. Indian/Saka was the second of the two calendars round 3 recorded
+    /// as unreachable, and it is the more dangerous one: its anchor is in the
+    /// PAST, so unlike the Buddhist case the planner projects it forward and
+    /// schedules real reminders on the wrong days.
+    ///
+    /// Measured at `abef4a7`, before the asymmetric window, driving the real
+    /// scheduler over the day a pre-F1 build stored on an Indian device for
+    /// Gregorian 2026-08-06:
+    ///
+    /// ```
+    /// indian(-78)     scheduled=4 ledgerFailures=0 canClaimCoverage=true
+    ///                 fireDays=[2026-8-12, 2026-9-12, 2026-9-23, 2026-10-12]
+    /// healthy control scheduled=4 ledgerFailures=0 canClaimCoverage=true
+    ///                 fireDays=[2026-9-3, 2026-10-3, 2026-11-3, 2026-11-4]
+    /// ```
+    ///
+    /// Four reminders, on the 12th instead of the 3rd, with the pass reporting
+    /// itself healthy on every field Today reads.
+    @Test("⛔ an Indian-written anchor can no longer claim coverage either")
+    func indianAnchorWithdrawsTheCoverageClaim() async throws {
+        let fixture = SchedulerFixture()
+        let (scheduler, subscriptions) = (fixture.scheduler, fixture.subscriptions)
+        let today = try day(2026, 8, 11)
+        let corrupt = try makeSubscription(index: 1, cycleStartDay: try day(1948, 5, 15))
+        try await subscriptions.seed([corrupt])
+
+        let outcome = try await scheduler.reschedule(
+            now: try fixtureNow(), today: today, timeZone: torontoZone
+        )
+
+        #expect(outcome.ledgerFailures == [corrupt.id])
+        #expect(outcome.canClaimCoverage == false)
+        // Stated rather than implied: this does NOT stop the wrong-day
+        // reminders. The anchor is in the past, so the planner still produces
+        // rungs from it, and the pass still schedules them - what changed is
+        // that Today no longer says the schedule is complete. The same is true
+        // of every negative-offset calendar and was true at round 3's HEAD;
+        // `PROD-READINESS-4.md` N4-2 records it.
+        #expect(outcome.scheduledCount == 4)
+    }
+
     @Test("⛔ one corrupt subscription does not silence the healthy ones beside it")
     func theOthersStillSchedule() async throws {
         let fixture = SchedulerFixture()

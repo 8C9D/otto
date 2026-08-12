@@ -40,7 +40,15 @@ struct StoredDayPlausibilityTests {
     /// Pinned as a positive assertion, not left as an omission. If a future
     /// change catches one of these, this test fails - and the right response is
     /// to update this set and the ledger, not to delete the assertion.
-    private static let knownUncatchable: Set<String> = ["ethiopicAmeteMihret", "indian"]
+    ///
+    /// **Round 4 removed `indian` from this set, and that is the mechanism
+    /// working rather than being weakened.** Round 3 wrote the set as
+    /// `["ethiopicAmeteMihret", "indian"]` precisely so that catching one would
+    /// force the record to be updated; the window is now asymmetric (70 years
+    /// behind, 100 ahead), Indian/Saka is 78 or 79 years behind in every month,
+    /// and it is caught. Ethiopic remains, at 7 to 8 years behind, and no
+    /// threshold reaches it - `PROD-READINESS-4.md` ITEM 3 has the measurement.
+    private static let knownUncatchable: Set<String> = ["ethiopicAmeteMihret"]
 
     /// The three integers a pre-F1 build packed into `yyyymmdd`.
     private struct StoredTriple: Equatable {
@@ -109,15 +117,43 @@ struct StoredDayPlausibilityTests {
         )
     }
 
-    @Test("the two uncatchable calendars are uncatchable because no window separates them")
-    func noThresholdCatchesTheTwo() throws {
+    @Test("Ethiopic is uncatchable because no window separates it from an ordinary anchor")
+    func noThresholdCatchesEthiopic() throws {
         let today = try day(2026, 8, 11)
-        // Ethiopic writes 2018-11-30 for Gregorian 2026-08-06 and Indian
-        // writes 1948-05-15. A window narrow enough to reject either also
-        // rejects an ordinary subscription anchored on that same date, which is
-        // why this is a boundary of the approach and not a tuning mistake.
-        for stored in [try day(2018, 11, 30), try day(1948, 5, 15)] {
-            #expect(stored.isPlausibleStoredDay(asOf: today))
+        // Ethiopic writes 2018-11-30 for Gregorian 2026-08-06 - seven to eight
+        // years behind. A window narrow enough to reject that also rejects a
+        // subscription somebody has genuinely held since 2018, which is an
+        // ordinary shape and not an exotic one. That is a boundary of the
+        // approach, not a tuning mistake.
+        #expect(try day(2018, 11, 30).isPlausibleStoredDay(asOf: today))
+        #expect(try day(2019, 8, 6).isPlausibleStoredDay(asOf: today))
+    }
+
+    /// ⛔ Why the window is asymmetric, pinned as the two facts that make it so.
+    ///
+    /// Indian/Saka writes 1948-05-15 for Gregorian 2026-08-06. Round 3's rule
+    /// was `abs(storedYear - todayYear) <= 100`, which accepts it - the first
+    /// assertion below is that rule, spelled out, still accepting the corrupt
+    /// day. The rule now in force rejects it, and the reason it can is that no
+    /// legitimate stored day in this app is seventy years old: the oldest thing
+    /// any of the five checked fields can mean is a subscription's cycle
+    /// origin.
+    @Test("⛔ Indian/Saka is caught by the asymmetry, and the symmetric rule would not have")
+    func indianIsCaughtByTheAsymmetry() throws {
+        let today = try day(2026, 8, 11)
+        let indian = try day(1948, 5, 15)
+
+        #expect(abs(indian.year - today.year) <= 100, "round 3's symmetric century accepted this day")
+        #expect(indian.isPlausibleStoredDay(asOf: today) == false)
+
+        // Every month, not just the one instant: the Saka offset is 78 or 79
+        // depending on whether the date falls before or after the new year.
+        for month in 1 ... 12 {
+            let stored = try #require(CalendarDay(year: 2026 - 78, month: month, day: 15))
+            #expect(
+                stored.isPlausibleStoredDay(asOf: today) == false,
+                "\(stored) escaped the backward bound"
+            )
         }
     }
 
@@ -125,13 +161,17 @@ struct StoredDayPlausibilityTests {
     func realDatesSurvive() throws {
         let today = try day(2026, 8, 11)
         // A long-past import, a far-future prepaid term, and both edges of the
-        // window itself. The threshold exists to catch centuries; it must never
-        // second-guess a date a user could actually have entered.
+        // window itself. The threshold exists to catch a corruption class; it
+        // must never second-guess a date a user could actually have entered.
+        //
+        // 1926-08-11 used to be in this list and is now rejected - it is a
+        // century old, and the backward bound is seventy years. The Unix epoch
+        // stays, with fourteen years of room.
         for candidate in [
             try day(1970, 1, 1),
             try day(2026, 8, 11),
             try day(2099, 12, 31),
-            try day(1926, 8, 11),
+            try day(1956, 8, 11),
             try day(2126, 8, 11)
         ] {
             #expect(
@@ -141,12 +181,21 @@ struct StoredDayPlausibilityTests {
         }
     }
 
-    @Test("the window is exactly a century wide on both sides")
+    @Test("⛔ the window is seventy years behind and a century ahead, and the two differ")
     func windowEdges() throws {
         let today = try day(2026, 8, 11)
-        #expect(try day(1925, 12, 31).isPlausibleStoredDay(asOf: today) == false)
+        // Behind: 1956 is in, 1955 is out.
+        #expect(try day(1956, 1, 1).isPlausibleStoredDay(asOf: today))
+        #expect(try day(1955, 12, 31).isPlausibleStoredDay(asOf: today) == false)
+        // Ahead: 2126 is in, 2127 is out.
+        #expect(try day(2126, 12, 31).isPlausibleStoredDay(asOf: today))
         #expect(try day(2127, 1, 1).isPlausibleStoredDay(asOf: today) == false)
-        #expect(CalendarDay.plausibleStoredDayYears == 100)
+        // The two bounds are not the same number, and a symmetric rule at
+        // either value is wrong: at 100 both ways Indian escapes, at 70 both
+        // ways an ordinary far-future prepaid term is rejected.
+        #expect(CalendarDay.plausibleStoredDayYearsBehind == 70)
+        #expect(CalendarDay.plausibleStoredDayYearsAhead == 100)
+        #expect(CalendarDay.plausibleStoredDayYearsBehind < CalendarDay.plausibleStoredDayYearsAhead)
     }
 
     @Test("⛔ every stored day the scheduler reads is checked, not just the anchor")
