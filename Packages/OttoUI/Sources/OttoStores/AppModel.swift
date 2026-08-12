@@ -93,12 +93,18 @@ public final class AppModel {
         self.paymentMethodsStore = PaymentMethodsStore(
             repository: repositories.paymentMethods, dates: dates
         )
+        // Every create, edit, or delete is a reschedule trigger (spec §6.2) -
+        // and it also invalidates any export prepared before it (R0-10(b)), so
+        // this hook is wired whether or not a notification engine exists. It
+        // used to be installed only inside `if let notifications`, which made
+        // "the data changed" observable only on a model that could schedule.
+        self.subscriptionsStore.onMutation = { [weak self, weak notifications] in
+            await notifications?.reschedule()
+            self?.withdrawPreparedExports()
+        }
         if let notifications {
-            // Every create, edit, or delete is a reschedule trigger (spec §6.2).
-            self.subscriptionsStore.onMutation = { [weak notifications] in
-                await notifications?.reschedule()
-            }
-            // So is a notification-time change: every pending reminder re-times.
+            // A notification-time change re-times every pending reminder. It
+            // changes no record, so it does not withdraw an export.
             self.settings.onReminderTimeChange = { [weak notifications] in
                 await notifications?.reschedule()
             }
@@ -111,6 +117,9 @@ public final class AppModel {
     /// is a §6.2 trigger) and refreshes the published lists so every screen
     /// reflects it.
     private func flowFinished() async {
+        // Every flow here changes a record, so any export prepared before it now
+        // describes a database that no longer exists (R0-10(b)).
+        withdrawPreparedExports()
         await notifications?.reschedule()
         await subscriptionsStore.refresh()
         await insightsStore.refresh()
@@ -234,14 +243,50 @@ public final class AppModel {
 
     // MARK: - Export and import (Wave 8)
 
-    /// The full-fidelity JSON export, as a shareable file URL.
-    public func exportJSONFile() async throws -> URL {
-        try await exports.exportJSONFile(exportedAt: dates.now(), today: dates.today())
+    /// The export files this session has been ASKED for, by kind (F8).
+    ///
+    /// An export is a complete, unencrypted copy of the user's finances.
+    /// Building one on a view's `.task` wrote both of them into the temporary
+    /// directory every time the user so much as opened Settings - measured at
+    /// `2d8913c` by rendering the real screen: two `completeSnapshot()` calls
+    /// and two files on disk from an appearance alone, with nothing asked for
+    /// and nothing shared.
+    ///
+    /// Kept here rather than in the view's `@State` for the second half of the
+    /// same defect, R0-10(b): the file describes the database at the instant it
+    /// was built, so whatever replaces the database has to be able to withdraw
+    /// it. A view's `@State` is reachable from nothing that knows an import
+    /// happened, which is exactly why the share sheet went on offering the
+    /// pre-import copy.
+    private var prepared: [ExportKind: URL] = [:]
+
+    /// The file ready to share for `kind`, or nil when none has been asked for
+    /// since the last change to the database.
+    public func preparedExport(_ kind: ExportKind) -> URL? { prepared[kind] }
+
+    /// Builds one export because the user asked for it, and remembers that they
+    /// did. The only path that writes an export file.
+    @discardableResult
+    public func prepareExport(_ kind: ExportKind) async throws -> URL {
+        let url = switch kind {
+        case .json:
+            try await exports.exportJSONFile(exportedAt: dates.now(), today: dates.today())
+        case .chargesCSV:
+            try await exports.exportChargesCSVFile(today: dates.today())
+        }
+        prepared[kind] = url
+        return url
     }
 
-    /// The one-way charges CSV, as a shareable file URL.
-    public func exportChargesCSVFile() async throws -> URL {
-        try await exports.exportChargesCSVFile(today: dates.today())
+    /// Stops offering every prepared export (R0-10(b)).
+    ///
+    /// Called wherever this model knows the database changed. The file on disk
+    /// is left alone - it is in the temporary directory and the system reclaims
+    /// it - because deleting a file the share sheet may already be reading is a
+    /// worse failure than leaving one behind. What changes is that Otto stops
+    /// handing it out.
+    public func withdrawPreparedExports() {
+        prepared.removeAll()
     }
 
     /// What an import of `url` would bring, and whether the merge-or-replace

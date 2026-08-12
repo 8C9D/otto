@@ -51,11 +51,31 @@ public func importPickerOutcome(of result: Result<URL, any Error>) -> ImportPick
     }
 }
 
+/// Which export the user asked for (F8).
+///
+/// Named rather than left as two separate methods on the model, because the
+/// thing that has to be tracked is *which* complete financial records this
+/// session has been asked to build - and a registry keyed by a method name is
+/// not a registry.
+public enum ExportKind: String, Hashable, Sendable, CaseIterable {
+    /// The full-fidelity backup: every subscription, charge and price change.
+    case json
+    /// The lossy, one-way charge-history CSV.
+    case chargesCSV
+}
+
 /// Layer 4 for export/import (spec §3.4): every serialization decision lives in
 /// the domain (`exportData`, `decodeExport`, `resolveImport`, `chargesCSV`);
 /// this actor only moves bytes between the repository and files. Export files
 /// land in the temporary directory under stable dated names, ready for the
 /// share sheet.
+///
+/// **Nothing here decides WHEN to write.** F8 was not a defect in this actor -
+/// it writes a file when it is told to, which is its job - but in the caller:
+/// `ExportSection` carried `.task { await regenerate() }`, so arriving on
+/// Settings built both records for a user who had asked for neither.
+/// `AppModel.prepareExport(_:)` is the only caller now, and it exists so that
+/// "the user asked" is a state a test can read.
 public actor ExportService {
 
     private let transfer: any DataTransferRepository

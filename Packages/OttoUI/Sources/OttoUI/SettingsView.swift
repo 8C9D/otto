@@ -142,27 +142,40 @@ private struct NotificationPermissionSection: View {
 
 private struct ExportSection: View {
     @Environment(AppModel.self) private var model
-    @State private var jsonURL: URL?
-    @State private var csvURL: URL?
+    @State private var preparing: ExportKind?
     @State private var failure: String?
 
+    /// F8: this section had `.task { await regenerate() }`, so ARRIVING here
+    /// wrote the complete unencrypted JSON backup and the charge CSV into the
+    /// temporary directory - for a user who had asked for neither, and every
+    /// single time. Measured at `2d8913c` by rendering this screen in a window:
+    /// two `completeSnapshot()` calls and two files on disk from the appearance
+    /// alone.
+    ///
+    /// R0-10(b) was the same state a moment later: the two URLs lived in this
+    /// view's `@State`, so the `ShareLink` beside them went on handing out the
+    /// PRE-import file after an import replaced the database - measured on the
+    /// same run, 0 subscriptions in the offered file after restoring 1.
+    ///
+    /// Both are fixed in one place by moving "which exports were asked for"
+    /// onto the model, where the import path can withdraw them and a test can
+    /// read them. Nothing here is written until a tap.
     var body: some View {
         Section {
             if let failure {
                 Label(failure, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
-            } else {
-                shareRow(
-                    url: jsonURL,
-                    title: String(localized: "Export everything (JSON)"),
-                    symbol: "square.and.arrow.up"
-                )
-                shareRow(
-                    url: csvURL,
-                    title: String(localized: "Export charge history (CSV)"),
-                    symbol: "tablecells"
-                )
             }
+            exportRow(
+                .json,
+                title: String(localized: "Export everything (JSON)"),
+                symbol: "square.and.arrow.up"
+            )
+            exportRow(
+                .chargesCSV,
+                title: String(localized: "Export charge history (CSV)"),
+                symbol: "tablecells"
+            )
         } header: {
             Text(String(localized: "Back up"))
         } footer: {
@@ -170,31 +183,43 @@ private struct ExportSection: View {
             The JSON file is the complete backup - every subscription, charge, \
             and price change, importable on this or another device. The CSV is \
             for reading in a spreadsheet; it can't be imported back.
+
+            Otto builds a file only when you ask for it, and stops offering it \
+            once your data changes - a backup is a complete copy of your \
+            finances, and a stale one is worse than none.
             """))
         }
-        .task { await regenerate() }
     }
 
     @ViewBuilder
-    private func shareRow(url: URL?, title: String, symbol: String) -> some View {
-        if let url {
+    private func exportRow(_ kind: ExportKind, title: String, symbol: String) -> some View {
+        if let url = model.preparedExport(kind) {
             ShareLink(item: url) {
                 Label(title, systemImage: symbol)
             }
-        } else {
+        } else if preparing == kind {
             Label(title, systemImage: symbol)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(String(localized: "\(title), preparing"))
+        } else {
+            Button {
+                prepare(kind)
+            } label: {
+                Label(title, systemImage: symbol)
+            }
         }
     }
 
-    private func regenerate() async {
-        do {
-            jsonURL = try await model.exportJSONFile()
-            csvURL = try await model.exportChargesCSVFile()
-            failure = nil
-        } catch {
-            failure = error.localizedDescription
+    private func prepare(_ kind: ExportKind) {
+        preparing = kind
+        Task {
+            do {
+                try await model.prepareExport(kind)
+                failure = nil
+            } catch {
+                failure = error.localizedDescription
+            }
+            preparing = nil
         }
     }
 }
