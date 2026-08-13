@@ -71,7 +71,8 @@ Each later stage's range starts at the previous stage's **reviewed head**, and e
 | 4 - item 5 + stage 1's remediation | `54bb611..05ff987` | `05ff987` | (`reviews-4/REVIEW-4.md`) |
 | 5 - items 6 + 7 | `05ff987..1a1d23b` | `1a1d23b` | **PASS-WITH-FINDINGS** (`reviews-4/REVIEW-5.md`) |
 | aa92ca7 | `aa92ca7^..aa92ca7` | `aa92ca7` | **REJECT** (`reviews-4/REVIEW-AA92CA7.md`) - an inherited commit; see its own section |
-| 6 - every remediation | `1a1d23b..<final>` | | (`reviews-4/REVIEW-6.md`) |
+| 6 - every remediation | `1a1d23b..92174e4` | `92174e4` | **REJECT** (`reviews-4/REVIEW-6.md`) |
+| 6r - the REJECT's remediation | `92174e4..f51d5ed` | `f51d5ed` | (`reviews-4/REVIEW-7.md`, a **different** reviewer) |
 
 **Stage 6 exists because all five stage reviewers and the `aa92ca7` reviewer were dispatched before their findings could be routed.** Four of the six returned findings that needed code, and every one of those fixes therefore lands after the last range this run had issued. Leaving them outside a range would reproduce N3-4 - the defect this run was sent to close - inside the run that closed it. So the remediations get a range and a fresh reviewer of their own.
 
@@ -828,3 +829,13 @@ Seven reviews, 56 findings. **Fixed** means a guard bites; **carried** means it 
 
 - **REVIEW-4 finding 9** - the tenth `OSLogStore` read costs more than the number stated beside it. True; the figure came from one observation of a bimodal quantity, which is the same error as the peak-concurrency one. The read stays, because the alternative is an unguarded log statement, and the corrected cost is carried as **N4-14** rather than restated from another single sample.
 - **REVIEW-2 finding 10** - a pre-existing flake in `SyncActivationServiceTests`, seen once in 24 runs under load and never at baseline. Untouched by this run and not this run's to fix; **N4-13**.
+
+### Baseline at the REJECT remediation (`f51d5ed`) - all five, measured
+
+| measurement | `reviews-4/BASELINE-4.md` | at `f51d5ed` | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 589 | exit 0, **261 / 127 / 209 = 597** | +8 |
+| `swiftlint --strict` | clean, 220 files | clean, 225 files | unchanged |
+| simulator suite | 117 / 72 / 36, 7 known issues | **119 / 72 / 53**, 7 known issues, `** TEST SUCCEEDED **` | +19 |
+| non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
+| flake, twelve full runs | 12 of 12 | **12 of 12** | unchanged |
