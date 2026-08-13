@@ -43,13 +43,16 @@ Everything else in rounds 1, 2 and 3's NEXT ROUND stays in NEXT ROUND.
 
 | # | id | what | terminal state |
 |---|---|---|---|
-| 1 | **F8 + R0-10(b)** | Both exports written to `tmp` on every appearance of Settings, unrequested; `ShareLink` hands out the pre-import file after an import | pending |
-| 2 | **F9** | `csvField` does not neutralize a leading `=`, `+`, `-` or `@` | pending |
-| 3 | **N3-1 / N3-2** | Ethiopic (+8y) and Indian/Saka (-78y) defeat round 3's plausibility rule | pending |
-| 4 | **F10** | `rescheduleSoon` spawns an unstructured `Task` per trigger with no coalescing | pending |
-| 5 | **R0-11** | `invalidateOutdatedUpcomingEvents` can leave uncommitted soft-deletes while reporting "nothing invalidated" | pending |
-| 6 | **N3-3 + N3-4** | `MappingLogPrivacyTests` reads `OSLogStore` with no canary; `aa92ca7` has never been inside any review range | pending |
-| 7 | **R4-3** | `ScheduleOutcome.truncatedAfter` has no consumer anywhere | pending |
+| 1 | **F8 + R0-10(b)** | Both exports written to `tmp` on every appearance of Settings, unrequested; `ShareLink` hands out the pre-import file after an import | **RESOLVED** - stage 1 |
+| 2 | **F9** | `csvField` does not neutralize a leading `=`, `+`, `-` or `@` | **RESOLVED** - stage 1 |
+| 3 | **N3-1 / N3-2** | Ethiopic (+8y) and Indian/Saka (-78y) defeat round 3's plausibility rule | **RESOLVED for Indian/Saka, DEFERRED for Ethiopic** - stage 2; the `createdAt` cross-check is declined on a measurement |
+| 4 | **F10** | `rescheduleSoon` spawns an unstructured `Task` per trigger with no coalescing | **RESOLVED** - stage 3 |
+| 5 | **R0-11** | `invalidateOutdatedUpcomingEvents` can leave uncommitted soft-deletes while reporting "nothing invalidated" | **RESOLVED** - stage 4 |
+| 6 | **N3-3 + N3-4** | `MappingLogPrivacyTests` reads `OSLogStore` with no canary; `aa92ca7` has never been inside any review range | **RESOLVED** - stage 5 for the canary, `reviews-4/REVIEW-AA92CA7.md` for the range |
+| 7 | **R4-3** | `ScheduleOutcome.truncatedAfter` has no consumer anywhere | **RESOLVED** - stage 5 |
+
+**No item was rejected twice, and none was reverted.**
+Item 3 is the only split verdict, and the split is a property of the problem rather than of the work: Indian/Saka is reachable by a threshold and Ethiopic is not.
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded).
 There are no others.
