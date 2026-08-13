@@ -334,3 +334,136 @@ Verdict **PASS-WITH-FINDINGS** over two P2s and seven P3s. Both P2s are defects 
 
 **One process defect of this run, recorded rather than hidden.**
 `reviews-4/REVIEW-1.md` was swept into item 5's commit (`12024ab`) by `git add -A`, because the reviewer writes its verdict into the main tree while the builder is working in it. The contract requires each review to be its own commit. History is not rewritten to hide it; explicit paths are used from here.
+
+## ITEM 4 - F10, five triggers and five passes
+
+**RESOLVED**, stage 3, commit `54bb611`.
+
+### Reconfirmed at HEAD by executing the defect
+
+Five triggers fired with no `await` between them, with the pass count and the peak concurrency measured inside the scheduler:
+
+```
+five triggers                  passes=5  peakConcurrency=3
+a trigger during a pass        passes=4  peakConcurrency=3
+```
+
+Five simultaneous full reschedules, each loading every subscription, reconciling every ledger and writing every watermark, racing on the same rows.
+**The peak is 3, not the 5 predicted** - 3 is what the executor actually interleaved, and the number recorded is the measured one.
+This is not a contrived burst: a foreground open fires `.foreground` while a delivered notification fires `.notificationDelivered`, and a timezone change arrives beside a significant-time change.
+
+### What changed
+
+`rescheduleSoon` holds one in-flight `Task` and at most one queued trigger.
+A trigger arriving while a pass runs leaves exactly one follow-up behind it, however many arrive: the pass is idempotent and recomputes the whole plan from current state, so N triggers need at most one more run - **but they do need that one**, because a trigger that lands after the in-flight pass has read the store describes a change that pass cannot have seen.
+`queued` is cleared **before** the pass, never after, or that follow-up is swallowed.
+The returned `Task` is the whole chain, so awaiting it awaits every pass the caller's trigger caused.
+
+### Falsified four ways
+
+| what was broken | result |
+|---|---|
+| the exact pre-F10 shape | **5 issues** - passes 5, peak 3, published 5 |
+| coalescing turned into dropping | **1 issue** - the follow-up swallowed |
+| `queued` cleared **after** the pass | **2 issues** - a spurious second pass |
+| the gate never reopens | **1 issue** - later triggers do nothing |
+
+### One claim was written, measured, and deleted rather than shipped
+
+`handleBackgroundRefresh` is outside the gate - it owns the completion latch and the expiration race and builds its own `Task`.
+The obvious assertion, `peakConcurrency == 2`, **does not reproduce**: measured, the two passes run one after the other at peak 1.
+The test asserts only that the background pass is not coalesced, which is true of every run, and the source says no claim is made about overlap.
+Carried as **N4-3**.
+
+### Two splits rather than a relaxed rule
+
+`SpyState` moved to file scope, because `nesting` allows one level and the spy is already one deep; the stubs moved to `NotificationCoordinatorStubs.swift` when the file passed the 400-line `file_length`. The move was diffed after stripping comments and the `private` keyword and is otherwise byte-identical.
+
+## ITEM 5 - R0-11, the soft-delete nobody was told about
+
+**RESOLVED**, stage 4, commit `12024ab`.
+
+### Reconfirmed at HEAD by executing the defect
+
+Two future-dated `.upcoming` rows whose `createdAt` a partial sync had left nil - a shape `toDomain()` rejects and the method's own guards (a future date, a readable packed day, an amount) do not:
+
+```
+reported=0 ("nothing invalidated" is true)
+committedTombstonesRightAfter=0
+committedTombstonesAfterAnUnrelatedSave=2
+```
+
+Both rows soft-deleted in memory, the caller told nothing had happened, no save run - and **the next unrelated `save()` on this actor's shared context flushing both tombstones in a transaction that had nothing to do with them.**
+
+### What changed
+
+The method asked two different questions and used one answer for both: it mutated a row, then decided whether to **save** by asking whether the row could be **described** back to the caller. Mutations are counted separately and the save is keyed on that; the conversion failure is logged instead of swallowed by `try?`.
+
+**The row is tombstoned rather than skipped, and that is the load-bearing choice.** `materializeEvents`' dedup reads the **raw** `expectedDate` column of every live row and never maps it, so an unmappable phantom left alive silently blocks its own date forever and the correct replacement row is never written - a missing ledger row, which is F6's family. Measured under the mutation that skips instead: `rematerialized == []` against the two dates.
+
+**The return value still undercounts, by construction** - there is no `BillingEvent` to hand back for a row that will not map - and the log line is the only place that says so, which is why it is guarded rather than left as an artifact.
+
+### Falsified three ways
+
+| what was broken | result |
+|---|---|
+| save keyed on `invalidated` again (the pre-fix shape) | **1 issue** - 0 tombstones committed |
+| the log statement deleted | **3 issues** - the two rows unnamed |
+| skip instead of tombstone | **4 issues**, the load-bearing one being `rematerialized == []`. Its first failure is an artifact of the mutation converting before mutating, not of the fix |
+
+### The log test asserts over a window it does not own, and is pinned
+
+Its two sibling tests drive the same production path, and `OSLogStore.position(date:)` reaches ~80 ms behind `since` - **measured as six matches where this test controls two**. It is pinned to its own subscription index 7011. Round 3's flake, one file over, caught before it shipped.
+
+### Cost, stated as the prompt requires
+
+This is a **tenth** `OSLogStore` read in the tree and a third in OttoPersistence, ~9-11 s. A shared query would not do: the two existing persistence readers assert about the watermark path and the mapping-privacy path over their own windows, and folding a third subject into either makes a failure ambiguous between unrelated causes - the misdiagnosis the canary exists to prevent, reintroduced one level up.
+
+## ITEM 6 - N3-3 + N3-4, a read with no canary and a diff nobody read
+
+**First half RESOLVED**, stage 5, commit `5bdcd20`. **Second half is the review itself**, `reviews-4/REVIEW-AA92CA7.md`.
+
+### N3-3, the missing canary
+
+The one log-reading test in the tree without a canary, so on a runner where the store is **readable but empty** it failed at `#expect(!ours.isEmpty, "the store logged nothing for the record it skipped")` - a message meaning "the production log statement is gone", which is precisely the misdiagnosis the canary exists to prevent. `PROD-READINESS-2.md` recorded the canary as covering all four log-reading tests; it covered three.
+
+The canary rides in the window this test already opens and `requireDelivered` runs before any assertion about content, so **no query and no reader was added**. The file's duplicate `persistenceLogLines` helper is gone in favour of `OttoLogProbe.persistenceLines`, which is the same read.
+
+**Falsified both ways, which is the whole point of a canary - the two causes must fail DIFFERENTLY:**
+
+| what was broken | result |
+|---|---|
+| the canary emission deleted | fails at `requireDelivered`: *"The unified log delivered NOTHING for this process ... This is an environment failure ... Do not fix it by deleting the assertions it guards."* |
+| the **production** skip statement deleted, canary intact | fails at the target line: *"the store logged nothing for the record it skipped"* |
+
+**Before this change both produced the second message.**
+
+### N3-4, the commit outside every review range
+
+`aa92ca7` is re-derived in `reviews-4/BASELINE-4.md` and reviewed by its own fresh reviewer on its own range, `aa92ca7^..aa92ca7`. Mixing it into a stage range would hand a reviewer two unrelated diffs and let either hide in the other. Its verdict is in the REVIEW RANGES table.
+
+## ITEM 7 - R4-3, the outcome field nothing read
+
+**RESOLVED**, stage 5, commit `8a62c0c`.
+
+### Reconfirmed at HEAD
+
+`ScheduleOutcome.truncatedAfter` reached nothing at all: `NotificationScheduler` set it, `coveredThrough` was computed from the same **local variable** rather than from the field, and no reader anywhere - production, UI or store - ever asked the outcome for it. `TodayView` renders `coveredThrough`; `NotificationStatusStore` republishes the outcome; neither touches the truncation. The `pass end` line carried every **other** field of the outcome and not that one.
+
+### The discriminating case is the finding itself
+
+A pass that dropped rungs past the 64-slot budget and a pass that dropped none log identically whenever their `coveredThrough` agrees - **and it agrees exactly when the distinction matters**, because a truncated pass's covered day *is* its truncation point. Measured under the mutation that removes the field, both lines are
+
+```
+pass end trigger=foreground permission=authorized scheduled=64 coveredThrough=2026-09-01 ledgerFailures=0
+```
+
+byte-identical, for a pass that silently dropped rungs and one that did not.
+
+### What changed, and what it deliberately does not do
+
+The line's fields are composed in `OttoLog.passEndFields` so a test can read them **without opening `OSLogStore`**. The tree already blocks on that daemon nine times and this run adds a tenth for item 5; an eleventh for one field is not a trade worth making.
+
+**What that does not guard is the emission itself.** Deleting the `OttoLog.scheduling.notice` call leaves the composition test green. That line was already unguarded before this run - no test read it - so this does not make it worse, and it is not closed either. **N4-5.**
+
+**A user-facing consumer is still absent**, and adding one is new copy this run may not write: the person whose annual renewals were dropped past the budget learns it only from an earlier date in "Reminders scheduled through …". **N4-6.**
