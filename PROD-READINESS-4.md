@@ -62,12 +62,14 @@ Each later stage's range starts at the previous stage's **reviewed head**, and e
 | stage | range passed to the reviewer | reviewed head | verdict |
 |---|---|---|---|
 | 0 | - (baseline only) | - | no review; its commit is inside stage 1's range |
-| 1 - items 1 + 2 | `2d8913c..6ef51ee` | `6ef51ee` | |
-| 2 - item 3 | | | |
-| 3 - item 4 | | | |
-| 4 - item 5 | | | |
-| 5 - items 6 + 7 | | | |
-| aa92ca7 | `aa92ca7^..aa92ca7` | `aa92ca7` | |
+| 1 - items 1 + 2 | `2d8913c..6ef51ee` | `6ef51ee` | **PASS-WITH-FINDINGS** (`reviews-4/REVIEW-1.md`) |
+| 2 - item 3 | `6ef51ee..00cb0f1` | `00cb0f1` | (`reviews-4/REVIEW-2.md`) |
+| 3 - item 4 | `00cb0f1..54bb611` | `54bb611` | (`reviews-4/REVIEW-3.md`) |
+| 4 - item 5 + stage 1's remediation | `54bb611..05ff987` | `05ff987` | (`reviews-4/REVIEW-4.md`) |
+| 5 - items 6 + 7 | `05ff987..1a1d23b` | `1a1d23b` | (`reviews-4/REVIEW-5.md`) |
+| aa92ca7 | `aa92ca7^..aa92ca7` | `aa92ca7` | (`reviews-4/REVIEW-AA92CA7.md`) |
+
+Stage 4's range carries stage 1's remediation, which is the disclosed one-stage lag: a remediation lands after the head it remediates and is therefore read by the next stage's reviewer.
 
 **Two stages group two items each, disclosed rather than left to be noticed** (process rule 7).
 Stage 1 groups items 1 and 2: both are the export path, and the two questions are the same question asked twice - *what* a complete financial record contains, and *when* one gets written.
