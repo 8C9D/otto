@@ -24,9 +24,11 @@ log show --predicate 'subsystem == "com.arthurzhang.otto" AND category == "sched
 | the next charge date (`cycleStartDay`) | Edit the subscription and re-pick **Next charge on** (or **Started on**). Since F1 the picker writes Gregorian whatever the device calendar is. |
 | the trial start / conversion date | Edit the subscription and re-pick **Trial started**. The conversion date is derived from it and repairs with it. |
 | a pause resume date (`pauseEndsOn`) | **There is no picker for this on an already-paused subscription.** Resume the subscription and pause it again, setting **Billing resumes** in the pause flow. |
-| the last recorded use (`lastUsedDate`) | **There is no picker for this at all.** It is only ever written as *today*, by answering "Yes - still using it" on a usage check-in; doing that once overwrites the corrupt value with a correct one. |
+| the last recorded use (`lastUsedDate`) | Open the subscription and tap **I used this today**, in the Usage section of its detail screen. There is no picker; that button is the only control that writes this field, and it writes *today*, which is correct. **Do not wait for a usage check-in notification - a corrupt value stops one from ever arriving.** The check-in is scheduled 90 days *from* `lastUsedDate`, so a value in 2569 schedules it in 2569: measured through the real planner, such a subscription is planned **zero** check-ins where an identical healthy one is planned one. The corruption suppresses the very reminder that would prompt the repair. |
 
 Nothing is deleted and no charge history is lost; only the stored dates change. A subscription is repaired - and starts scheduling again on the next pass - once **every** day the log line names is fixed, so a paused or never-used subscription may need the second and third rows above as well as the first.
+
+**Every repair above is something you do in the app, on purpose.** None of them can be prompted by a notification, because a subscription with any corrupt day schedules no reminders at all - which is the whole reason this page exists rather than a banner.
 
 **Two calendars leave no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders arrive on the wrong days. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
 

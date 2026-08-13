@@ -24,12 +24,13 @@ extension AppModel {
     /// and two files on disk from an appearance alone, with nothing asked for
     /// and nothing shared.
     ///
-    /// Kept here rather than in the view's `@State` for the second half of the
-    /// same defect, R0-10(b): the file describes the database at the instant it
-    /// was built, so whatever replaces the database has to be able to withdraw
-    /// it. A view's `@State` is reachable from nothing that knows an import
-    /// happened, which is exactly why the share sheet went on offering the
-    /// pre-import copy.
+    /// Kept on the model rather than in the view's `@State` for the second half
+    /// of the same defect, R0-10(b): the file describes the database at the
+    /// instant it was built, so whatever replaces the database has to be able
+    /// to withdraw it. A view's `@State` is reachable from nothing that knows
+    /// an import happened, which is exactly why the share sheet went on
+    /// offering the pre-import copy.
+
     /// What one export row is showing.
     ///
     /// Owned here rather than in the view's `@State` for the same reason the

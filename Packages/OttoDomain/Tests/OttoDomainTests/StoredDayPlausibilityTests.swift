@@ -143,13 +143,28 @@ struct StoredDayPlausibilityTests {
         let today = try day(2026, 8, 11)
         let indian = try day(1948, 5, 15)
 
-        #expect(abs(indian.year - today.year) <= 100, "round 3's symmetric century accepted this day")
+        // Round 3's rule, applied to the SAME constant the current rule is
+        // applied to, so the two verdicts are comparable rather than asserted.
+        // An earlier version of this line compared two literals and could not
+        // fail (`reviews-4/REVIEW-2.md` finding 8).
+        func plausibleUnderTheSymmetricCentury(_ stored: CalendarDay) -> Bool {
+            abs(stored.year - today.year) <= CalendarDay.plausibleStoredDayYearsAhead
+        }
+        #expect(plausibleUnderTheSymmetricCentury(indian), "round 3's symmetric century accepted this day")
         #expect(indian.isPlausibleStoredDay(asOf: today) == false)
+        // And the two rules must still agree everywhere the change was not
+        // aimed - otherwise the asymmetry is doing more than it claims.
+        for stored in [try day(2026, 8, 6), try day(2018, 11, 30), try day(2099, 12, 31)] {
+            #expect(plausibleUnderTheSymmetricCentury(stored) == stored.isPlausibleStoredDay(asOf: today))
+        }
 
         // Every month, not just the one instant: the Saka offset is 78 or 79
         // depending on whether the date falls before or after the new year.
+        // Twelve months AND both Saka offsets: the rule reads only the year, so
+        // varying the month alone would be decorative (`reviews-4/REVIEW-2.md`
+        // finding 7). 78 and 79 are the two offsets Saka produces.
         for month in 1 ... 12 {
-            let stored = try #require(CalendarDay(year: 2026 - 78, month: month, day: 15))
+            let stored = try #require(CalendarDay(year: 2026 - (month <= 3 ? 79 : 78), month: month, day: 15))
             #expect(
                 stored.isPlausibleStoredDay(asOf: today) == false,
                 "\(stored) escaped the backward bound"

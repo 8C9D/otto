@@ -160,5 +160,36 @@ struct SettingsExportWithdrawalTests {
         #expect(model.preparedExport(.json) == nil)
         #expect(model.exportAvailability(.json) == .notPrepared)
     }
+
+    /// ⛔ The `catch` branch's generation guard - the only production
+    /// behaviour change in the remediation range, and the one thing in it that
+    /// `reviews-4/REVIEW-6.md` could delete with the whole simulator suite
+    /// green. A failure recorded against a database that has since changed is
+    /// as stale as a file built from it, and showing the user an error about
+    /// data they have already replaced is the same defect as offering them a
+    /// file built from it.
+    @Test("⛔ a withdrawal during a build that FAILS also discards the failure")
+    func aWithdrawalDuringAFailingBuildDiscardsTheFailure() async throws {
+        let transfer = CountingTransfer()
+        await transfer.fail()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.13",
+            today: try #require(Self.today)
+        )
+
+        await transfer.hold()
+        let build = Task { try await model.prepareExport(.json) }
+        _ = await settle { await transfer.waiting > 0 }
+        #expect(model.exportAvailability(.json) == .preparing)
+
+        model.withdrawPreparedExports()
+        await transfer.release()
+        await #expect(throws: (any Error).self) { try await build.value }
+
+        // The build failed AFTER the withdrawal, so its failure describes a
+        // database that no longer exists.
+        #expect(model.exportAvailability(.json) == .notPrepared)
+    }
 }
 #endif

@@ -396,12 +396,12 @@ The returned `Task` is the whole chain, so awaiting it awaits every pass the cal
 | `queued` cleared **after** the pass | **2 issues** - a spurious second pass |
 | the gate never reopens | **1 issue** - later triggers do nothing |
 
-### One claim was written, measured, and deleted rather than shipped
+### One claim was written, deleted as unreproducible, and was in fact true
 
 `handleBackgroundRefresh` is outside the gate - it owns the completion latch and the expiration race and builds its own `Task`.
-The obvious assertion, `peakConcurrency == 2`, **does not reproduce**: measured, the two passes run one after the other at peak 1.
-The test asserts only that the background pass is not coalesced, which is true of every run, and the source says no claim is made about overlap.
-Carried as **N4-3**.
+I wrote the assertion `peakConcurrency == 2`, saw it fail on **one** run, and recorded that it "does not reproduce".
+**It reproduces 18-41 % of the time.** `reviews-4/REVIEW-3.md` finding 1 measured 45 of 240 iterations; re-measured independently here with a spy that suspends six times to model the real pass, **74 of 180**. `NotificationScheduler` is an actor whose `reschedule` suspends repeatedly before it writes, so it interleaves passes rather than serialising them.
+The test asserts only that the background pass is not coalesced, because an assertion true 18 % of the time is a flaky test rather than a guard - but the overlap is real, it is F10 still live on a second path, and there is a **third** ungated entry point beside it (`NotificationStatusStore.reschedule()`, 33 of 240). Carried as **N4-3 at P2** and **N4-7**.
 
 ### Two splits rather than a relaxed rule
 
@@ -564,7 +564,7 @@ All seven work-list items were reconfirmed by **executing** the defect before be
 | F8 + R0-10(b) | rendered `SettingsView` in a real `UIWindow` - 2 `completeSnapshot()` calls and two files in `tmp` from an appearance alone; the offered file held 0 subscriptions after an import restored 1 |
 | F9 | exported a snapshot of five hostile names - every one came back byte-for-byte, including `-2+3+cmd\|' /C calc'!A0` |
 | N3-1 / N3-2 | drove the real scheduler over an Indian and an Ethiopic anchor - 4 reminders each, on the wrong days, `canClaimCoverage=true` |
-| F10 | fired five triggers - 5 passes at peak concurrency 3 |
+| F10 | fired five triggers - **5 passes**, every run; the peak concurrency varied 2-5 across runs and is a property of the executor, not of the code |
 | R0-11 | two unmappable future rows - reported 0, committed 0, then 2 committed by an unrelated `save()` |
 | N3-3 | deleted the production skip statement - the test failed with the message that means "the log statement is gone", which is also what an empty window produced |
 | R4-3 | removed the field - a truncated pass and a whole pass produce byte-identical lines |
@@ -585,8 +585,7 @@ Ten, measured rather than asserted. Rounds 1, 2 and 3 found six, six and eight.
 2. **"no distance threshold can" reach Ethiopic or Indian is false for Indian/Saka**, and round 3's own doc comment contains the refutation.
    Round 3's rule was **symmetric**; the corruption is not. Indian is 78 or 79 years *behind* in every month and for every field, and round 3 justified its century as *"forty years beyond the oldest plausible billing anchor"* - which is a statement that sixty years is already beyond it. A backward bound of 70 catches Indian with eight years of margin, moves the oldest accepted stored day from 1926 to 1956, and touches no fixture in the tree that reaches a scheduler. The prompt froze a conclusion that one measurement overturns.
 
-3. **The K-sweep table is wrong at K=31, and three documents agree on the wrong number.**
-   A window of ±K days around a single collision point contains exactly **2K+1** days: 3, 7, 15, **63**. The prompt says 64, `PROD-READINESS-3.md` says 64, and `reviews-3/REVIEW-4.md` records that it "re-derived it to the digit" - overruling `reviews-3/REVIEW-3.md`, which had 63 and was right.
+3. **The K-sweep table's K=31 figure cannot be checked, because the rule that produced it was never written down.** ~~A ±K window contains 2K+1 days, so 64 is wrong.~~ **Withdrawn** - measured, the Ethiopic band is not contiguous (63 distinct readings spanning 65 days), so that argument is refuted. Three independent measurements in this run returned **63** (mine, two definitions), **64** (`reviews-4/REVIEW-2.md`) and **62** (`reviews-4/REVIEW-6.md`, excluding anchors that are not valid Ethiopic dates). The prompt inherits a number from a sweep whose detector and scanned range round 3 never recorded, which is the defect - not the digit.
 
 4. **"Sensitivity does not decay as the window narrows" is true and is not the axis that matters.**
    The 13/13 figure is measured with the stored day **equal to the creation day**. Measured against the gap between them, it is 13/13 at 0-1 days, 1/13 at 3 days for K=1, and **0/13 at 60 days for every K including 31**. For a `lastUsedDate` recorded six months after creation and for a `pauseEndsOn` three months out it is 0/13. The prompt presents a property of the fixture as a property of the rule, and asks the run to weigh a trade whose benefit side is mis-stated.
@@ -642,7 +641,7 @@ Reconciled item by item against round 3's list, not summarised.
 | **N2-3** | withdrawn | remains withdrawn |
 | **N2-4** | recorded as fixed in round 2 | **NOT fixed, and its closure was false.** `reviews-4/REVIEW-AA92CA7.md` finding 1 measured it: giving the failure list "its own entry" moved it to the *same* ~1024-byte per-entry budget, buying only the ~200 bytes of prefix. The list still truncates from six subscriptions upward and names **16 of 64** failed rungs at the device ceiling - measured at `aa92ca7` and at the tip. The false closure propagated into `PROD-READINESS-3.md` and into an earlier version of this table. **Reopened.** This run's own new lines are ~120 characters and are not at risk |
 | **N3-1** | open, P2 - two calendars undetectable | **HALF CLOSED** - Indian/Saka is detected in every month and for every field. Ethiopic is not and no threshold reaches it |
-| **N3-2** | open, P2 - the `createdAt` detector deserves a proper evaluation | **CLOSED as a decision.** Evaluated and **declined**, with the sensitivity-versus-gap table and the `lastUsedDate` / `pauseEndsOn` characterisation under ITEM 3. Its K=31 false-positive figure is corrected from 64 to 63 |
+| **N3-2** | open, P2 - the `createdAt` detector deserves a proper evaluation | **CLOSED as a decision.** Evaluated and **declined**, on the sensitivity-versus-gap table and the `lastUsedDate` / `pauseEndsOn` characterisation under ITEM 3, which differ by two orders of magnitude. Its K=31 false-positive figure is **not** corrected: three measurements in this run return 62, 63 and 64, and the rule that produced round 3's is unrecorded |
 | **N3-3** | open, P2 - no canary on the persistence read | **CLOSED** - item 6, falsified both ways |
 | **N3-4** | open, P2 - `aa92ca7` outside every review range | **CLOSED** - item 6, by `reviews-4/REVIEW-AA92CA7.md` on its own range. The wording that produced the gap is fixed in this run's REVIEW RANGES section |
 | **N3-5** | open, P2 - the gap card's copy is false for the implausible-days case | **still open**, and now applies to Indian/Saka as well. Re-wording it is new user-facing copy, and this run's exception was granted for the export item only |
@@ -661,8 +660,8 @@ Reconciled item by item against round 3's list, not summarised.
   Deleting the sole call from tap to `AppModel.requestExport(_:)` leaves the whole simulator suite green. Before this run the export was produced unconditionally, so a broken affordance was impossible; after it, a tap that does not reach the model means the user can never produce a backup at all. The remediation shrank the untested surface to one closure with no logic in it and moved the entire state machine onto the model, where eight tests reach it - but the closure itself is unreachable by any test this project can run. Closing it needs a UI-test target, which is a dependency this run may not add.
 - **N4-2 (P2) - "the harm is closed for 11 of 13" was measured on the one calendar where it looks best.**
   Round 3 measured Buddhist, whose stored year is *ahead*, so nothing is planned and `scheduledCount=0`. For every **negative**-offset calendar the planner still produces rungs from the corrupt anchor and the pass still schedules them. Measured at round 3's HEAD: Japanese, Minguo, Islamic and Persian each schedule **4 reminders on the wrong days**, with the coverage claim correctly withdrawn. Round 4 adds Indian to that set. So the state closed for those calendars is "wrong reminders, disclosed", not "no reminders" - better than silence and not what the ledger says. Whether to stop scheduling from an implausible anchor is a decision no round has taken.
-- **N4-3 (P3) - the background pass is outside the coalescing gate.**
-  `handleBackgroundRefresh` owns the completion latch and the expiration race and builds its own `Task`, so a background wake-up landing during a foreground pass runs a second pass. Whether the two can OVERLAP is **not** established - the assertion was written, measured at peak concurrency 1, and deleted. Routing it through the chain changes what `expirationHandler` cancels.
+- **N4-3 (P2) - the background pass is outside the coalescing gate, and the two DO overlap.**
+  `handleBackgroundRefresh` owns the completion latch and the expiration race and builds its own `Task`, so a background wake-up landing during a foreground pass runs a second pass - and the two interleave in **45 of 240** iterations (`reviews-4/REVIEW-3.md`), re-measured here at **74 of 180** with a spy modelling the real pass's suspensions. That is F10 itself, still live. Raised from P3 after I recorded the opposite from a single run. Routing it through the chain changes what `expirationHandler` cancels, so the fix belongs with N4-7.
 - **N4-4 (P3) - two writers still do not withdraw a prepared export.**
   `NotificationActionHandler` writes state through `model.flows` without passing through `AppModel`, and a bare scheduling pass materializes ledger rows the CSV prints. Both leave a prepared export on offer describing data that has changed. The user-facing copy no longer claims otherwise.
 - **N4-5 - CLOSED in the stage-5 remediation**, at zero additional `OSLogStore` reads, inside a window `SchedulingLogTests` already holds open. Left here as a record of the reasoning that nearly shipped it open: the cost I declined to pay was not the cost the fix required.
@@ -678,6 +677,12 @@ Reconciled item by item against round 3's list, not summarised.
   Deleting that whole log statement is green at `aa92ca7` (196/196) and still green at the tip (209/209); the same deletion at `aa92ca7`'s parent fails. `reviews-4/REVIEW-AA92CA7.md` finding 2.
 - **N4-11 (P2) - a sibling's canary masks a deleted canary, wherever tests share a log window.**
   Found twice independently in this run, in commits three rounds apart: `reviews-4/REVIEW-AA92CA7.md` on `NotificationActionLogTests`' `aFailedActionIsRecorded`, and `reviews-4/REVIEW-5.md` on this run's own item 6. `requireDelivered` answers "did the subsystem deliver for this process", which a sibling's canary answers correctly - so the guard is sound and the **falsification** of it is what breaks. Every canary falsification in this tree needs `--filter` or a suppressed subsystem, and none of them says so.
+- **N4-13 (P3) - a pre-existing flake in `SyncActivationServiceTests`.**
+  Seen once in 24 runs under concurrent load by `reviews-4/REVIEW-2.md`, and never in any of this run's five twelve-run flake batches or at baseline. Not this run's to fix and not this run's to ignore.
+- **N4-14 (P3) - the cost quoted for the tenth `OSLogStore` read is one sample of a bimodal quantity.**
+  The "~9-11 s" beside item 5's read was observed once. The suite's wall time varies 8x run to run on this host; a cost figure for a log read needs the same twelve-run treatment every other measurement in this run gets, and it did not get it.
+- **N4-15 (P3) - the K=31 false-positive figure has three measurements and no definition.**
+  62 (strict, excluding anchors that are not valid Ethiopic dates), 63 (this run, two detector definitions) and 64 (`reviews-4/REVIEW-2.md`). Round 3 recorded a sweep and not the rule that produced it. Whoever picks up N3-2 should define the detector before quoting a number for it.
 - **N4-12 (P3) - the "~80 ms" window figure is wrong by about 180x and is load-bearing in five files.**
   `OSLogStore.position(date:)` reaches **15.30 / 12.66 / 15.12 seconds** behind `since`, measured. At fifteen seconds a window holds most of a suite, which is why every absence assertion over one has to be pinned to an identifier the test owns. Corrected where round 4 cites it; the four round-3 citations are untouched, because editing them is not this run's scope.
 
@@ -792,3 +797,34 @@ SWEEP: 30 building, 0 non-building, 30 commits
 ```
 
 Round 2 shipped a commit that does not compile and recorded it; rounds 3 and 4 have none, and the sweep is the artifact rather than the claim.
+
+## Remediation after `reviews-4/REVIEW-6.md` - the one REJECT of this run's own work
+
+Verdict **REJECT**, on four P2s. It is a fair verdict: the range's one job was that a finding recorded closed is closed, and two were not.
+
+- **Finding 1 (P2) - `docs/next-wave.md` was rewritten to remove an unperformable step and shipped with another one.**
+  The new `lastUsedDate` row said the repair was "answering 'Yes - still using it' on a usage check-in". **Verified against the planner rather than argued**: `usageCheckInReminders` counts from `reference = subscription.lastUsedDate ?? billingAnchor(asOf:)`, so a `lastUsedDate` of 2569 schedules the check-in in 2569 and the subscription is planned **zero** of them where a healthy one is planned one. The corruption suppresses the only notification the document named as its repair.
+  The control that works is **"I used this today"**, in the Usage section of the subscription's detail screen (`PauseFlowView.swift:171`), and it was named nowhere. The row now names it, says explicitly not to wait for a notification, and the section closes with the general form: **every repair here is something you do in the app on purpose, because a subscription with any corrupt day schedules no reminders at all.**
+- **Finding 2 (P2) - the range's only production behaviour change had no observer.** The `catch`-branch generation guard could be deleted with the whole simulator suite green, and the ledger recorded it as "Fixed." beside a table where every other row carried an issue count. Guarded now, and falsified: **1 issue**, `(.failed(...)) == .notPrepared`.
+- **Finding 3 (P2) - three announced corrections were never swept into the surfaces a later round reads.** A commit titled "Correct the concurrency claims the stage-3 review measured false" left ITEM 4's body saying the overlap "does not reproduce", a `NOT DEFECTS` row saying "peak concurrency 3", and N4-3 still at P3 saying overlap was "not established"; a commit titled "Withdraw a wrong correction" left the withdrawn 2K+1 conviction verbatim in the prompt-defects section. All four are corrected in place. **The cause is structural and worth naming: this ledger is appended to, so a correction lands in a new section while the sentence it corrects stays where a reader meets it first.**
+- **Finding 4 (P2) - findings from three reviews were neither fixed nor carried.** The disposition table below now accounts for **every one of the 56 findings across all seven reviews**, which is the only form of that claim worth making.
+- **P3s routed**: the R4-3 emission assertion is pinned to `.significantTimeChange`, a trigger no other test in that target uses, plus an `allSatisfy` over every pass-end line in the window (the reviewer made an unpinned version pass on a sibling's line); `OttoLog.swift`'s doc comment loses the withdrawn cost justification; `indianIsCaughtByTheAsymmetry`'s first assertion was two literals and could not fail - it now applies round 3's rule as a function to the same constants and checks the two verdicts agree everywhere the change was not aimed; the month loop now varies **both** Saka offsets rather than only a month the rule never reads; the concatenated doc comment in `AppModel+Export.swift` is split; and `BillingEventRepository`'s protocol contract now states that the return value is short by one per unmappable row, which is the meaning R0-11's fix changed.
+
+### Every finding, and what happened to it
+
+Seven reviews, 56 findings. **Fixed** means a guard bites; **carried** means it is in NEXT ROUND with its measurement; **declined** means it is answered and not acted on.
+
+| review | findings | fixed | carried | declined / process |
+|---|---|---|---|---|
+| REVIEW-1 (stage 1) | 9 | 2, 3, 4, 5, 6, 7, 8 | 1 → N4-1 | 9, process, restated in the rule |
+| REVIEW-2 (stage 2) | 10 | 2, 3, 4, 7, 8, 9 | 10 → N4-13 | 1 **withdrawn correction**; 5, 6, process |
+| REVIEW-3 (stage 3) | 5 | 1, 3 | 2 → N4-7, 4 → N4-8 | 5, process |
+| REVIEW-4 (stage 4) | 10 | 1 (five of six), 3, 4, 8, 10 | 1's evidence path → N4-9, 9 → N4-14 | 2, 5, 6, 7, process/record |
+| REVIEW-5 (stage 5) | 6 | 1, 2, 5, 6 | 3 → N4-12 | 4, process |
+| REVIEW-AA92CA7 | 8 | 3 (by item 6) | 1 → **N2-4 reopened**, 2 → N4-10, 4, 5, 8 → N4-11 | 6, 7, record |
+| REVIEW-6 (remediations) | 9 | 1, 2, 3, 7, 8 | 5, 6 → N4-15 | 4 = this table; 9, sweep count restated |
+
+**The two findings this run declines to act on, and why:**
+
+- **REVIEW-4 finding 9** - the tenth `OSLogStore` read costs more than the number stated beside it. True; the figure came from one observation of a bimodal quantity, which is the same error as the peak-concurrency one. The read stays, because the alternative is an unguarded log statement, and the corrected cost is carried as **N4-14** rather than restated from another single sample.
+- **REVIEW-2 finding 10** - a pre-existing flake in `SyncActivationServiceTests`, seen once in 24 runs under load and never at baseline. Untouched by this run and not this run's to fix; **N4-13**.

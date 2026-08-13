@@ -94,10 +94,13 @@ public enum OttoLog {
     /// exactly when the distinction matters.
     ///
     /// Composed here rather than interpolated at the call site so a test can
-    /// read the line without opening `OSLogStore` - the tree already blocks on
-    /// that daemon nine times, and a tenth reader for one field is not a trade
-    /// worth making. What this does NOT guard is the emission; see
-    /// `PROD-READINESS-4.md` N4-5.
+    /// read the line without opening `OSLogStore`. That is a convenience and
+    /// NOT the guard: `reviews-4/REVIEW-5.md` measured that restoring the
+    /// pre-fix interpolation left this function correct, its unit test green
+    /// and all 209 host tests passing, so R4-3 was fully restorable behind it.
+    /// The emission is guarded in `SchedulingLogTests`, inside a query that
+    /// suite already opens - at zero additional `OSLogStore` reads, which is
+    /// what an earlier version of this comment wrongly said the fix would cost.
     ///
     /// Every field is an opaque count, a control-flow outcome or a calendar
     /// day, which is what `.public` on the whole string is allowed to mean.

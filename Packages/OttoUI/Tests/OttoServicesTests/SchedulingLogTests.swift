@@ -158,7 +158,7 @@ struct SchedulingLogTests {
             now: Date(timeIntervalSince1970: 1_786_000_000),
             today: try day(2026, 8, 11),
             timeZone: TimeZone(identifier: "America/Toronto") ?? .current,
-            trigger: .foreground
+            trigger: .significantTimeChange
         )
 
         let lines = try Self.schedulingLogLines(since: since)
@@ -190,13 +190,23 @@ struct SchedulingLogTests {
         // put back in production behind a green guard. An earlier version of
         // this run declined to close that on the grounds that it would cost a
         // tenth `OSLogStore` reader. It costs none: this query is already open.
+        // Pinned to a trigger no other test in this target uses, because
+        // `pass end` carries no subscription identifier and this window is
+        // shared - `reviews-4/REVIEW-6.md` made an unpinned version of this
+        // assertion pass on a sibling's line while this test's own path was
+        // retagged. `.significantTimeChange` appears nowhere else in
+        // OttoServicesTests.
         let passEnd = try #require(
-            lines.last { $0.hasPrefix("pass end trigger=foreground") },
-            "the trigger-tagged pass emitted no pass-end line"
+            lines.last { $0.hasPrefix("pass end trigger=significantTimeChange") },
+            "the trigger-tagged pass emitted no pass-end line of its own"
         )
         #expect(passEnd.contains("truncatedAfter="))
         #expect(passEnd.contains("coveredThrough="))
         #expect(passEnd.contains("ledgerFailures="))
+        // And no pass-end line from ANY pass in the window lacks the field, so
+        // a second emission site could not reintroduce R4-3 beside this one.
+        let allPassEnds = lines.filter { $0.hasPrefix("pass end ") }
+        #expect(allPassEnds.allSatisfy { $0.contains("truncatedAfter=") })
     }
 
     /// Every `scheduling` line this process emitted since `since`.
