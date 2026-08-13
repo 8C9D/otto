@@ -92,7 +92,13 @@ extension AppModel {
             return url
         } catch {
             preparing.remove(kind)
-            exportFailures[kind] = error.localizedDescription
+            // Same generation check as the success branch: a failure recorded
+            // for a database that has since changed is as stale as a file built
+            // from it, and leaving it on the row shows the user an error about
+            // data they have already replaced (`reviews-4/REVIEW-4.md`).
+            if generation == exportGeneration {
+                exportFailures[kind] = error.localizedDescription
+            }
             throw error
         }
     }

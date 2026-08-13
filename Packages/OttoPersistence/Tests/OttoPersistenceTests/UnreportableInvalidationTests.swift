@@ -162,6 +162,12 @@ extension SerializedPersistenceTests {
             #expect(named.contains { $0.contains("20260815") })
             #expect(named.contains { $0.contains("20260915") })
             for line in named {
+                // 1099 is what the ROWS carry - they were materialized from the
+                // original subscription - and 1299 is the edited amount that
+                // made them phantom. An earlier version asserted only the
+                // latter, so a line leaking the row's own amount would have
+                // passed (`reviews-4/REVIEW-4.md`).
+                #expect(!line.contains("1099"))
                 #expect(!line.contains("1299"))
                 #expect(!line.contains("$"))
             }

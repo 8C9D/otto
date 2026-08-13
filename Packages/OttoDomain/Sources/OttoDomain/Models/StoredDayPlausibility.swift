@@ -56,10 +56,12 @@ extension CalendarDay {
     /// every field. Seventy leaves eight years of margin against it and still
     /// accepts a stored day back to 1956 - and the oldest date anything in this
     /// app could sensibly mean is a subscription's cycle origin, which no
-    /// consumer subscription has before about 1970. Round 3's own doc comment
-    /// named "forty years beyond the oldest plausible billing anchor" as its
-    /// justification for a century, which is the same judgment reaching the
-    /// same place from the other side.
+    /// consumer subscription has before about 1970. Round 3 justified its
+    /// century as "forty years beyond the oldest plausible billing anchor"
+    /// (`PROD-READINESS-3.md`, ITEM 1's "What this does NOT do" - not the doc
+    /// comment here, which an earlier version of this paragraph misattributed
+    /// it to), which is the same judgment reaching the same place from the
+    /// other side.
     ///
     /// **Ethiopic is genuinely unreachable and stays so.** It writes only 7 or
     /// 8 years behind, and a stored day eight years old is an ordinary anchor

@@ -237,14 +237,25 @@ Re-derived independently, from a standalone Foundation script that imports no Ot
 
 **The K sweep reproduces, with one correction.**
 
-| K(days) | this run | round 3's ledger | `reviews-3/REVIEW-3.md` |
-|---|---|---|---|
-| 1 | 3 / 4001 (0.07%) | 3 | 2 |
-| 3 | 7 / 4001 (0.17%) | 7 | - |
-| 7 | 15 / 4001 (0.37%) | 15 | 14 |
-| 31 | **63** / 4001 (1.57%) | **64** | **63** |
+| K(days) | this run | `reviews-4/REVIEW-2.md` | round 3's ledger | `reviews-3/REVIEW-3.md` |
+|---|---|---|---|---|
+| 1 | 3 / 4001 (0.07%) | 3 | 3 | 2 |
+| 3 | 7 / 4001 (0.17%) | 7 | 7 | - |
+| 7 | 15 / 4001 (0.37%) | 15 | 15 | 14 |
+| 31 | **63** / 4001 (1.57%) | **64** | **64** | **63** |
 
-**64 is wrong and 63 is right, arithmetically**: a window of ±K days over a single collision point contains exactly 2K+1 days, and 3, 7, 15, 63 is that sequence. Round 3's ledger overrode `reviews-3/REVIEW-3.md`'s correct 63 with 64, and `reviews-3/REVIEW-4.md` recorded that it "re-derived it to the digit". Three documents agreed on a number that 2K+1 refutes.
+**That conviction is withdrawn.** `reviews-4/REVIEW-2.md` finding 1 measured 64 and showed why the 2K+1 argument fails, and it is right about the argument: the Ethiopic band is **not** contiguous. Measured here, the Ethiopic readings of `createdAt ± 31 days` are **63 distinct days spanning 2018-10-29 to 2019-01-01**, a 65-day span with gaps, because Ethiopic's thirteenth month is five or six days long and the offset flips between −7 and −8 inside the window. So "a ±K window contains exactly 2K+1 days" is false here, and I convicted three documents on it.
+
+My scan still returns 63, under **both** readings of a detector round 3 never wrote down:
+
+```
+DEFINITION A  |stored - C(createdAt)| <= K, one fixed reading per calendar
+              K=1 -> 3    K=3 -> 7    K=7 -> 15    K=31 -> 63
+DEFINITION B  stored is C(D) for SOME D with |D - createdAt| <= K
+              K=1 -> 3    K=3 -> 7    K=7 -> 15    K=31 -> 63   (band 630 days)
+```
+
+So the disagreement is one anchor wide and lives in the **scan window and the detector's definition**, not in anyone's arithmetic. The honest statement is: at K=31 the false-positive count is **63 or 64 depending on how the detector and the scanned anchor range are defined**, round 3 never defined either, and the figure decides nothing here - the rule is declined for the reasons in the sensitivity table, where the numbers differ by two orders of magnitude rather than by one anchor.
 
 **The premise the sweep hides, measured.** "Sensitivity 13/13" is measured with the stored day *equal to the creation day*. A real stored day is a date the user picked, which is not the day they added the record. Sensitivity against that gap:
 
@@ -306,12 +317,16 @@ So the window becomes **70 years behind, 100 ahead**.
 
 ### Falsified four ways
 
+**Re-derived after `reviews-4/REVIEW-2.md` finding 2**, which measured three of the four counts below wrong. The originals were taken from a filtered view of the output; these are whole-suite counts.
+
 | what was broken | result |
 |---|---|
-| back to round 3's symmetric century | 6 domain issues **and 2 through the real scheduler** - Indian escapes both |
-| backward bound set to **78**, Indian's exact offset | the same 6 + 2; pins that the eight-year margin is load-bearing and 70 is not padding |
-| both bounds set to 70 (asymmetry removed the other way) | 5 issues - a far-future prepaid term is rejected, which is the other half of why it is asymmetric |
-| the scheduler stops calling `implausibleStoredDays` | 6 issues over 4 tests |
+| back to round 3's symmetric century | **15 domain issues / 3 tests, and 2 in OttoUI / 1 test** - Indian escapes both |
+| backward bound set to **78**, Indian's exact offset | **16 domain issues / 3 tests, and 2 in OttoUI / 1 test**; pins that the eight-year margin is load-bearing and 70 is not padding |
+| both bounds set to 70 (asymmetry removed the other way) | **5 domain issues / 2 tests** - a far-future prepaid term is rejected, which is the other half of why it is asymmetric |
+| the scheduler stops calling `implausibleStoredDays` | **8 OttoUI issues / 5 tests** (and none in the domain, which is right - the wiring is not domain code) |
+
+That is the second time in this run a falsification table was recorded from a partial view of the output, after `reviews-4/REVIEW-1.md` finding 4, and the ledger claimed to have swept the class. It had swept items 1 and 2 and not this one.
 
 ### What a user on those two calendars is actually left with
 
@@ -637,3 +652,34 @@ Verdict **PASS-WITH-FINDINGS**. The coalescing itself survived five falsificatio
 - **Finding 5 (P3, process) - at the reviewed head the stage recorded no measurements and its work-list row still said "pending".** True, and it is the second stage in a row with this drift after `reviews-4/REVIEW-1.md` finding 9. The rule at the head of REVIEW RANGES says the start is recorded when the stage opens; I recorded stages 2 through 5's starts in one commit late in the run instead. The evidence was inside the range - `54bb611`'s commit message carries the same numbers word for word - which is luck rather than process.
 
 **This remediation lands after every range this run has issued**, because all five stage reviewers and the `aa92ca7` reviewer were dispatched before it. It is therefore reviewed by a final range of its own rather than left outside one; see the REVIEW RANGES table.
+
+### Remediation after `reviews-4/REVIEW-2.md` and `reviews-4/REVIEW-4.md`
+
+Both verdicts are **PASS-WITH-FINDINGS**, and between them they overturn one of this run's own headline corrections and show that four of its new call sites had no observer.
+
+**From `reviews-4/REVIEW-2.md` (stage 2, item 3):**
+
+- **Finding 1 (P2) - my "63 is right, arithmetically" conviction is withdrawn.** The reviewer is right that the 2K+1 argument fails: measured here, the Ethiopic readings of `createdAt ± 31 days` are **63 distinct days spanning a 65-day range**, with gaps, because the thirteenth month is five or six days long and the offset flips between −7 and −8 inside the window. My scan still returns 63 under both plausible detector definitions and the reviewer's returns 64; the disagreement is one anchor wide and lives in a definition round 3 never wrote down. Convicting three documents of an arithmetic error on that basis was wrong, and the conviction is gone. The figure decides nothing either way - the rule is declined on the sensitivity table, where the numbers differ by two orders of magnitude.
+- **Finding 2 (P2) - three of four falsification counts did not reproduce.** All four are re-derived above as whole-suite counts. **This is the second falsification table in this run recorded from a partial view of the output**, after `reviews-4/REVIEW-1.md` finding 4 - and the stage-1 remediation claimed to have swept the class when it had swept items 1 and 2 only.
+- **Finding 3 (P2) - `docs/next-wave.md` told the user to do two impossible things.** It said to re-pick "the pause resume date, and the last-used date". Verified: `SubscriptionFormModel` touches neither, `lastUsedDate` is only ever written as *today* by `recordUsage`, and an already-paused subscription has no resume-date picker. The section is now a field-by-field table that says which dates have a picker, which needs a resume-and-re-pause, and which repairs only by answering the next usage check-in.
+- **P3s routed**: the "round 3's own doc comment" attribution is corrected in the source to `PROD-READINESS-3.md` ITEM 1, where the phrase actually is.
+
+**From `reviews-4/REVIEW-4.md` (stage 4, item 5 + stage 1's remediation):**
+
+- **Finding 1 (P2) - the remediation's guards did not bite where the ledger said they did.** Eight edits applied together left `** TEST SUCCEEDED **`. Each is now guarded, and each was falsified individually rather than as a batch:
+
+  | what was broken | result |
+  |---|---|
+  | `requestExport`'s body emptied | **2 issues** |
+  | `PaymentMethodsStore.delete`'s hook removed | **1 issue** |
+  | `preparing` restored to single-valued | **1 issue** - the two-kind test now starts **two** builds, which the first version never did |
+  | `exportFailures.removeAll()` instead of per-kind | **1 issue** |
+  | the reminder-time withdraw removed | **1 issue** |
+  | both cancellation-evidence withdraws removed | **still green** - see below |
+
+  The cancellation-evidence pair remains **unguarded**, and honestly so: `appendCancellationEvidence` returns early unless the subscription has an open cancellation episode, so a guard needs a fixture that opens one through the real flow, which is a multi-step state this test target does not build. Recorded as **N4-9** rather than claimed.
+- **Finding 3 (P3) - the new log test's privacy assertion checked an amount the row cannot carry.** It asserted `!line.contains("1299")`, the *edited* amount; the rows carry **1099**, the original. A line leaking the row's own amount would have passed. Both are asserted now.
+- **The generation guard covered the success branch and not `catch`.** A failure recorded against a database that has since changed is as stale as a file built from it. Fixed.
+- **Finding 2 (P2), and `reviews-4/REVIEW-3.md` finding 5, and `reviews-4/REVIEW-1.md` finding 9 are the same finding, three times.** The reviewed head did not record the item the stage delivered. This is the run's worst process defect and it was restated twice without being fixed: the rule is written at the head of REVIEW RANGES, and the practice was to write the ledger section after the reviewer had already been dispatched.
+
+**A file was split rather than a rule relaxed**, again: `SettingsExportTests.swift` passed both `file_length` and `type_body_length`, and the withdrawal tests moved to `SettingsExportWithdrawalTests.swift`. The spies lose `private` so both files share them.

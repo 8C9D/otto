@@ -17,7 +17,16 @@ log show --predicate 'subsystem == "com.arthurzhang.otto" AND category == "sched
 [scheduling] ledger <uuid> SKIPPED reason=implausibleStoredDays today=2026-08-11 days=[2569-08-06 2569-08-20]
 ```
 
-**How to fix it.** For each affected subscription, open it and **re-pick every date the log names** - the next charge date, and where they exist the trial start, the pause resume date, and the last-used date. Since F1 the date picker writes Gregorian whatever the device calendar is, so a re-picked date is stored correctly and that subscription starts scheduling again on the next pass. Nothing is deleted and no charge history is lost; only the stored dates change.
+**How to fix it, field by field** - because not every date the log names has a picker, and an earlier version of this section said to re-pick all of them, which is not possible.
+
+| the log names | how to repair it |
+|---|---|
+| the next charge date (`cycleStartDay`) | Edit the subscription and re-pick **Next charge on** (or **Started on**). Since F1 the picker writes Gregorian whatever the device calendar is. |
+| the trial start / conversion date | Edit the subscription and re-pick **Trial started**. The conversion date is derived from it and repairs with it. |
+| a pause resume date (`pauseEndsOn`) | **There is no picker for this on an already-paused subscription.** Resume the subscription and pause it again, setting **Billing resumes** in the pause flow. |
+| the last recorded use (`lastUsedDate`) | **There is no picker for this at all.** It is only ever written as *today*, by answering "Yes - still using it" on a usage check-in; doing that once overwrites the corrupt value with a correct one. |
+
+Nothing is deleted and no charge history is lost; only the stored dates change. A subscription is repaired - and starts scheduling again on the next pass - once **every** day the log line names is fixed, so a paused or never-used subscription may need the second and third rows above as well as the first.
 
 **Two calendars leave no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders arrive on the wrong days. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
 

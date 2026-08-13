@@ -27,32 +27,38 @@ import UIKit
 /// Counts the reads an export performs. `completeSnapshot()` is the first
 /// `await` in both export paths, so this counter moves as soon as either one
 /// starts - it cannot miss a write that began and had not finished.
-private actor CountingTransfer: DataTransferRepository {
+actor CountingTransfer: DataTransferRepository {
     private(set) var snapshotCalls = 0
     /// Set by `hold()`: the next `completeSnapshot()` parks here until
     /// `release()`, so a test can make something happen while a build is
     /// genuinely suspended rather than hoping for an interleaving.
-    private var gate: CheckedContinuation<Void, Never>?
+    private var gates: [CheckedContinuation<Void, Never>] = []
     private var holding = false
-    private(set) var isWaiting = false
+    private var failing = false
+    private(set) var waiting = 0
+
+    struct SnapshotRefused: Error {}
 
     func hold() { holding = true }
+    func fail() { failing = true }
 
+    /// Releases every parked build, so a test can hold TWO at once.
     func release() {
         holding = false
-        gate?.resume()
-        gate = nil
-        isWaiting = false
+        for gate in gates { gate.resume() }
+        gates.removeAll()
+        waiting = 0
     }
 
     func completeSnapshot() async throws -> OttoDataSnapshot {
         snapshotCalls += 1
         if holding {
-            isWaiting = true
+            waiting += 1
             await withCheckedContinuation { continuation in
-                gate = continuation
+                gates.append(continuation)
             }
         }
+        if failing { throw SnapshotRefused() }
         return OttoDataSnapshot()
     }
 
@@ -68,7 +74,7 @@ private actor CountingTransfer: DataTransferRepository {
 /// non-zero count proves this screen's `.task` modifiers really ran. Without it
 /// an assertion that no export happened would pass just as well on a view that
 /// never appeared at all.
-private actor CountingClient: NotificationClient {
+actor CountingClient: NotificationClient {
     private(set) var permissionCalls = 0
 
     func permission() async -> NotificationPermission {
@@ -83,7 +89,7 @@ private actor CountingClient: NotificationClient {
     func removePendingRequests(withIdentifiers identifiers: [String]) async {}
 }
 
-private struct IdleScheduler: ReminderScheduling {
+struct IdleScheduler: ReminderScheduling {
     func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome {
         ScheduleOutcome(
             permission: .authorized, scheduledCount: 0, truncatedAfter: nil,
@@ -201,119 +207,15 @@ struct SettingsExportTests {
         #expect(model.preparedExport(.chargesCSV) == nil)
     }
 
-    /// The other half of the same staleness, on the path a user takes far more
-    /// often than an import: editing or deleting a subscription. The prepared
-    /// file describes the database before the edit.
-    @Test("⛔ deleting a subscription withdraws every export prepared before it")
-    func aMutationWithdrawsAPreparedExport() async throws {
-        let transfer = CountingTransfer()
-        let client = CountingClient()
-        let model = makeModel(
-            transfer: transfer, client: client, suite: "otto.tests.settingsexport.4",
-            today: try #require(Self.today)
-        )
-
-        try await model.prepareExport(.json)
-        #expect(model.preparedExport(.json) != nil)
-
-        await model.subscriptionsStore.refresh()
-        let loaded = try #require(model.subscriptionsStore.subscriptions.value)
-        let victim = try #require(loaded.first)
-        try await model.subscriptionsStore.delete(subscriptionID: victim.id)
-
-        #expect(model.preparedExport(.json) == nil)
-    }
-
-    /// ⛔ The hook itself, on the model shape that used to skip it.
+    /// ⛔ Two exports at once, which is the state finding 6 was about and the
+    /// first version of this test never produced.
     ///
-    /// `subscriptionsStore.onMutation` was installed only inside
-    /// `if let notifications`, so "the data changed" was observable only on a
-    /// model that could schedule reminders. The suite's other tests all build a
-    /// model WITH a notification store, so re-wrapping the wiring in that
-    /// condition left every one of them green - `reviews-4/REVIEW-1.md`
-    /// finding 5 measured it. This is the model the condition excluded.
-    @Test("⛔ a model with no notification engine still withdraws on a mutation")
-    func theHookIsWiredWithoutANotificationEngine() async throws {
-        let transfer = CountingTransfer()
-        let client = CountingClient()
-        let model = makeModel(
-            transfer: transfer, client: client, suite: "otto.tests.settingsexport.5",
-            today: try #require(Self.today), withNotifications: false
-        )
-        #expect(model.notifications == nil)
-
-        try await model.prepareExport(.json)
-        #expect(model.preparedExport(.json) != nil)
-
-        await model.subscriptionsStore.refresh()
-        let loaded = try #require(model.subscriptionsStore.subscriptions.value)
-        try await model.subscriptionsStore.delete(subscriptionID: try #require(loaded.first).id)
-
-        #expect(model.preparedExport(.json) == nil)
-    }
-
-    /// ⛔ Payment methods are a stored collection of the JSON backup, and that
-    /// store had no mutation hook at all. `reviews-4/REVIEW-1.md` finding 2
-    /// demonstrated the stale file still on offer after a card was saved.
-    @Test("⛔ saving a payment method withdraws a prepared export")
-    func aPaymentMethodWriteWithdraws() async throws {
-        let transfer = CountingTransfer()
-        let client = CountingClient()
-        let model = makeModel(
-            transfer: transfer, client: client, suite: "otto.tests.settingsexport.6",
-            today: try #require(Self.today)
-        )
-
-        try await model.prepareExport(.json)
-        #expect(model.preparedExport(.json) != nil)
-
-        try await model.paymentMethodsStore.save(
-            PaymentMethod(
-                id: UUID(), label: "Visa", last4: "4242", issuer: "Visa",
-                expiryMonth: 6, expiryYear: 2030, isDefault: false,
-                createdAt: Date(timeIntervalSince1970: 0),
-                updatedAt: Date(timeIntervalSince1970: 0)
-            )
-        )
-
-        #expect(model.preparedExport(.json) == nil)
-    }
-
-    /// ⛔ A withdrawal that lands while a build is suspended must win.
-    ///
-    /// `prepareExport` awaits the export actor, so a `flowFinished()` or a
-    /// mutation is free to run in the gap and the assignment afterwards would
-    /// re-offer a file built from the older snapshot - the same staleness,
-    /// relocated (`reviews-4/REVIEW-1.md` finding 3). Export and Import are rows
-    /// on the same screen, so this is reachable by hand.
-    @Test("⛔ a withdrawal during an in-flight build is not overwritten by it")
-    func aWithdrawalDuringABuildWins() async throws {
-        let transfer = CountingTransfer()
-        let client = CountingClient()
-        let model = makeModel(
-            transfer: transfer, client: client, suite: "otto.tests.settingsexport.7",
-            today: try #require(Self.today)
-        )
-
-        await transfer.hold()
-        let build = Task { try await model.prepareExport(.json) }
-        // The build is suspended inside `completeSnapshot()`.
-        _ = await settle { await transfer.isWaiting }
-        #expect(model.exportAvailability(.json) == .preparing)
-
-        model.withdrawPreparedExports()
-        await transfer.release()
-        _ = try await build.value
-
-        #expect(model.preparedExport(.json) == nil)
-        #expect(model.exportAvailability(.json) == .notPrepared)
-    }
-
-    /// ⛔ Two exports at once. A single-valued `preparing` flag made the JSON
-    /// row a live button again the moment the CSV was tapped, and clearing it
-    /// wiped the other row's state; one shared `failure` did the same for
-    /// errors (`reviews-4/REVIEW-1.md` finding 6).
-    @Test("⛔ the two export kinds have independent state")
+    /// `reviews-4/REVIEW-4.md` finding 1 restored the single-valued state
+    /// machine exactly - `preparing = [kind]`, `preparing.removeAll()`,
+    /// `exportFailures.removeAll()` - and the whole simulator suite stayed
+    /// green, because this test started ONE build and a shared flag is only
+    /// wrong when two are in flight. It starts both now.
+    @Test("⛔ the two export kinds have independent in-flight state")
     func theTwoKindsDoNotShareState() async throws {
         let transfer = CountingTransfer()
         let client = CountingClient()
@@ -324,18 +226,124 @@ struct SettingsExportTests {
 
         await transfer.hold()
         let json = Task { try await model.prepareExport(.json) }
-        _ = await settle { await transfer.isWaiting }
+        let csv = Task { try await model.prepareExport(.chargesCSV) }
+        let bothParked = await settle { await transfer.waiting == 2 }
+        #expect(bothParked, "both builds never reached the transfer, so this proves nothing")
+
+        // A single-valued flag can only say one of these.
         #expect(model.exportAvailability(.json) == .preparing)
-        // The other row is untouched by the first one being in flight.
-        #expect(model.exportAvailability(.chargesCSV) == .notPrepared)
+        #expect(model.exportAvailability(.chargesCSV) == .preparing)
 
         await transfer.release()
         _ = try await json.value
-        #expect(model.exportAvailability(.chargesCSV) == .notPrepared)
-        guard case .ready = model.exportAvailability(.json) else {
-            Issue.record("the JSON row is \(model.exportAvailability(.json)), not ready")
+        _ = try await csv.value
+        guard case .ready = model.exportAvailability(.json),
+              case .ready = model.exportAvailability(.chargesCSV) else {
+            Issue.record("json=\(model.exportAvailability(.json)) csv=\(model.exportAvailability(.chargesCSV))")
             return
         }
+    }
+
+    /// ⛔ And a failure recorded for one kind is not wiped by the other
+    /// succeeding - the second half of finding 6, which one shared `failure`
+    /// string could not represent either.
+    @Test("⛔ a failure on one kind survives the other kind succeeding")
+    func aFailureOnOneKindIsNotClearedByTheOther() async throws {
+        let failing = CountingTransfer()
+        await failing.fail()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: failing, client: client, suite: "otto.tests.settingsexport.9",
+            today: try #require(Self.today)
+        )
+
+        await #expect(throws: (any Error).self) { try await model.prepareExport(.json) }
+        guard case .failed = model.exportAvailability(.json) else {
+            Issue.record("the JSON row is \(model.exportAvailability(.json)), not failed")
+            return
+        }
+
+        // The CSV build cannot succeed against a failing transfer either, so
+        // drive the other direction: a fresh REQUEST for the CSV must not
+        // clear the JSON row's recorded failure.
+        await model.requestExport(.chargesCSV).value
+        guard case .failed = model.exportAvailability(.json) else {
+            Issue.record("the CSV request cleared the JSON row's failure")
+            return
+        }
+    }
+
+    /// ⛔ `requestExport` is what the view's button calls, and it was added by
+    /// the stage-1 remediation with nothing exercising it
+    /// (`reviews-4/REVIEW-4.md` finding 1): its body could be emptied with
+    /// every gate in the project green. It is one layer below the closure no
+    /// test can reach, and this is the lowest layer that is reachable.
+    @Test("⛔ the call the export button makes actually builds the file")
+    func requestExportBuildsTheFile() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.10",
+            today: try #require(Self.today)
+        )
+
+        await model.requestExport(.json).value
+
+        #expect(await transfer.snapshotCalls == 1)
+        let url = try #require(model.preparedExport(.json))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// ⛔ Deleting a payment method, not only saving one. The stage-1
+    /// remediation added the hook to both and tested one.
+    @Test("⛔ deleting a payment method withdraws a prepared export")
+    func aPaymentMethodDeleteWithdraws() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.11",
+            today: try #require(Self.today)
+        )
+        let method = PaymentMethod(
+            id: UUID(), label: "Visa", last4: "4242", issuer: "Visa",
+            expiryMonth: 6, expiryYear: 2030, isDefault: false,
+            createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        try await model.paymentMethodsStore.save(method)
+
+        try await model.prepareExport(.json)
+        #expect(model.preparedExport(.json) != nil)
+
+        try await model.paymentMethodsStore.delete(paymentMethodID: method.id)
+
+        #expect(model.preparedExport(.json) == nil)
+    }
+
+    /// ⛔ The reminder-time path, whose comment claiming it "changes no record"
+    /// was measured false in the stage-1 review. The reschedule it triggers
+    /// materializes ledger rows the CSV prints, so it withdraws - and nothing
+    /// observed that until now.
+    @Test("⛔ a notification-time change withdraws a prepared export")
+    func aReminderTimeChangeWithdraws() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.12",
+            today: try #require(Self.today)
+        )
+
+        try await model.prepareExport(.json)
+        #expect(model.preparedExport(.json) != nil)
+
+        let picked = try #require(
+            CalendarDay.conversionCalendar.date(
+                from: DateComponents(year: 2000, month: 1, day: 1, hour: 7, minute: 30)
+            )
+        )
+        model.settings.setNotificationTime(from: picked)
+        let withdrawn = await settle { await MainActor.run { model.preparedExport(.json) == nil } }
+
+        #expect(withdrawn, "a notification-time change left the prepared export on offer")
     }
 
     /// R0-10(b). The file on disk describes the database as it was BEFORE the
