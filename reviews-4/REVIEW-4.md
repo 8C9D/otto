@@ -4,6 +4,8 @@ Range reviewed: `54bb611..05ff987`.
 Reviewed head: `05ff987`.
 Ledger: `PROD-READINESS-4.md`. Baseline: `reviews-4/BASELINE-4.md`. Prior verdict in this run: `reviews-4/REVIEW-1.md`.
 
+Every `PROD-READINESS-4.md:NNN` citation below is a line number **as at `05ff987`**, not at the branch tip; where the tip differs I say so.
+
 verdict: PASS-WITH-FINDINGS
 
 ## Summary
@@ -16,23 +18,27 @@ Item 5's fix is a real fix: I broke the save key, the log statement and the tomb
 Two things are not sound.
 
 First, the remediation's guards do not bite where the ledger says they do.
-`PROD-READINESS-4.md:331` says findings 3, 5 and 6 are each "fixed, each with a guard that bites"; findings 3 and 5 are, and finding 6 is not - I restored the single-valued state machine exactly and the whole simulator suite stayed green.
-`:327` says finding 2 is "Fixed on both sides"; the payment-method **save** is guarded and the **delete** is not, and the two paths the same paragraph singles out as newly corrected - the reminder-time change whose comment was "measured false", and the two cancellation-evidence editors - are both unguarded.
+`PROD-READINESS-4.md:329` says findings 3, 5 and 6 are each "fixed, each with a guard that bites"; findings 3 and 5 are, and finding 6 is not - I restored the single-valued state machine exactly and the whole simulator suite stayed green.
+`:325` says finding 2 is "Fixed on both sides"; the payment-method **save** is guarded and the **delete** is not, and the two paths the same paragraph singles out as newly corrected - the reminder-time change whose comment was "measured false", and the two cancellation-evidence editors - are both unguarded.
 Five removals plus the new `requestExport` indirection, applied together in one run with each removal printed and its occurrence count asserted, leave `** TEST SUCCEEDED **`.
 
 Second, the reviewed head does not record the item the stage delivered.
 At `05ff987` the work list still says item 5 is `pending`, there is no `## ITEM 5` section, no falsification table, no cost statement for the tenth `OSLogStore` read, and the REVIEW RANGES table has empty cells for stages 2, 3, 4 and 5 - including stage 4's own row.
-The ledger's rule at `:84` is that "a stage's reviewed head is the commit that RECORDS its measurements"; this head records stage **1's** measurements. That is `reviews-4/REVIEW-1.md` finding 9 restated at `:335` and not applied.
+The ledger's rule at `:82` is that "a stage's reviewed head is the commit that RECORDS its measurements"; this head records stage **1's** measurements. That is `reviews-4/REVIEW-1.md` finding 9 restated at `:333` and not applied.
 Later commits outside my range close it (`2082b69` writes items 4-7, `1a1d23b` the verification table, `d609790` the range table), so this is completion lag rather than a misstatement - which is why it is a finding and not a reject.
 
-Nothing in this range is fabricated, nothing regressed, and no scope rule was broken.
+Nothing in this range is fabricated and nothing regressed.
+The only scope rule it brushes is the one about length-forced file splits, which requires the split to be *shown* behaviour-preserving: `AppModel.swift` was split and the ledger never says so (finding 7). I checked it myself and it is.
 
 ## What I ran
 
-All mutation work was done in three detached worktrees under a temp path I created (`.../scratchpad/rev4/wt`, `wt2`, `wt3`); they are removed and `git worktree list` no longer shows them.
-I made no commit, ran no network command, touched no physical device, edited nothing in the main working tree, and deleted no file I did not create.
-No build or test command in this review pointed a `--package-path` at `/Users/<user>/dev/otto`; `verify.sh` was run from my worktree, which clones itself into its own temp directory.
-The branch advanced under me throughout (main-tree HEAD moved `d609790` → `80eeb97` while I measured) and other reviewers were running concurrently on this host, so wall times below are loaded.
+All mutation work was done in three detached worktrees under a temp path I created (`…/scratchpad/rev4/wt`, `wt2`, `wt3`), each reverted with `git checkout -- .` after every mutation and verified `git status --porcelain` empty before removal; all three are removed and `git worktree list` no longer shows them.
+It does still show three worktrees at `…/scratchpad/rev5/…`, checked out at `1a1d23b`: those belong to a stage-5 reviewer running concurrently and are not mine to remove.
+I made no commit, ran no network command, touched no physical device, changed nothing in the main working tree except the one file this review is, and deleted no file I did not create - the one file I added inside a worktree (an R0-11 probe test) I deleted myself.
+No build or test command in this review pointed a `--package-path` at `/Users/<user>/dev/otto`; `verify.sh` was run from my own worktree, and it clones itself into its own temp directory before testing.
+The branch advanced under me throughout (main-tree HEAD moved `d609790` → `80eeb97` → `38b1137` while I measured) and other reviewers plus the builder were running on this host, so every wall time below is loaded and none is comparable with `reviews-4/BASELINE-4.md`'s. Pass/fail is unaffected.
+
+**One process note about this file itself.** `f7a76ab` ("Add the adversarial review of stage 4") committed a mid-write snapshot of `reviews-4/REVIEW-4.md` while I was still writing it; my working copy carries 81 further insertions and is the version to read. That is the same hazard `PROD-READINESS-4.md:336` discloses about `reviews-4/REVIEW-1.md` being swept into `12024ab`, still live - a reviewer writing into the tree the builder is committing from. I mention it because the committed snapshot is not my verdict; this file is.
 
 ### The five baseline dimensions, re-measured at `05ff987`
 
@@ -46,8 +52,8 @@ The branch advanced under me throughout (main-tree HEAD moved `d609790` → `80e
    total: 596 tests
 ```
 
-Baseline was 258 / 124 / 207 = 589. The +7 is item 2's two domain tests and item 3's one (stage 1 and 2), item 5's three persistence tests, and item 3's one OttoUI test.
-This equals the ledger's "stages 2-4 (`b054506`)" column exactly.
+Baseline was 258 / 124 / 207 = 589, and this equals the ledger's "stages 2-4 (`b054506`)" column exactly.
+**This range's own contribution is +3, all in OttoPersistence**: `UnreportableInvalidationTests` declares exactly three `@Test`s and nothing else in the diff adds one - the `"\n=1+1"` case is a new entry in an existing test's dictionary, not a new test. The other +4 came in before `54bb611`.
 
 **2. `swiftlint --strict`, standalone - exit 0.**
 
@@ -55,7 +61,8 @@ This equals the ledger's "stages 2-4 (`b054506`)" column exactly.
 Done linting! Found 0 violations, 0 serious in 224 files.
 ```
 
-Baseline was 220 files. The four new files across the run include this range's `AppModel+Export.swift` and `UnreportableInvalidationTests.swift`.
+Baseline was 220 files; +4 across the run, of which this range adds two - `AppModel+Export.swift` and `UnreportableInvalidationTests.swift`.
+Both are lint-clean under `--strict`, which matters for `AppModel+Export.swift` because that file exists to keep `AppModel.swift` under `file_length` (finding 7).
 
 **3. Simulator suite, from `Packages/OttoUI/`.**
 
@@ -67,7 +74,8 @@ Baseline was 220 files. The four new files across the run include this range's `
 ```
 
 Baseline was 117 / 72 / 36 with 7 known issues. The 7 known issues are the unchanged `EmptyStateTests` accessibility assertions.
-This equals the ledger's stages-2-4 column exactly. I observed this shape ten times across the head run and the nine mutation runs whose mutations left it unchanged.
+This equals the ledger's stages-2-4 column exactly. **This range's own contribution is the third bucket's 44 → 48**: `SettingsExportTests` gains exactly four `@Test`s.
+I ran the simulator suite ten times in total (one unmutated head run, eight mutations, one re-anchored re-run); the two runs that should have been green were, byte-identical in shape.
 
 **4. Non-Gregorian harness - 1 / 1 / 5, the same five citations.**
 
@@ -82,25 +90,45 @@ ar_SA@calendar=islamic-umalqura  5 issues   DisplayFormattingTests.swift:49:9, :
 
 Identical to `reviews-4/BASELINE-4.md`. Suite size is 208, up from 207.
 
-**5. Flake rate - FLAKE_SUMMARY.**
+**5. Flake rate - 12 of 12.**
 
 `swift test --package-path Packages/OttoUI`, twelve consecutive unmutated runs at `05ff987`:
 
 ```
-FLAKE_TABLE
+run  1 rc=0 ✔ Test run with 208 tests in 38 suites passed after 45.913 seconds.
+run  2 rc=0 ✔ Test run with 208 tests in 38 suites passed after 20.329 seconds.
+run  3 rc=0 ✔ Test run with 208 tests in 38 suites passed after 29.290 seconds.
+run  4 rc=0 ✔ Test run with 208 tests in 38 suites passed after 36.722 seconds.
+run  5 rc=0 ✔ Test run with 208 tests in 38 suites passed after 45.963 seconds.
+run  6 rc=0 ✔ Test run with 208 tests in 38 suites passed after 22.831 seconds.
+run  7 rc=0 ✔ Test run with 208 tests in 38 suites passed after 31.839 seconds.
+run  8 rc=0 ✔ Test run with 208 tests in 38 suites passed after 27.750 seconds.
+run  9 rc=0 ✔ Test run with 208 tests in 38 suites passed after 38.210 seconds.
+run 10 rc=0 ✔ Test run with 208 tests in 38 suites passed after 51.012 seconds.
+run 11 rc=0 ✔ Test run with 208 tests in 38 suites passed after 59.843 seconds.
+run 12 rc=0 ✔ Test run with 208 tests in 38 suites passed after 25.587 seconds.
+SUMMARY pass=12 fail=0
 ```
 
-FLAKE_NOTE
+**12 passed, 0 failed**, all 208 tests every time. Spread 20.3 s - 59.8 s, wider than `reviews-4/REVIEW-1.md`'s batch and narrower than `reviews-4/BASELINE-4.md`'s; two other reviewers and the builder were running on this host throughout, which is the known cause and not a finding.
 
 ### OttoPersistence, run repeatedly (this range touches persistence)
 
-`swift test --package-path Packages/OttoPersistence`, PERS_COUNT consecutive runs at `05ff987`:
+`swift test --package-path Packages/OttoPersistence`, six unmutated runs at `05ff987`, with the new log-reading test's own duration pulled out of each:
 
 ```
-PERS_TABLE
+run 1  ✔ 127 tests in 26 suites passed after  85.570 s    theUnreportableRowIsNamed 29.009 s
+run 2  ✔ 127 tests in 26 suites passed after 127.183 s    theUnreportableRowIsNamed 16.186 s
+run 3  ✔ 127 tests in 26 suites passed after  81.380 s    theUnreportableRowIsNamed 16.753 s
+run 4  ✔ 127 tests in 26 suites passed after  56.251 s    theUnreportableRowIsNamed 11.223 s
+run 5  ✔ 127 tests in 26 suites passed after  40.930 s    theUnreportableRowIsNamed 11.380 s
+run 6  ✔ 127 tests in 26 suites passed after  60.912 s    theUnreportableRowIsNamed 18.803 s
 ```
 
-PERS_NOTE
+**6 of 6 pass**, plus one more green run of the whole target under the privacy mutation in finding 3 - seven in total, no failure and no `requireDelivered` canary firing.
+
+**Order-dependence: checked, and the pin holds.** `@Suite(.serialized)` makes the order deterministic rather than merely safe - I diffed the suite start order across three runs and it is byte-identical, and inside the R0-11 suite the log-reading test runs **last**, after both siblings that drive the same production path and emit the same message. That is the shared-window hazard, and the test is pinned against it correctly: subscription index `7011` (`UnreportableInvalidationTests.swift:134`), unique in the target, with every assertion filtered on that UUID.
+**The pin is load-bearing and its stated measurement reproduces to the digit.** Deleting only `&& $0.lowercased().contains(mine)` from the filter at `:157` - one occurrence, printed - gives `Expectation failed: (named.count → 6) == 2`, which is exactly what the source comment at `:128-133` claims: *"measured, as six matches where this test controls two"*. Round 3's flake shape is present in this file and is closed.
 
 ### Per-commit build sweep
 
@@ -116,7 +144,7 @@ b054506 OttoDomain OK   b054506 OttoPersistence OK   b054506 OttoUI OK
 
 Every mutation printed the exact text it removed and asserted the occurrence count before writing; every count was 1 as expected, and the one anchor that matched 3 places aborted rather than mutating (I re-anchored it and re-ran).
 
-**Item 1's table (`PROD-READINESS-4.md:143-151`) - all seven rows reproduce.**
+**Item 1's table (`PROD-READINESS-4.md:141-148`) - all seven rows reproduce.**
 
 | ledger row | ledger records | I measured |
 |---|---|---|
@@ -128,7 +156,7 @@ Every mutation printed the exact text it removed and asserted the occurrence cou
 | `PaymentMethodsStore`'s `onMutation` call removed | 1 issue | **1** ✅ (`aPaymentMethodWriteWithdraws`) |
 | the generation guard removed from `prepareExport` | 2 issues | **2 / 1** ✅ (`aWithdrawalDuringABuildWins`) |
 
-**Item 2's table (`PROD-READINESS-4.md:189-194`) - all four rows reproduce.**
+**Item 2's table (`PROD-READINESS-4.md:187-192`) - all four rows reproduce.**
 
 | ledger row | ledger records | I measured |
 |---|---|---|
@@ -147,12 +175,31 @@ I added a fifth: removing **only** `"\n"` from `csvFormulaTriggers` (`ChargesCSV
 | the log statement deleted | 3 issues | **3** ✅ `named.count == 2`, `20260815`, `20260915` |
 | skip instead of tombstone | 4 issues | **3** - `InvalidationTests.swift:37` (the "converting before mutating" artifact the ledger names), `theSoftDeleteIsCommitted:78`, and the load-bearing `rematerialized == []` at `:108` |
 
+**Item 5's reconfirmation, re-derived rather than taken on its word.** `OttoStore+BillingEvents.swift:161-172` and `UnreportableInvalidationTests.swift:14-22` both quote a three-line `54bb611` measurement. Nothing in the shipped tests asserts the third line - the one that makes R0-11 a defect rather than a curiosity - so I wrote a probe (my own file, in my worktree, deleted afterwards) that prints all three, and ran it twice:
+
+```
+with the save key reverted to `if !invalidated.isEmpty` (the pre-fix shape):
+    PROBE brokenRows=2
+    PROBE reported=0
+    PROBE committedTombstonesRightAfter=0
+    PROBE committedTombstonesAfterAnUnrelatedSave=2      <- an unrelated store.save() flushes them
+
+unmutated, at 05ff987:
+    PROBE brokenRows=2
+    PROBE reported=0                                     <- the disclosed undercount, unchanged
+    PROBE committedTombstonesRightAfter=2                <- the fix
+    PROBE committedTombstonesAfterAnUnrelatedSave=2
+```
+
+`reported=0 / committedTombstonesRightAfter=0 / committedTombstonesAfterAnUnrelatedSave=2` is the source's quoted measurement, to the digit. The defect was real, the fix closes it, and the return value's undercount survives exactly as the code says it does.
+
 **My own falsifications, which found things.**
 
 | mutation | expected if guarded | measured |
 |---|---|---|
 | `requestExport`'s body → no-op, `PaymentMethodsStore.delete`'s `onMutation` removed, `preparing`/`exportFailures` restored to single-valued, `onReminderTimeChange`'s withdraw removed, both cancellation-evidence withdraws removed (8 printed edits, 1 occurrence each) | red | **`** TEST SUCCEEDED **`, rc 0, 118 / 72 / 48, 7 known issues** |
 | the tombstoned row's own `expectedAmountCents` added to the log line at `OttoStore+BillingEvents.swift:214` | red | **`✔ Test run with 127 tests in 26 suites passed`, rc 0** - the whole OttoPersistence suite, including `MappingLogPrivacyTests` |
+| the UUID pin dropped from the log test's filter at `UnreportableInvalidationTests.swift:157` | `named.count` rises to the siblings' lines | **`(named.count → 6) == 2`** - the source's own "six matches where this test controls two", exact |
 
 ## Findings
 
@@ -171,9 +218,9 @@ A green run with all five applied falsifies all five, because any one of them be
 
 Against the ledger:
 
-- `PROD-READINESS-4.md:331`: *"Findings 3, 5, 6 (P3) - fixed, each with a guard that bites."* True of finding 3 (removing the generation guard gives 2 issues) and of finding 5 (re-wrapping the hook gives 1 issue). **False of finding 6.** `SettingsExportTests.swift:319-339` (`theTwoKindsDoNotShareState`) never starts a second build and never produces a failure, so the two things finding 6 was about - a second tap clobbering the first row's state, and one shared `failure` - are never exercised. Its own doc comment at `:314-318` claims otherwise.
-- `PROD-READINESS-4.md:327`: *"Fixed on both sides. `PaymentMethodsStore` gains the `onMutation` hook it never had"*, and *"both cancellation-evidence editors withdraw"*, and *"A code comment of mine was measured false and is corrected … That path withdraws now."* All three statements are true of the code. Of the five new call sites they describe, **one** has a test (`PaymentMethodsStore.save`, 1 issue when removed). The other four are removable with every gate in the project green.
-- `:330`: *"The whole state machine moved onto `AppModel`, where eight tests reach it, and the view is now one call with no logic in it. What no test in this project can reach is that single closure."* The eight tests are real. But the "one call" is `requestExport`, which is `public` on the model, is trivially reachable from a test, and has no caller anywhere except `SettingsView.swift:214`. N4-1 was shrunk by one layer and a new untested layer was added under it.
+- `PROD-READINESS-4.md:329`: *"Findings 3, 5, 6 (P3) - fixed, each with a guard that bites."* True of finding 3 (removing the generation guard gives 2 issues) and of finding 5 (re-wrapping the hook gives 1 issue). **False of finding 6.** `SettingsExportTests.swift:316-339` (`theTwoKindsDoNotShareState`) starts one build and asserts that the *other* kind reads `.notPrepared` - which a single-valued `preparing: ExportKind?` also satisfies. It never starts a second build while the first is in flight and never produces a failure, so neither thing finding 6 was about is exercised. Its own doc comment at `:312-315` says otherwise: *"A single-valued `preparing` flag made the JSON row a live button again the moment the CSV was tapped, and clearing it wiped the other row's state; one shared `failure` did the same for errors."*
+- `PROD-READINESS-4.md:325`: *"Fixed on both sides. `PaymentMethodsStore` gains the `onMutation` hook it never had"*, and *"both cancellation-evidence editors withdraw"*, and *"A code comment of mine was measured false and is corrected … That path withdraws now."* All three statements are true of the code. Of the five new call sites they describe, **one** has a test (`PaymentMethodsStore.save`, 1 issue when removed). The other four are removable with every gate in the project green.
+- `:328`: *"The whole state machine moved onto `AppModel`, where eight tests reach it, and the view is now one call with no logic in it. What no test in this project can reach is that single closure."* The eight tests are real. But the "one call" is `requestExport`, which is `public` on the model, is trivially reachable from a test, and has no caller anywhere except `SettingsView.swift:214`. N4-1 was shrunk by one layer and a new untested layer was added under it.
 
 **Why this is P2 and not P3.** `reviews-4/REVIEW-1.md` finding 2 was P2 and its whole content was "a promise with only two of six paths behind it". The remediation added the paths and did not add the observers, so the *next* edit re-opens the same P2 with the suite green - which is precisely the condition that made finding 2 a P2 in the first place. `PaymentMethodsStore.onMutation` is also asymmetric with its own sibling: `SubscriptionsStore.onMutation` has a direct unit test at `SubscriptionsStoreTests.swift:266`; the new one has none.
 
@@ -186,11 +233,11 @@ Against the ledger:
 - `PROD-READINESS-4.md:50` - the work list still reads `| 5 | **R0-11** | … | pending |`.
 - There is no `## ITEM 5` heading. `grep -n "^## " ` at that commit ends at `## ITEM 3`; the file is 336 lines and its last section is `### Remediation after reviews-4/REVIEW-1.md`.
 - There is therefore no reconfirmation of R0-11, no falsification table, no "Cost, stated as the prompt requires" paragraph for the **tenth** `OSLogStore` read that `12024ab` adds, and no five-dimension measurement for stage 4.
-- `PROD-READINESS-4.md:62-70` - the REVIEW RANGES table has empty range, head and verdict cells for stages 2, 3, 4 **and** 5, and an empty verdict cell for stage 1 whose verdict the same commit states in prose at `:323`.
+- `PROD-READINESS-4.md:62-70` - the REVIEW RANGES table has empty range, head and verdict cells for stages 2, 3, 4 **and** 5, and an empty verdict cell for stage 1 whose verdict the same commit states in prose at `:321`.
 
-The ledger's own two rules are `:60` (*"every start is recorded when the stage opens, not when its verdict lands"*) and `:84` (*"A stage's reviewed head is the commit that RECORDS its measurements, not its last code commit, so the numbers a reviewer is asked to check are inside the range it is given rather than only in the tree it is standing on"*).
+The ledger's own two rules are `:60` (*"every start is recorded when the stage opens, not when its verdict lands"*) and `:82` (*"A stage's reviewed head is the commit that RECORDS its measurements, not its last code commit, so the numbers a reviewer is asked to check are inside the range it is given rather than only in the tree it is standing on"*).
 Stage 4's head records stage **1's** re-derived numbers and none of stage 4's. Stages 2 and 3 closed at `00cb0f1` and `54bb611`, both before this range opened, and their starts are still blank here.
-`:335` restates the rule in response to `reviews-4/REVIEW-1.md` finding 9 - *"the START is recorded when the stage opens, the HEAD when it closes"* - in the same commit that leaves four starts and four heads blank.
+`:333` restates the rule in response to `reviews-4/REVIEW-1.md` finding 9 - *"the START is recorded when the stage opens, the HEAD when it closes"* - in the same commit that leaves four starts and four heads blank.
 
 **What later work did to it.** `2082b69` adds items 4-7, `1a1d23b` adds the verification table, `d609790` fills the range table. So the record is complete at the branch tip and was not complete at the head I was given.
 
@@ -214,7 +261,7 @@ Executed: adding `amount=\(amount, privacy: .public)` to the message at `OttoSto
 
 The shipped line is clean - I read the composed message and it carries a UUID, a packed `yyyymmdd`, and `mappingLogSummary`, which is value-free by construction (`MappingError.swift:44-52, 58-60`). This is a defect in the guard, not in the code.
 
-**Why the builder missed it.** The test's own comment at `:161-163` says "nothing about what the subscription costs" and the subscription under test does cost 1299; the row's amount is a different number and was never in view.
+**Why the builder missed it.** The test's own comment at `:160-161` says "nothing about what the subscription costs" and the subscription under test does cost 1299; the row's amount is a different number and was never in view.
 
 ### 4 - P3. Finding 3's fix guards the success branch only, so the same shape survives in `catch`
 
@@ -245,14 +292,14 @@ The shipped footer at `05ff987` is `SettingsView.swift:180-183`:
 
 > "Otto builds a file only when you ask for it, so a complete copy of your finances isn't left lying around. Editing a subscription or importing a backup withdraws one you already built."
 
-`:324` of the same file, 190 lines below, quotes the first sentence as the thing that was wrong and says "The copy now says only what is true". The "What changed" section was never updated, so the ledger states two different strings as the app's current copy.
+`:324` of the same file, 191 lines below, quotes the first sentence as the thing that was wrong and says "The copy now says only what is true". The "What changed" section was never updated, so the ledger states two different strings as the app's current copy.
 The new copy is accurate: I confirmed both claims it makes (a subscription edit and an import both withdraw) and it no longer generalises.
 
 **Why the builder missed it.** The remediation was appended rather than folded back into the item it remediates.
 
 ### 6 - P3. "All eight were stale" is contradicted by the review it cites in the same sentence
 
-**Evidence.** `PROD-READINESS-4.md:141`:
+**Evidence.** `PROD-READINESS-4.md:139`:
 
 > `reviews-4/REVIEW-1.md` finding 4 caught one of these eight numbers being stale; all of them were …
 
@@ -264,7 +311,7 @@ The correction itself is real and the new table is right - I reproduced all elev
 
 ### 7 - P3. `AppModel.swift` was split and the split is disclosed nowhere
 
-**Evidence.** `b054506` creates `Packages/OttoUI/Sources/OttoStores/AppModel+Export.swift` (134 lines) and removes 66 lines from `AppModel.swift`. The file header at `:5-9` gives the reason - SwiftLint's 400-line `file_length` - and the ledger never mentions it. Item 4's two splits are disclosed in detail at `PROD-READINESS-4.md:383-385`; this one is not, in either the item-1 "What changed" list or the remediation section.
+**Evidence.** `b054506` creates `Packages/OttoUI/Sources/OttoStores/AppModel+Export.swift` (134 lines) and removes 66 lines from `AppModel.swift`. The file header at `:5-9` gives the reason - SwiftLint's 400-line `file_length` - and the ledger never mentions it. Item 4's two splits are disclosed in detail (`PROD-READINESS-4.md:385` at the branch tip - item 4 has no section at all at this head); this one is not, in either the item-1 "What changed" list or the remediation section, at this head or at the tip.
 
 The split was genuinely forced and I checked it rather than taking the header's word: re-inlining the extension body into `AppModel.swift` gives **423 lines**, and `.swiftlint.yml` sets no `file_length` override, so SwiftLint's default 400-line warning fires and `--strict` fails. The moved code is fully auditable from the diff, and I confirmed behaviour preservation by execution - the seven item-1 falsifications all land in the moved code and produce exactly the ledger's counts.
 
@@ -279,11 +326,11 @@ Two doc comments were concatenated when the block moved; the missing blank line 
 
 ### 9 - P3. The tenth `OSLogStore` read costs more than the number stated beside it
 
-**Evidence.** `UnreportableInvalidationTests.swift:117-127` states the cost as "roughly 7-11 s" and argues that a shared query would make a failure ambiguous between unrelated causes. The justification is sound as far as it goes, and the reader really is new and really is the tenth (7 in OttoUI, 3 in OttoPersistence, counted at their call sites the way `reviews-4/BASELINE-4.md` counts them).
+**Evidence.** `UnreportableInvalidationTests.swift:116-123` states the cost as "roughly 7-11 s" and argues that a shared query would make a failure ambiguous between unrelated causes. The justification is sound as far as it goes, and the reader really is new and really is the tenth (7 in OttoUI, 3 in OttoPersistence, counted at their call sites the way `reviews-4/BASELINE-4.md` counts them).
 
-Measured on this host: `theUnreportableRowIsNamed` took OSLOG_COST. This machine was loaded throughout, and `reviews-4/BASELINE-4.md:199-202` establishes that the log-reading tests are exactly where an 8x spread lives, so I do not read the gap as a defect - but a cost stated as a range and measured outside it is not a cost the next round can plan against.
+Measured on this host across six unmutated runs: `theUnreportableRowIsNamed` took **11.2, 11.4, 16.2, 16.8, 18.8 and 29.0 seconds** - above the stated ceiling every time, median ~16.5 s, worst case 2.6x the top of the stated range. This machine was loaded throughout, and `reviews-4/BASELINE-4.md:199-202` establishes that the log-reading tests are exactly where an 8x spread lives, so I do not read the gap as a defect - but a cost stated as a range and measured outside it is not a cost the next round can plan against.
 
-The cheaper alternative is not considered: composing the message's fields in a function a test can read without opening a store. That is not hindsight about a pattern the tree lacked - `PROD-READINESS-4.md` item 7 adopts exactly it one stage later, for exactly this reason ("The tree already blocks on that daemon nine times … an eleventh for one field is not a trade worth making"), and the same reasoning applied one stage earlier would have avoided the tenth.
+The cheaper alternative is not considered: composing the message's fields in a function a test can read without opening a store. That is not hindsight about a pattern the tree lacked - `PROD-READINESS-4.md` item 7 (at the branch tip; it does not exist at this head) adopts exactly it one stage later, for exactly this reason ("The tree already blocks on that daemon nine times … an eleventh for one field is not a trade worth making"), and the same reasoning applied one stage earlier would have avoided the tenth.
 
 ### 10 - P3. The protocol contract was not updated when the return value changed meaning
 
@@ -292,17 +339,17 @@ No live consequence: the sole production caller discards the value (`Notificatio
 
 ## Explicit checks
 
-- **Fabricated or unreproducible findings.** None in range. Both measurement tables at this head reproduce completely - 7/7 for item 1 and 4/4 for item 2, to the issue count *and* the test count. The one number that does not reproduce for me is item 5's "skip instead of tombstone | 4 issues", and that row is outside my range (added by `2082b69`); my faithful mutation gives 3, including the load-bearing `rematerialized == []` the ledger names and the "converting before mutating" artifact it warns about. Item 5's `reported=0 / committedTombstonesRightAfter=0 / committedTombstonesAfterAnUnrelatedSave=2` reconfirmation is a `54bb611` measurement quoted in the source at `OttoStore+BillingEvents.swift:161-172`; I did not re-run it at `54bb611`, but the shape it describes is exactly what the pre-fix mutation reproduces (`committedTombstones == 2` fails).
-- **Citations that do not say what they are claimed to say.** Three: finding 5 (`PROD-READINESS-4.md:133` quotes copy the same commit replaced), finding 6 (`:141` vs `reviews-4/REVIEW-1.md:195`), finding 8 (`AppModel+Export.swift:18-38`). I also checked the citations the ledger makes *into* the code and they hold: `:132`'s "the only caller in `OttoStores` that writes an export file" is true (`exportJSONFile`/`exportChargesCSVFile` have exactly two non-test call sites, both in `prepareExport`); `AppModel.swift:128-132`'s corrected comment matches `NotificationScheduler.swift:254`'s `materializeEvents` call; `reviews-4/REVIEW-1.md`'s nine findings really are 2 P2 + 7 P3 as `:323` says.
-- **Severity inflation or deflation.** One deflation, in finding 1: the ledger carries finding 2's fix as done "on both sides" and finding 6 as guarded, and neither claim survives execution. Nothing is inflated - `:329` carries N4-4 (`NotificationActionHandler`, a bare scheduling pass) as still open rather than claiming it closed, and `:330` keeps N4-1 at the reviewer's severity.
+- **Fabricated or unreproducible findings.** None in range. Both measurement tables at this head reproduce completely - 7/7 for item 1 and 4/4 for item 2, to the issue count *and* the test count. Item 5's three-line reconfirmation reproduces to the digit under my own probe, in both directions. The `\n` trigger, the tombstone-not-skip decision, the generation guard, the unconditional hook and the UUID pin all fail when broken. The one number that does not reproduce for me is item 5's "skip instead of tombstone | 4 issues", and that row is outside my range (added by `2082b69`); my faithful mutation gives 3, including the load-bearing `rematerialized == []` the ledger names and the "converting before mutating" artifact it warns about - the shape matches and the count is one lower, which is a mutation-shape difference I cannot resolve without the builder's exact patch.
+- **Citations that do not say what they are claimed to say.** Three: finding 5 (`PROD-READINESS-4.md:133` quotes copy the same commit replaced), finding 6 (`:139` vs `reviews-4/REVIEW-1.md:195`), finding 8 (`AppModel+Export.swift:18-38`). I also checked the citations the ledger makes *into* the code and they hold: `:130`'s "the only caller in `OttoStores` that writes an export file" is true (`exportJSONFile`/`exportChargesCSVFile` have exactly two non-test call sites, both in `prepareExport`); `AppModel.swift:128-132`'s corrected comment matches `NotificationScheduler.swift:254`'s `materializeEvents` call; `reviews-4/REVIEW-1.md`'s nine findings really are 2 P2 + 7 P3 as `:321` says.
+- **Severity inflation or deflation.** One deflation, in finding 1: the ledger carries finding 2's fix as done "on both sides" and finding 6 as guarded, and neither claim survives execution. Nothing is inflated - `:327` carries N4-4 (`NotificationActionHandler`, a bare scheduling pass) as still open rather than claiming it closed, and `:328` keeps N4-1 at the reviewer's severity.
 - **Features smuggled past the no-features rule.** No. `ExportAvailability` and `requestExport` are new public API but are the fix's own vocabulary for state finding 6 named; the footer is copy for the export item, which the exception grants; the failure display moved from a section banner to a per-row label, which is the visible half of the per-kind fix. `Package.swift` untouched in the range, no `UserDefaults` key added anywhere in the diff, no new screen, no new dependency, `.github/workflows/` untouched.
 - **Any SwiftData schema change.** None. `git diff --name-only 54bb611 05ff987` touches eleven files; the only one under `Packages/OttoPersistence/Sources/` is `Store/OttoStore+BillingEvents.swift`. Nothing under `Schema/`, no `OttoSchemaV*.swift`, no `OttoMigrationPlan.swift`. V3 stays frozen.
 - **Prohibited actions.** None observed. `git show-ref` puts `refs/heads/main` and `refs/remotes/origin/main` both at `406a5a6`, so nothing was pushed or merged; there are no tags; `.git/FETCH_HEAD` does not exist; `05ff987` is still an ancestor of the branch tip, so no history was rewritten. `.swiftlint.yml` is untouched - no rule relaxed, disabled, re-thresholded, and no `excluded:` path added. `docs/next-wave.md` and every other narrative document are untouched by this range.
 - **Fixes that relocated a bug rather than removed it.** Finding 4 - the generation guard covers the success branch and not the failure branch, so "a superseded build writes state after the withdrawal" survives one branch over. The `AppModel` split (finding 7) relocates a lot of code and I confirmed by execution that it relocated no behaviour.
 - **Error handling that hides errors.** No new swallowing, and one removal of an old one: `if let event = try? record.toDomain()` became a `do`/`catch` that logs. I checked the logged path actually reaches the log rather than assuming it - deleting the statement fails the test at three assertions, and the message the test reads back carries the row's packed day. `requestExport`'s `_ = try? await …` looks like a swallow and is not: `prepareExport` writes `exportFailures[kind]` before it throws and `exportAvailability` renders it, so the user sees the message. The one degradation is finding 4.
 - **Verification that does not exercise the changed path.** Finding 1, squarely - four of five new withdraw call sites, the per-kind state, and `requestExport` itself. Also worth stating: `AppModel` still has no host test anywhere in the tree, so every item-1 guard in this range is invisible to `scripts/verify.sh` and lives only in the simulator job, which this round's flake protocol never runs.
-- **Tests that pass for the wrong reason.** Two. `theTwoKindsDoNotShareState` (`SettingsExportTests.swift:319-339`) asserts a claim it never produces the conditions for - finding 1. The privacy block in `theUnreportableRowIsNamed` (`:164-167`) asserts the absence of a string the line can never contain - finding 3. I broke the thing every other added or changed test names, and every one of them failed: M1-M7 above, plus the three item-5 mutations, plus the `\n`-only trigger removal.
-- **Flaky or environment-dependent tests.** None observed. FLAKE_CHECK The new persistence log test asserts over a shared window and is pinned correctly: its own subscription index 7011, unique in the target, and every assertion filtered to that UUID, so the ~80 ms `position(date:)` lookback that catches its two siblings' lines cannot move its count. I checked the reverse direction too - `MappingLogPrivacyTests`' whole-window assertion at `:102` filters on `"Skipping unmappable record"`, which the new message does not contain, so the tenth reader does not contaminate the existing ones. Two of the new UI tests discard `settle`'s return (`SettingsExportTests.swift:301`, `:327`) against the helper's own documented rule at `:139-141`; in `aWithdrawalDuringABuildWins` a timeout still fails, in `theTwoKindsDoNotShareState` it would pass without ever producing the interleaving. Not observed to fire on this host.
+- **Tests that pass for the wrong reason.** Two. `theTwoKindsDoNotShareState` (`SettingsExportTests.swift:316-339`) asserts a claim it never produces the conditions for - finding 1. The privacy block in `theUnreportableRowIsNamed` (`:164-167`) asserts the absence of a string the line can never contain - finding 3. I broke the thing every other added or changed test names, and every one of them failed: M1-M7 above, plus the three item-5 mutations, plus the `\n`-only trigger removal.
+- **Flaky or environment-dependent tests.** None observed: 12 of 12 on `swift test --package-path Packages/OttoUI`, 6 of 6 on `Packages/OttoPersistence`, 10 simulator runs, 3 harness runs, all with the same test counts. The new persistence log test asserts over a shared window and is pinned correctly: its own subscription index 7011, unique in the target, and every assertion filtered to that UUID, so the ~80 ms `position(date:)` lookback that catches its two siblings' lines cannot move its count. I checked the reverse direction too - `MappingLogPrivacyTests`' whole-window assertion at `:102` filters on `"Skipping unmappable record"`, which the new message does not contain, so the tenth reader does not contaminate the existing ones. Two of the new UI tests discard `settle`'s return (`SettingsExportTests.swift:301`, `:327`) against the helper's own documented rule at `:140-142` (*"the caller asserts on that, so a timeout is a named failure and never a silent pass"*); in `aWithdrawalDuringABuildWins` a timeout still fails downstream, in `theTwoKindsDoNotShareState` it would pass without ever producing the interleaving. Not observed to fire on this host across ten simulator runs.
 - **Anything marked resolved without an artifact.** Inverted here, and that is finding 2: the range delivers item 5 and marks it nothing at all - the work list still says `pending` at the reviewed head. Items 1 and 2 remain RESOLVED and both now carry re-derived tables that reproduce.
 - **Every commit in the range builds all three packages.** Yes - 9 of 9, table above.
 - **The `OSLogStore` rule.** This range adds the **tenth** read (`UnreportableInvalidationTests.swift:152`). The cost and the shared-query argument are stated - in the test's own doc comment, not in the ledger at this head. See finding 9 for what I measured and for the alternative that was not weighed.
