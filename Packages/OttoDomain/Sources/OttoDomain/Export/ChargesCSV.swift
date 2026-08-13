@@ -73,10 +73,12 @@ private func csvField(_ value: String) -> String {
 /// `=` and `+` start a formula in Excel, Numbers, LibreOffice and Sheets; `@`
 /// starts one in Excel and is the legacy Lotus form; `-` starts one wherever a
 /// leading minus is not immediately a number, which is what makes
-/// `-2+3+cmd|' /C calc'!A0` a command and not a negative amount. Tab and
-/// carriage return are here because several importers strip a leading one and
-/// then evaluate what is behind it.
-private let csvFormulaTriggers: Set<Character> = ["=", "+", "-", "@", "\t", "\r"]
+/// `-2+3+cmd|' /C calc'!A0` a command and not a negative amount. Tab, carriage
+/// return and newline are here because several importers strip a leading one
+/// and then evaluate what is behind it - and the rule stated has to be the rule
+/// implemented, which is why `\n` is present: `reviews-4/REVIEW-1.md` finding 8
+/// noted it was covered by the sentence and absent from the set.
+private let csvFormulaTriggers: Set<Character> = ["=", "+", "-", "@", "\t", "\r", "\n"]
 
 /// F9. Only the export's THREE text fields reach this - the subscription name,
 /// the state word and the currency code - and only the first is user-controlled.

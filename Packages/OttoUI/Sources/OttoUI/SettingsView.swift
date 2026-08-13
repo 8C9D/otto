@@ -142,8 +142,6 @@ private struct NotificationPermissionSection: View {
 
 private struct ExportSection: View {
     @Environment(AppModel.self) private var model
-    @State private var preparing: ExportKind?
-    @State private var failure: String?
 
     /// F8: this section had `.task { await regenerate() }`, so ARRIVING here
     /// wrote the complete unencrypted JSON backup and the charge CSV into the
@@ -162,10 +160,6 @@ private struct ExportSection: View {
     /// read them. Nothing here is written until a tap.
     var body: some View {
         Section {
-            if let failure {
-                Label(failure, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-            }
             exportRow(
                 .json,
                 title: String(localized: "Export everything (JSON)"),
@@ -184,42 +178,42 @@ private struct ExportSection: View {
             and price change, importable on this or another device. The CSV is \
             for reading in a spreadsheet; it can't be imported back.
 
-            Otto builds a file only when you ask for it, and stops offering it \
-            once your data changes - a backup is a complete copy of your \
-            finances, and a stale one is worse than none.
+            Otto builds a file only when you ask for it, so a complete copy of \
+            your finances isn't left lying around. Editing a subscription or \
+            importing a backup withdraws one you already built.
             """))
         }
     }
 
+    /// Every branch reads the model, and the tap is one call with no logic in
+    /// it. The state machine this used to hold in `@State` - which kind is
+    /// preparing, which failed - is unreachable from any test in a `private
+    /// struct`, and it could not represent two exports at once.
     @ViewBuilder
     private func exportRow(_ kind: ExportKind, title: String, symbol: String) -> some View {
-        if let url = model.preparedExport(kind) {
+        switch model.exportAvailability(kind) {
+        case .ready(let url):
             ShareLink(item: url) {
                 Label(title, systemImage: symbol)
             }
-        } else if preparing == kind {
+        case .preparing:
             Label(title, systemImage: symbol)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(String(localized: "\(title), preparing"))
-        } else {
-            Button {
-                prepare(kind)
-            } label: {
-                Label(title, systemImage: symbol)
-            }
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.red)
+            retryButton(kind, title: title, symbol: symbol)
+        case .notPrepared:
+            retryButton(kind, title: title, symbol: symbol)
         }
     }
 
-    private func prepare(_ kind: ExportKind) {
-        preparing = kind
-        Task {
-            do {
-                try await model.prepareExport(kind)
-                failure = nil
-            } catch {
-                failure = error.localizedDescription
-            }
-            preparing = nil
+    private func retryButton(_ kind: ExportKind, title: String, symbol: String) -> some View {
+        Button {
+            model.requestExport(kind)
+        } label: {
+            Label(title, systemImage: symbol)
         }
     }
 }

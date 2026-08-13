@@ -29,9 +29,30 @@ import UIKit
 /// starts - it cannot miss a write that began and had not finished.
 private actor CountingTransfer: DataTransferRepository {
     private(set) var snapshotCalls = 0
+    /// Set by `hold()`: the next `completeSnapshot()` parks here until
+    /// `release()`, so a test can make something happen while a build is
+    /// genuinely suspended rather than hoping for an interleaving.
+    private var gate: CheckedContinuation<Void, Never>?
+    private var holding = false
+    private(set) var isWaiting = false
+
+    func hold() { holding = true }
+
+    func release() {
+        holding = false
+        gate?.resume()
+        gate = nil
+        isWaiting = false
+    }
 
     func completeSnapshot() async throws -> OttoDataSnapshot {
         snapshotCalls += 1
+        if holding {
+            isWaiting = true
+            await withCheckedContinuation { continuation in
+                gate = continuation
+            }
+        }
         return OttoDataSnapshot()
     }
 
@@ -80,7 +101,8 @@ struct SettingsExportTests {
     private static let today = CalendarDay(year: 2026, month: 8, day: 12)
 
     private func makeModel(
-        transfer: CountingTransfer, client: CountingClient, suite: String, today: CalendarDay
+        transfer: CountingTransfer, client: CountingClient, suite: String, today: CalendarDay,
+        withNotifications: Bool = true
     ) -> AppModel {
         let repository = PreviewRepository()
         return AppModel(
@@ -89,9 +111,11 @@ struct SettingsExportTests {
                 cancellations: repository, priceChanges: repository,
                 paymentMethods: repository, transfer: transfer
             ),
-            notifications: NotificationStatusStore(
-                scheduler: IdleScheduler(), client: client, dates: .fixed(today: today)
-            ),
+            notifications: withNotifications
+                ? NotificationStatusStore(
+                    scheduler: IdleScheduler(), client: client, dates: .fixed(today: today)
+                )
+                : nil,
             settings: SettingsStore(
                 userDefaults: UserDefaults(suiteName: suite) ?? .standard
             ),
@@ -180,10 +204,6 @@ struct SettingsExportTests {
     /// The other half of the same staleness, on the path a user takes far more
     /// often than an import: editing or deleting a subscription. The prepared
     /// file describes the database before the edit.
-    ///
-    /// This also pins the hook itself: `subscriptionsStore.onMutation` used to
-    /// be installed only inside `if let notifications`, so "the data changed"
-    /// was observable only on a model that could schedule reminders.
     @Test("⛔ deleting a subscription withdraws every export prepared before it")
     func aMutationWithdrawsAPreparedExport() async throws {
         let transfer = CountingTransfer()
@@ -202,6 +222,120 @@ struct SettingsExportTests {
         try await model.subscriptionsStore.delete(subscriptionID: victim.id)
 
         #expect(model.preparedExport(.json) == nil)
+    }
+
+    /// ⛔ The hook itself, on the model shape that used to skip it.
+    ///
+    /// `subscriptionsStore.onMutation` was installed only inside
+    /// `if let notifications`, so "the data changed" was observable only on a
+    /// model that could schedule reminders. The suite's other tests all build a
+    /// model WITH a notification store, so re-wrapping the wiring in that
+    /// condition left every one of them green - `reviews-4/REVIEW-1.md`
+    /// finding 5 measured it. This is the model the condition excluded.
+    @Test("⛔ a model with no notification engine still withdraws on a mutation")
+    func theHookIsWiredWithoutANotificationEngine() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.5",
+            today: try #require(Self.today), withNotifications: false
+        )
+        #expect(model.notifications == nil)
+
+        try await model.prepareExport(.json)
+        #expect(model.preparedExport(.json) != nil)
+
+        await model.subscriptionsStore.refresh()
+        let loaded = try #require(model.subscriptionsStore.subscriptions.value)
+        try await model.subscriptionsStore.delete(subscriptionID: try #require(loaded.first).id)
+
+        #expect(model.preparedExport(.json) == nil)
+    }
+
+    /// ⛔ Payment methods are a stored collection of the JSON backup, and that
+    /// store had no mutation hook at all. `reviews-4/REVIEW-1.md` finding 2
+    /// demonstrated the stale file still on offer after a card was saved.
+    @Test("⛔ saving a payment method withdraws a prepared export")
+    func aPaymentMethodWriteWithdraws() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.6",
+            today: try #require(Self.today)
+        )
+
+        try await model.prepareExport(.json)
+        #expect(model.preparedExport(.json) != nil)
+
+        try await model.paymentMethodsStore.save(
+            PaymentMethod(
+                id: UUID(), label: "Visa", last4: "4242", issuer: "Visa",
+                expiryMonth: 6, expiryYear: 2030, isDefault: false,
+                createdAt: Date(timeIntervalSince1970: 0),
+                updatedAt: Date(timeIntervalSince1970: 0)
+            )
+        )
+
+        #expect(model.preparedExport(.json) == nil)
+    }
+
+    /// ⛔ A withdrawal that lands while a build is suspended must win.
+    ///
+    /// `prepareExport` awaits the export actor, so a `flowFinished()` or a
+    /// mutation is free to run in the gap and the assignment afterwards would
+    /// re-offer a file built from the older snapshot - the same staleness,
+    /// relocated (`reviews-4/REVIEW-1.md` finding 3). Export and Import are rows
+    /// on the same screen, so this is reachable by hand.
+    @Test("⛔ a withdrawal during an in-flight build is not overwritten by it")
+    func aWithdrawalDuringABuildWins() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.7",
+            today: try #require(Self.today)
+        )
+
+        await transfer.hold()
+        let build = Task { try await model.prepareExport(.json) }
+        // The build is suspended inside `completeSnapshot()`.
+        _ = await settle { await transfer.isWaiting }
+        #expect(model.exportAvailability(.json) == .preparing)
+
+        model.withdrawPreparedExports()
+        await transfer.release()
+        _ = try await build.value
+
+        #expect(model.preparedExport(.json) == nil)
+        #expect(model.exportAvailability(.json) == .notPrepared)
+    }
+
+    /// ⛔ Two exports at once. A single-valued `preparing` flag made the JSON
+    /// row a live button again the moment the CSV was tapped, and clearing it
+    /// wiped the other row's state; one shared `failure` did the same for
+    /// errors (`reviews-4/REVIEW-1.md` finding 6).
+    @Test("⛔ the two export kinds have independent state")
+    func theTwoKindsDoNotShareState() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.8",
+            today: try #require(Self.today)
+        )
+
+        await transfer.hold()
+        let json = Task { try await model.prepareExport(.json) }
+        _ = await settle { await transfer.isWaiting }
+        #expect(model.exportAvailability(.json) == .preparing)
+        // The other row is untouched by the first one being in flight.
+        #expect(model.exportAvailability(.chargesCSV) == .notPrepared)
+
+        await transfer.release()
+        _ = try await json.value
+        #expect(model.exportAvailability(.chargesCSV) == .notPrepared)
+        guard case .ready = model.exportAvailability(.json) else {
+            Issue.record("the JSON row is \(model.exportAvailability(.json)), not ready")
+            return
+        }
     }
 
     /// R0-10(b). The file on disk describes the database as it was BEFORE the

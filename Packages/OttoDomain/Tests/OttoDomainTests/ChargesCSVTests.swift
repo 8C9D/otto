@@ -126,6 +126,7 @@ struct ChargesCSVTests {
             "@SUM(1+1)*cmd|' /C calc'!A0": "'@SUM(1+1)*cmd|' /C calc'!A0",
             "\t=1+1": "'\t=1+1",
             "\r=1+1": "\"'\r=1+1\"",
+            "\n=1+1": "\"'\n=1+1\"",
             "Netflix": "Netflix",
             "FoodApp (5% off)": "FoodApp (5% off)"
         ]

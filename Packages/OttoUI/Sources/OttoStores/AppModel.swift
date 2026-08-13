@@ -62,6 +62,22 @@ public final class AppModel {
 
     private let repositories: Repositories
 
+    // MARK: - Export state (F8 / R0-10(b))
+    //
+    // Stored here because an extension cannot hold stored properties;
+    // everything that reads or writes them is in AppModel+Export.swift.
+    // `internal`, not `private`, for the same reason.
+    var prepared: [ExportKind: URL] = [:]
+    var preparing: Set<ExportKind> = []
+    var exportFailures: [ExportKind: String] = [:]
+    /// Bumped by every withdrawal, so a build that was already in flight when
+    /// the data changed cannot install its result afterwards
+    /// (`reviews-4/REVIEW-1.md` finding 3). This model is `@MainActor` but
+    /// `prepareExport` suspends, and Export and Import are rows on the same
+    /// screen - a large export started and an import finished during it is the
+    /// exact interleaving.
+    var exportGeneration = 0
+
     public init(
         repositories: Repositories,
         notifications: NotificationStatusStore? = nil,
@@ -102,11 +118,21 @@ public final class AppModel {
             await notifications?.reschedule()
             self?.withdrawPreparedExports()
         }
+        // Payment methods are a stored collection of the JSON backup, and this
+        // store had no mutation hook at all, so saving or deleting a card left
+        // a prepared export on offer describing the cards as they were.
+        self.paymentMethodsStore.onMutation = { [weak self] in
+            self?.withdrawPreparedExports()
+        }
         if let notifications {
-            // A notification-time change re-times every pending reminder. It
-            // changes no record, so it does not withdraw an export.
-            self.settings.onReminderTimeChange = { [weak notifications] in
+            // A notification-time change re-times every pending reminder, and
+            // the reschedule it triggers also MATERIALIZES ledger rows - rows
+            // the charges CSV prints. An earlier version of this comment said it
+            // "changes no record", which `reviews-4/REVIEW-1.md` finding 2
+            // measured false against `NotificationScheduler.materializeEvents`.
+            self.settings.onReminderTimeChange = { [weak self, weak notifications] in
                 await notifications?.reschedule()
+                self?.withdrawPreparedExports()
             }
         }
     }
@@ -116,7 +142,7 @@ public final class AppModel {
     /// Every flow method runs the state work, then reschedules (a state change
     /// is a §6.2 trigger) and refreshes the published lists so every screen
     /// reflects it.
-    private func flowFinished() async {
+    func flowFinished() async {
         // Every flow here changes a record, so any export prepared before it now
         // describes a database that no longer exists (R0-10(b)).
         withdrawPreparedExports()
@@ -215,6 +241,8 @@ public final class AppModel {
         try await flows.appendCancellationEvidence(
             subscriptionID: subscriptionID, text: text, now: dates.now()
         )
+        // Evidence notes are encoded in the export, so a prepared one is stale.
+        withdrawPreparedExports()
         await subscriptionsStore.refresh()
     }
 
@@ -223,6 +251,7 @@ public final class AppModel {
         try await flows.updateCancellationEvidence(
             subscriptionID: subscriptionID, noteID: noteID, text: text, now: dates.now()
         )
+        withdrawPreparedExports()
         await subscriptionsStore.refresh()
     }
 
@@ -238,70 +267,6 @@ public final class AppModel {
             today: dates.today()
         )
         await flowFinished()
-        return summary
-    }
-
-    // MARK: - Export and import (Wave 8)
-
-    /// The export files this session has been ASKED for, by kind (F8).
-    ///
-    /// An export is a complete, unencrypted copy of the user's finances.
-    /// Building one on a view's `.task` wrote both of them into the temporary
-    /// directory every time the user so much as opened Settings - measured at
-    /// `2d8913c` by rendering the real screen: two `completeSnapshot()` calls
-    /// and two files on disk from an appearance alone, with nothing asked for
-    /// and nothing shared.
-    ///
-    /// Kept here rather than in the view's `@State` for the second half of the
-    /// same defect, R0-10(b): the file describes the database at the instant it
-    /// was built, so whatever replaces the database has to be able to withdraw
-    /// it. A view's `@State` is reachable from nothing that knows an import
-    /// happened, which is exactly why the share sheet went on offering the
-    /// pre-import copy.
-    private var prepared: [ExportKind: URL] = [:]
-
-    /// The file ready to share for `kind`, or nil when none has been asked for
-    /// since the last change to the database.
-    public func preparedExport(_ kind: ExportKind) -> URL? { prepared[kind] }
-
-    /// Builds one export because the user asked for it, and remembers that they
-    /// did. The only path that writes an export file.
-    @discardableResult
-    public func prepareExport(_ kind: ExportKind) async throws -> URL {
-        let url = switch kind {
-        case .json:
-            try await exports.exportJSONFile(exportedAt: dates.now(), today: dates.today())
-        case .chargesCSV:
-            try await exports.exportChargesCSVFile(today: dates.today())
-        }
-        prepared[kind] = url
-        return url
-    }
-
-    /// Stops offering every prepared export (R0-10(b)).
-    ///
-    /// Called wherever this model knows the database changed. The file on disk
-    /// is left alone - it is in the temporary directory and the system reclaims
-    /// it - because deleting a file the share sheet may already be reading is a
-    /// worse failure than leaving one behind. What changes is that Otto stops
-    /// handing it out.
-    public func withdrawPreparedExports() {
-        prepared.removeAll()
-    }
-
-    /// What an import of `url` would bring, and whether the merge-or-replace
-    /// question even arises. Touches nothing.
-    public func importPreview(from url: URL) async throws -> ImportPreview {
-        try await exports.importPreview(from: url)
-    }
-
-    /// Runs the import, then treats it as the large mutation it is: reschedule
-    /// (which also materializes the imported subscriptions' ledgers) and
-    /// refresh every published list.
-    public func importData(from url: URL, strategy: ImportStrategy) async throws -> ImportSummary {
-        let summary = try await exports.performImport(from: url, strategy: strategy, now: dates.now())
-        await flowFinished()
-        await paymentMethodsStore.refresh()
         return summary
     }
 
