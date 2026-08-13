@@ -495,3 +495,28 @@ The line's fields are composed in `OttoLog.passEndFields` so a test can read the
 The contract requires every reviewer to do its mutation work in a detached worktree, and the **source** tree is clean (`git status --porcelain` empty at the end of every stage, and every flake run in every gate reported the same test counts as the clean-clone `verify.sh`), so nothing measured here is contaminated.
 But a build cache under the main package path can only be written by a command whose `--package-path` pointed at the main tree.
 **The worktree rule protects the source and says nothing about the build directory**, which is shared, and that is a real gap in the contract rather than in any one reviewer.
+
+---
+
+## NOT DEFECTS
+
+A finding that no longer reproduced at HEAD would be here with its evidence rather than fixed.
+
+**None.**
+All seven work-list items were reconfirmed by **executing** the defect before being touched, never by reading the citation:
+
+| item | how it was executed |
+|---|---|
+| F8 + R0-10(b) | rendered `SettingsView` in a real `UIWindow` - 2 `completeSnapshot()` calls and two files in `tmp` from an appearance alone; the offered file held 0 subscriptions after an import restored 1 |
+| F9 | exported a snapshot of five hostile names - every one came back byte-for-byte, including `-2+3+cmd\|' /C calc'!A0` |
+| N3-1 / N3-2 | drove the real scheduler over an Indian and an Ethiopic anchor - 4 reminders each, on the wrong days, `canClaimCoverage=true` |
+| F10 | fired five triggers - 5 passes at peak concurrency 3 |
+| R0-11 | two unmappable future rows - reported 0, committed 0, then 2 committed by an unrelated `save()` |
+| N3-3 | deleted the production skip statement - the test failed with the message that means "the log statement is gone", which is also what an empty window produced |
+| R4-3 | removed the field - a truncated pass and a whole pass produce byte-identical lines |
+
+## DEFERRED
+
+- **R0-7's repair** - repairing calendar days already stored under a non-Gregorian device calendar. Unchanged from round 3, and for round 3's reason: the writing calendar was never recorded and cannot be recovered. Round 4 closed **detection** for one of the two calendars round 3 could not reach; the days stay wrong until a human fixes them, and `docs/next-wave.md` now tells that human how.
+- **Ethiopic detection** - no distance threshold reaches 7-8 years, and the `createdAt` cross-check is declined on the measurement under ITEM 3. Nothing known closes it.
+- **F7 - clock monotonicity in merge resolution.** Scoped to the CloudKit wave; prior analysis in `docs/sync-safety.md`. Untouched by all four rounds.
