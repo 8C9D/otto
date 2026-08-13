@@ -185,15 +185,18 @@ struct NotificationCoordinatorTests {
     /// ⛔ F10. Every §6.2 trigger used to spawn its own unstructured `Task`.
     ///
     /// Measured at `00cb0f1`, before the gate, with this exact test: five
-    /// triggers produced **5 passes at a peak concurrency of 3** - three
-    /// simultaneous full reschedules, each loading every subscription,
-    /// reconciling every ledger and writing every watermark, racing on the same
-    /// rows. The peak is 3 rather than 5 because that is what the executor
-    /// actually interleaved; the number quoted here is the one measured, not
-    /// the one predicted. This is not a contrived burst: a foreground open
-    /// fires `.foreground` while a delivered notification fires
-    /// `.notificationDelivered`, and a timezone change and a significant-time
-    /// change arrive together.
+    /// triggers produced **5 passes**, and the peak concurrency varied run to
+    /// run - 3 on the builder's single run, and **2, 5, 3, 3** across
+    /// `reviews-4/REVIEW-3.md`'s four. The PASS COUNT is a property of the
+    /// code and reproduces every time; the peak is a property of the executor
+    /// and does not, so only the pass count belongs in a record. What every
+    /// run agrees on is that more than one full reschedule was in flight -
+    /// each loading every subscription, reconciling every ledger and writing
+    /// every watermark, against the same rows.
+    ///
+    /// This is not a contrived burst: a foreground open fires `.foreground`
+    /// while a delivered notification fires `.notificationDelivered`, and a
+    /// timezone change and a significant-time change arrive together.
     ///
     /// Deterministic without a sleep. The triggers are fired with no `await`
     /// between them, so every `Task` the coordinator creates is still queued
@@ -206,6 +209,12 @@ struct NotificationCoordinatorTests {
         var published: [ScheduleOutcome?] = []
         coordinator.onOutcome = { published.append($0) }
 
+        // Only the five trigger classes production actually routes through
+        // this gate. `.stateChange` goes through NotificationStatusStore and
+        // `.backgroundRefresh` through handleBackgroundRefresh, and neither
+        // reaches `rescheduleSoon` in the app - firing them here depicted a
+        // gate wider than the one that exists (`reviews-4/REVIEW-3.md`
+        // finding 2).
         let triggers: [RescheduleTrigger] = [
             .foreground, .notificationDelivered, .timeZoneChange,
             .significantTimeChange, .notificationAction
@@ -229,8 +238,9 @@ struct NotificationCoordinatorTests {
         let scheduler = SchedulerSpy(outcome: try healthyOutcome())
         let coordinator = try makeCoordinator(scheduler: scheduler)
         scheduler.fireDuringFirstPass { [weak coordinator] in
-            // Three more, all while the first pass is genuinely in flight.
-            _ = coordinator?.rescheduleSoon(.stateChange)
+            // Three more, all while the first pass is genuinely in flight, and
+            // all trigger classes this gate really carries.
+            _ = coordinator?.rescheduleSoon(.notificationDelivered)
             _ = coordinator?.rescheduleSoon(.notificationAction)
             _ = coordinator?.rescheduleSoon(.timeZoneChange)
         }
@@ -250,8 +260,8 @@ struct NotificationCoordinatorTests {
         let coordinator = try makeCoordinator(scheduler: scheduler)
 
         await coordinator.rescheduleSoon(.foreground).value
-        await coordinator.rescheduleSoon(.backgroundRefresh).value
-        await coordinator.rescheduleSoon(.stateChange).value
+        await coordinator.rescheduleSoon(.notificationDelivered).value
+        await coordinator.rescheduleSoon(.timeZoneChange).value
 
         #expect(scheduler.passes.count == 3)
         #expect(scheduler.peakConcurrency == 1)
@@ -264,17 +274,40 @@ struct NotificationCoordinatorTests {
     /// wake-up that lands while the app is in the foreground therefore runs a
     /// second pass rather than being coalesced into the first.
     ///
-    /// **What this does NOT show is overlap.** The obvious next assertion -
-    /// `peakConcurrency == 2` - was written and then deleted, because it does
-    /// not reproduce: measured here the two passes run one after the other and
-    /// the peak is 1. Whether they can overlap depends on when the executor
-    /// resumes each task, and this harness does not force it. So the recorded
-    /// claim is the one that is true of every run - the background pass is not
-    /// coalesced - and no claim is made about concurrency.
+    /// **They do overlap, about one run in six.** An earlier version of this
+    /// comment said `peakConcurrency == 2` "does not reproduce", on the
+    /// strength of one run that scheduled serially. `reviews-4/REVIEW-3.md`
+    /// finding 1 ran this exact scenario 60 times per execution, four times
+    /// over, and measured the two passes genuinely interleaving in **45 of 240
+    /// iterations**:
     ///
-    /// Recorded rather than fixed: routing the background pass through the same
-    /// chain changes what `expirationHandler` cancels, and that is a blast
-    /// radius this item did not measure. `PROD-READINESS-4.md` N4-3.
+    ///     peak distribution [(1, 49), (2, 11)] / [(1, 49), (2, 11)]
+    ///                       [(1, 47), (2, 13)] / [(1, 50), (2, 10)]
+    ///
+    /// Re-measured here independently rather than taken on the reviewer's
+    /// word, with a spy that suspends six times to model what the real
+    /// scheduler does before its first write - **74 of 180 iterations**:
+    ///
+    ///     [(1, 34), (2, 26)] / [(1, 39), (2, 21)] / [(1, 33), (2, 27)]
+    ///
+    /// So the rate is not a fixed property either; it rises with the number of
+    /// suspension points the pass has, and the real pass has more than the
+    /// shipped spy. `NotificationScheduler` is an actor, but `reschedule`
+    /// suspends repeatedly before it writes anything, so the actor interleaves
+    /// passes rather than serialising them. That overlap IS F10, still live on
+    /// this path. Measuring a non-deterministic quantity once and recording
+    /// the sample as the property is the same mistake the twelve-run flake
+    /// protocol exists to prevent, made from the other side.
+    ///
+    /// This test asserts only the part that holds on every run, because an
+    /// assertion that is true 18 % of the time is a flaky test rather than a
+    /// guard. The overlap is recorded as **N4-3**, at P2.
+    ///
+    /// Not fixed here: routing the background pass through the same chain
+    /// changes what `expirationHandler` cancels, and there is a THIRD ungated
+    /// entry point besides - `NotificationStatusStore.reschedule()` - so the
+    /// fix belongs at the `ReminderScheduling` seam the three callers share,
+    /// not in this class. `PROD-READINESS-4.md` N4-3 and N4-7.
     @Test("the background pass is NOT coalesced with the foreground one")
     func theBackgroundPassIsOutsideTheGate() async throws {
         let scheduler = SchedulerSpy(outcome: try healthyOutcome())

@@ -159,6 +159,33 @@ public final class NotificationCoordinator: NSObject {
     ///
     /// The returned `Task` is the whole chain, so awaiting it awaits every pass
     /// the caller's trigger caused.
+    ///
+    /// **This gate covers the five trigger classes that come through HERE, and
+    /// no others.** Two more paths reach the same shared `NotificationScheduler`
+    /// without passing this line, and both can overlap a pass this gate is
+    /// running - measured, not reasoned (`reviews-4/REVIEW-3.md`):
+    ///
+    ///  - `handleBackgroundRefresh`, which owns the completion latch and the
+    ///    expiration race and builds its own `Task`: overlaps in 45 of 240
+    ///    iterations;
+    ///  - **`NotificationStatusStore.reschedule()`**, which every create, edit,
+    ///    delete, §5.4 flow and reminder-time change goes through, calling the
+    ///    scheduler directly with `.stateChange`: overlaps in 33 of 240.
+    ///
+    /// So the store path - the most frequent trigger class in ordinary use - is
+    /// ungated, and `.stateChange` never arrives here at all. Closing it means
+    /// putting the gate at the `ReminderScheduling` seam the three callers
+    /// share rather than in this class, which is a larger change than F10 was
+    /// scoped to. `PROD-READINESS-4.md` N4-3 and N4-7.
+    ///
+    /// **A coalesced trigger leaves no log line.** The trigger name reaches the
+    /// log only through the `reschedule(now:today:timeZone:trigger:)` wrapper,
+    /// which a coalesced trigger never calls, and `queued` is an unconditional
+    /// overwrite - so a burst of five that used to produce five `pass begin`
+    /// lines now produces one or two, tagged with whichever arrived last. That
+    /// is an inherent cost of coalescing rather than a defect, and it is a real
+    /// reduction in the investigative surface this codebase pays for elsewhere.
+    /// `PROD-READINESS-4.md` N4-8.
     @discardableResult
     func rescheduleSoon(_ trigger: RescheduleTrigger) -> Task<Void, Never> {
         if let inFlight {
