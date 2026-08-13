@@ -31,9 +31,12 @@ struct SchedulingLogTests {
         #expect(!rendered.contains("("))
     }
 
-    /// ⛔ R4-3. `ScheduleOutcome.truncatedAfter` reached nothing at all - the
-    /// scheduler set it, `coveredThrough` was derived from the same local, and
-    /// no reader anywhere asked the outcome for it.
+    /// ⛔ R4-3. `ScheduleOutcome.truncatedAfter` reached no PRODUCTION reader -
+    /// the scheduler set it, `coveredThrough` was derived from the same local
+    /// variable rather than from the field, and nothing in the app, the UI or
+    /// the store layer asked the outcome for it. Two tests did read it
+    /// (`NotificationSchedulerTests`, `CatchUpDeliveryTests`), which is why the
+    /// claim is scoped here rather than written as "no reader anywhere".
     ///
     /// The discriminating case, which is the whole finding: two passes that
     /// agree on EVERY field the line used to carry, one of which dropped rungs

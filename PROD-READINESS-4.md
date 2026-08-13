@@ -609,7 +609,7 @@ Reconciled item by item against round 3's list, not summarised.
 | **N2-1** locale-sensitive tests | still open, P2 | **still open**, unmoved - the same five citations under `ar_SA`, `th_TH`, `ja_JP` at every stage head |
 | **N2-2** | see R0-7 | see R0-7 |
 | **N2-3** | withdrawn | remains withdrawn |
-| **N2-4** | fixed in round 2 | fixed. Item 5's and item 7's new lines were sized against the same budget - the longest is ~120 characters against the ~1050-character cap |
+| **N2-4** | recorded as fixed in round 2 | **NOT fixed, and its closure was false.** `reviews-4/REVIEW-AA92CA7.md` finding 1 measured it: giving the failure list "its own entry" moved it to the *same* ~1024-byte per-entry budget, buying only the ~200 bytes of prefix. The list still truncates from six subscriptions upward and names **16 of 64** failed rungs at the device ceiling - measured at `aa92ca7` and at the tip. The false closure propagated into `PROD-READINESS-3.md` and into an earlier version of this table. **Reopened.** This run's own new lines are ~120 characters and are not at risk |
 | **N3-1** | open, P2 - two calendars undetectable | **HALF CLOSED** - Indian/Saka is detected in every month and for every field. Ethiopic is not and no threshold reaches it |
 | **N3-2** | open, P2 - the `createdAt` detector deserves a proper evaluation | **CLOSED as a decision.** Evaluated and **declined**, with the sensitivity-versus-gap table and the `lastUsedDate` / `pauseEndsOn` characterisation under ITEM 3. Its K=31 false-positive figure is corrected from 64 to 63 |
 | **N3-3** | open, P2 - no canary on the persistence read | **CLOSED** - item 6, falsified both ways |
@@ -694,3 +694,24 @@ Verdict **PASS-WITH-FINDINGS**. It confirmed item 6 the hard way - under `OS_ACT
 
 - **The `pass end` emission is now guarded, at zero cost, and my justification for leaving it open was wrong.** Restoring the pre-fix interpolation at the call site left the composer correct, its unit test green and **all 209 host tests passing** - R4-3 fully restorable behind a green guard. I had declined to close it "because a tenth `OSLogStore` reader is not a trade worth making"; the reviewer closed it inside a query `SchedulingLogTests` already opens, for **no additional reads at all**. Done the same way here, falsified with the reviewer's own mutation: 1 issue.
 - **One falsification row was measured under a `--filter` the ledger did not mention.** In the suite as shipped, deleting one test's canary leaves a sibling's canary in the shared window and the run stays green - which is the canary answering its own question correctly, since the subsystem did deliver. The row is corrected above and the substance is now demonstrated the way that actually separates the two causes. **Third occurrence in this run of a falsification quoted at a wider scope than it was measured at**, after `reviews-4/REVIEW-1.md` finding 4 and `reviews-4/REVIEW-2.md` finding 2.
+
+## THE `aa92ca7` REJECT, and what this run does about it
+
+`reviews-4/REVIEW-AA92CA7.md` is the **only REJECT of this run**, and it is a verdict on an **inherited** commit from round 2 - the one N3-4 records as never having been inside any review range.
+
+**N3-4 is closed by that review existing.** The finding was "its diff has been read by nobody in three rounds"; it has now been read, adversarially, in a range of its own. That is what item 6's second half asked for.
+
+**The contract's REJECT cycle does not apply to it, and pretending otherwise would be worse than saying so.** "REJECT → remediate, then a different fresh reviewer re-reviews" is written for a stage this run produced. `aa92ca7` is three rounds old; remediating it means either rewriting history, which is prohibited, or opening round 2's work, which is not on the frozen list. So its three P2s are carried, with their measurements, and the run does not claim to have closed them:
+
+1. **N2-4's closure was false, and this run repeated it.** Splitting the failure list onto "its own entry" moved it to the *same* ~1024-byte per-entry budget. The list still truncates from six subscriptions upward and names **16 of 64** failed rungs at the device ceiling - measured at `aa92ca7` and at the current tip. `aa92ca7`'s own criterion (*"a rung that fails and is then not named is exactly the loss RF-3 exists to repair"*) is still violated. **N2-4 is reopened** in the carried-forward table above.
+2. **The `NotificationScheduler+Reconcile.swift` split removed the only executable guard on the §6.2 diff line.** Deleting that whole log statement is green at `aa92ca7` (196/196) and still green at the tip (209/209); the same deletion at `aa92ca7`'s parent fails. The commit's own falsification only proved the *new* line was guarded. **N4-10.**
+3. **"the canary covers all four log-reading tests" was false when written.** This run closed it as item 6, independently, before the review landed.
+
+Plus five P3s, one of which is a test that passes for the wrong reason - removing `emitCanary` from `aFailedActionIsRecorded` alone leaves the suite green, because a sibling's canary is in the shared window. **That is the same mechanism `reviews-4/REVIEW-5.md` finding 2 found in this run's own item 6**, arrived at independently from a commit three rounds apart, which is the strongest evidence in this run that the shared-window pattern is a systemic hazard rather than a series of individual slips. **N4-11.**
+
+## A second process risk in the review contract, observed rather than inferred
+
+`reviews-4/REVIEW-5.md` reports catching **a concurrent reviewer doing mutation work in the main working tree** - modified Swift sources with a live process cwd'd at the repo root - which is hard rule 1, and the stronger form of the `.build` contamination this ledger could only infer earlier.
+
+Nothing measured in this run is affected: every gate's `verify.sh` runs from a clean clone of a committed sha, `git status --porcelain` was checked and empty before each measurement, and every flake batch reported test counts identical to the clean-clone run. But the contract cannot detect this by itself, and a builder who did not happen to look would not know.
+**The rule needs an enforcement, not a sentence**: reviewers should be given a worktree rather than told to make one.

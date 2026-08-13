@@ -127,10 +127,14 @@ extension SerializedPersistenceTests {
             let today = try day(2026, 8, 6)
             // Its OWN subscription index, and every assertion below is filtered
             // to that identifier. The two sibling tests in this suite drive the
-            // same production path and therefore emit the same lines, and
-            // `OSLogStore.position(date:)` reaches ~80 ms behind `since`, so the
-            // window legitimately holds theirs too - measured, as six matches
-            // where this test controls two. Round 3's flake, one file over.
+            // same production path and therefore emit the same lines, and the
+            // window `OSLogStore.position(date:)` opens reaches far further
+            // back than `since` - measured by `reviews-4/REVIEW-5.md` at
+            // **15.30 / 12.66 / 15.12 seconds**, not the "~80 ms" this
+            // codebase has repeated since round 3. At fifteen seconds the
+            // window holds most of a suite, which makes pinning to an
+            // identifier this test owns necessary rather than tidy. Measured
+            // here as six matches where this test controls two.
             let mineIndex = 7011
             let original = try makeSubscription(index: mineIndex, cycleStartDay: try day(2026, 1, 15))
             try await store.save(original)
