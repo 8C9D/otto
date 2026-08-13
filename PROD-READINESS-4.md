@@ -803,11 +803,12 @@ Swept twice, because the first sweep's count was quoted after the branch had gro
 ```
 SWEEP  (at 92174e4)  30 building, 0 non-building, 30 commits
 SWEEP2 (at b1f7909)  38 building, 0 non-building, 38 commits
+SWEEP3 (at 8f3a979)  39 building, 0 non-building, 39 commits   <- the run's head
 ```
 
-The commits after `b1f7909` are this final remediation, and the sweep is re-run once more at the true head below.
+Round 2 shipped a commit that does not compile and recorded it; rounds 3 and 4 have none.
 
-Round 2 shipped a commit that does not compile and recorded it; rounds 3 and 4 have none, and the sweep is the artifact rather than the claim.
+The sweep is the artifact rather than the claim - and the claim has to name the commit it was taken at, which is the whole of `reviews-4/REVIEW-6.md` finding 9.
 
 ## Remediation after `reviews-4/REVIEW-6.md` - the one REJECT of this run's own work
 
@@ -887,3 +888,34 @@ So the objection is recorded, the corrections are made, and **the honest cost is
 - **Findings 5, 6, 7, 9 (P3)** - `N4-12`'s "corrected where round 4 cites it" was written before the sweep it describes and one citation still carried the old figure; the K=31 figure now has four measurements and still no definition (**N4-17**); the R4-3 pin makes a collision unlikely rather than impossible, which is the general form of **N4-11**; and the build sweep is re-run and dated rather than quoted as a standing fact.
 
 **What this means for the run's terminal state.** No work-list item is affected: all seven remain RESOLVED or DEFERRED on the evidence in their own sections, and every one of those sections was reviewed. What is unreviewed is this correction pass over the record and the user-facing document.
+
+## TERMINAL VERIFICATION AT HEAD (`8f3a979`) - all five, measured
+
+| measurement | `reviews-4/BASELINE-4.md` (`2d8913c`) | at HEAD | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 258 / 124 / 207 = **589** | exit 0, **261 / 127 / 209 = 597** | **+8** |
+| `swiftlint --strict` | clean, 220 files | **clean, 225 files** | unchanged |
+| simulator suite | 117 / 72 / 36 = 225, 7 known issues | **119 / 72 / 53 = 244**, 7 known issues, `** TEST SUCCEEDED **` | **+19** |
+| non-Gregorian harness | 1 / 1 / 5 | **1 / 1 / 5**, same five citations | unchanged |
+| flake, twelve full runs | 12 of 12 | **12 of 12** | unchanged |
+
+**Six twelve-run flake batches were taken across this run - 72 runs, 72 passes.**
+Every commit builds all three packages (39 of 39). No lint rule relaxed, one no `custom_rules` entry added and none touched, no test skipped or disabled, no new known issue, the same five non-Gregorian citations throughout, and no SwiftData schema change.
+
+## TERMINATION
+
+Every one of the seven work-list items reached a terminal state, each reconfirmed by **executing** the defect before it was touched and each reviewed:
+
+| # | id | terminal state |
+|---|---|---|
+| 1 | F8 + R0-10(b) | **RESOLVED** |
+| 2 | F9 | **RESOLVED** |
+| 3 | N3-1 / N3-2 | **RESOLVED for Indian/Saka; DEFERRED for Ethiopic**, with the `createdAt` cross-check declined on measurement |
+| 4 | F10 | **RESOLVED** for `rescheduleSoon`; two further entry points carried as N4-3 and N4-7 |
+| 5 | R0-11 | **RESOLVED** |
+| 6 | N3-3 + N3-4 | **RESOLVED** |
+| 7 | R4-3 | **RESOLVED** |
+
+**No item was rejected twice and none was reverted.** The two REJECT verdicts in this run are `reviews-4/REVIEW-AA92CA7.md`, on an inherited round-2 commit, and `reviews-4/REVIEW-6.md` + `reviews-4/REVIEW-7.md`, both on the run's own **remediation** range rather than on any item.
+
+**The one thing in this run that is not reviewed** is the correction pass after `reviews-4/REVIEW-7.md`: the cycle cap was reached and the corrections were made anyway, because they replace false statements - one of them user-facing - with measured ones. That is recorded above rather than presented as a clean finish.
