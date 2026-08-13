@@ -556,3 +556,62 @@ Ten, measured rather than asserted. Rounds 1, 2 and 3 found six, six and eight.
     Item 5's honest fix logs a row it cannot describe, and a log statement with no reader is the R5-2 shape this project has shipped three times. So the choice was a tenth reader or an unguarded statement. The rule is right to demand the cost be stated; it should also say which way to resolve the conflict, because "state the cost" is not a decision procedure.
 
 **One thing the prompt gets conspicuously right**, recorded because the failures above are worth less without it: the flake dimension. Round 3's 3-in-12 defect passed every other gate, and requiring twelve runs at every stage is what makes "12 of 12" mean something. It cost roughly a third of this run's wall time and it is the cheapest of the five dimensions to justify.
+
+## NEXT ROUND
+
+Reconciled item by item against round 3's list, not summarised.
+
+### Round 3's carried-forward list, item by item
+
+| id | round 3's state | round 4's state |
+|---|---|---|
+| **R0-5** | CLOSED in round 3 | closed; untouched here |
+| **R0-7** | HALF CLOSED - detection for 11 of 13, repair DEFERRED | **unchanged as a repair**, and detection improves to **12 of 13** - item 3 closes Indian/Saka. Ethiopic remains, and is now the whole of the residual |
+| **R0-9** | CLOSED in round 3 | closed; untouched here |
+| **R0-10(a)** | CLOSED in round 3 | closed; untouched here |
+| **R0-10(b)** | still open, inside F8 | **CLOSED** - item 1. An import, a §5.4 flow, a subscription create/edit/delete, a payment-method write and a cancellation-evidence edit all withdraw a prepared export |
+| **R0-11** | still open, untouched | **CLOSED** - item 5. The save is keyed on whether a row was mutated rather than on whether it could be described, and the row it cannot describe is named in the log |
+| **F8** | still open, untouched | **CLOSED** - item 1. Nothing is written until the user asks; measured by rendering the real screen |
+| **F9** | still open, untouched | **CLOSED** - item 2 |
+| **F10** | still open, untouched | **CLOSED** - item 4 for `rescheduleSoon`. The background pass is deliberately outside the gate: **N4-3** |
+| **F11** | mostly closed; N3-7 remains | unchanged. The trial, pause and usage flows are still unlogged |
+| **R4-2** | CLOSED in round 3; residuals N3-6b | closed. Item 4 added four more simulator-hosted coordinator tests to the same file; `start()` and the delegate remain untestable |
+| **R4-3** | still open, untouched | **CLOSED** - item 7, by giving the field a reader on the line that summarises the pass. A **user-facing** consumer is still absent: **N4-6** |
+| **R5-1** | CLOSED in round 3 | closed; untouched here |
+| **RF-1** | historical | historical; every round-4 reviewer verified `.git/FETCH_HEAD` absent and `origin/main` at `406a5a6` |
+| **RF-2** | addressed; N3-3 records the gap | **N3-3 CLOSED** - item 6 |
+| **RF-4** | corrected form recorded | used throughout; the absolute-bundle-path form is what every measurement in this run used |
+| Round 0 §4: `SyncActivationService` wired into nothing | still open | **still open**, untouched |
+| Round 0 §4: V2→V3 carry-over verified from the writing context | still open | **still open**, untouched |
+| **N2-1** locale-sensitive tests | still open, P2 | **still open**, unmoved - the same five citations under `ar_SA`, `th_TH`, `ja_JP` at every stage head |
+| **N2-2** | see R0-7 | see R0-7 |
+| **N2-3** | withdrawn | remains withdrawn |
+| **N2-4** | fixed in round 2 | fixed. Item 5's and item 7's new lines were sized against the same budget - the longest is ~120 characters against the ~1050-character cap |
+| **N3-1** | open, P2 - two calendars undetectable | **HALF CLOSED** - Indian/Saka is detected in every month and for every field. Ethiopic is not and no threshold reaches it |
+| **N3-2** | open, P2 - the `createdAt` detector deserves a proper evaluation | **CLOSED as a decision.** Evaluated and **declined**, with the sensitivity-versus-gap table and the `lastUsedDate` / `pauseEndsOn` characterisation under ITEM 3. Its K=31 false-positive figure is corrected from 64 to 63 |
+| **N3-3** | open, P2 - no canary on the persistence read | **CLOSED** - item 6, falsified both ways |
+| **N3-4** | open, P2 - `aa92ca7` outside every review range | **CLOSED** - item 6, by `reviews-4/REVIEW-AA92CA7.md` on its own range. The wording that produced the gap is fixed in this run's REVIEW RANGES section |
+| **N3-5** | open, P2 - the gap card's copy is false for the implausible-days case | **still open**, and now applies to Indian/Saka as well. Re-wording it is new user-facing copy, and this run's exception was granted for the export item only |
+| **N3-6** | open, P2 - nothing tells a non-Gregorian user what to do | **CLOSED** - `docs/next-wave.md` now carries the affected calendars, how to tell, the log predicate that names the exact days, the repair, and the fact that Ethiopic gives no signal at all |
+| **N3-6b** | open, P2 - `start()` and the delegate untested | **still open**, untouched. `BGTaskScheduler.register`, `UNUserNotificationCenter.current()`, `UNNotification` and `UNNotificationResponse` still have no test-safe construction |
+| **N3-7** | open, P3 - trial, pause and usage flows unlogged | **still open**, untouched |
+| **N3-8** | open, P3 - the `OSLogStore` readers' cost | **still open and worse**: the count is nine at baseline, not six, and this run adds a tenth. Re-measured spread at baseline: 15.5 s to 126.4 s across one batch of twelve |
+| **N3-9** | open, P3 - `SettingsView`'s routing of a refused file has no test | **still open**. This run renders `SettingsView` for the first time, to prove an absence; the import-failure routing is still unexercised |
+| **N3-10** | open, P3 - two slack points in item 1's guard | **still open**, untouched. `#expect(caught >= 10)` still has one slot of slack, and the YAML comment still names three of five files |
+| **N3-11** | open, P3 - the snooze `deadlinePassed` branch has no test | **still open**, untouched |
+| **N3-12** | open, P3 - three cancellation refusal lines unguarded | **still open**, untouched |
+
+### Discovered by round 4
+
+- **N4-1 (P2) - the export button's action is verified by nothing.**
+  Deleting the sole call from tap to `AppModel.requestExport(_:)` leaves the whole simulator suite green. Before this run the export was produced unconditionally, so a broken affordance was impossible; after it, a tap that does not reach the model means the user can never produce a backup at all. The remediation shrank the untested surface to one closure with no logic in it and moved the entire state machine onto the model, where eight tests reach it - but the closure itself is unreachable by any test this project can run. Closing it needs a UI-test target, which is a dependency this run may not add.
+- **N4-2 (P2) - "the harm is closed for 11 of 13" was measured on the one calendar where it looks best.**
+  Round 3 measured Buddhist, whose stored year is *ahead*, so nothing is planned and `scheduledCount=0`. For every **negative**-offset calendar the planner still produces rungs from the corrupt anchor and the pass still schedules them. Measured at round 3's HEAD: Japanese, Minguo, Islamic and Persian each schedule **4 reminders on the wrong days**, with the coverage claim correctly withdrawn. Round 4 adds Indian to that set. So the state closed for those calendars is "wrong reminders, disclosed", not "no reminders" - better than silence and not what the ledger says. Whether to stop scheduling from an implausible anchor is a decision no round has taken.
+- **N4-3 (P3) - the background pass is outside the coalescing gate.**
+  `handleBackgroundRefresh` owns the completion latch and the expiration race and builds its own `Task`, so a background wake-up landing during a foreground pass runs a second pass. Whether the two can OVERLAP is **not** established - the assertion was written, measured at peak concurrency 1, and deleted. Routing it through the chain changes what `expirationHandler` cancels.
+- **N4-4 (P3) - two writers still do not withdraw a prepared export.**
+  `NotificationActionHandler` writes state through `model.flows` without passing through `AppModel`, and a bare scheduling pass materializes ledger rows the CSV prints. Both leave a prepared export on offer describing data that has changed. The user-facing copy no longer claims otherwise.
+- **N4-5 (P3) - the `pass end` emission is unguarded.**
+  Item 7 made the line's *composition* testable without a log read, and deleting the `OttoLog.scheduling.notice` call still leaves that test green. The line was unguarded before this run, so this is not a regression; it is the price of not adding an eleventh `OSLogStore` reader, and it should be paid deliberately or not at all.
+- **N4-6 (P3) - no surface tells a user their reminders were truncated.**
+  `truncatedAfter` now reaches an investigator through the log. The person whose annual renewals were dropped past the 64-slot budget still learns it only from an earlier date in "Reminders scheduled through …", which is honest and does not say why.
