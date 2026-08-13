@@ -26,6 +26,19 @@ private let fixtureInstant = Date(timeIntervalSince1970: 1_786_000_000)
 /// allows one level and the spy is already nested in the suite.
 private struct PassRefused: Error {}
 
+/// The spy's whole state under one lock. File-scope for the same reason
+/// `PassRefused` is: `SchedulerSpy` is already one level deep inside the suite,
+/// so a type nested inside IT is two, which `nesting` refuses. Splitting it out
+/// is the fix; re-thresholding the rule is not available and would be wrong.
+private struct SpyState {
+    var passes: [CalendarDay] = []
+    var outcome: ScheduleOutcome?
+    /// How many passes are inside `reschedule` right now, and the most there
+    /// have ever been at once. F10's measurement.
+    var live = 0
+    var peak = 0
+}
+
 @MainActor
 @Suite("NotificationCoordinator: the triggers nothing could reach (R4-2)")
 struct NotificationCoordinatorTests {
@@ -35,20 +48,53 @@ struct NotificationCoordinatorTests {
     /// Records every pass and answers with whatever the test wants. A
     /// `Mutex` rather than an actor because `reschedule` is called from the
     /// coordinator's own `Task` and the assertions read it from the test.
+    ///
+    /// `live`/`peakConcurrency` are F10's measurement: how many passes were
+    /// inside `reschedule` at once. `duringPass` is how a test makes a trigger
+    /// arrive while a pass is genuinely in flight, which is the only state in
+    /// which coalescing has anything to decide.
     private final class SchedulerSpy: ReminderScheduling {
-        private let state: Mutex<(passes: [CalendarDay], outcome: ScheduleOutcome?)>
+        private let state: Mutex<SpyState>
+        /// Run on the main actor from inside the first pass, once.
+        private let duringPass: Mutex<(@MainActor @Sendable () -> Void)?> = Mutex(nil)
+        private let firedDuringPass = Mutex(false)
 
         init(outcome: ScheduleOutcome?) {
-            state = Mutex(([], outcome))
+            state = Mutex(SpyState(outcome: outcome))
+        }
+
+        func fireDuringFirstPass(_ body: @escaping @MainActor @Sendable () -> Void) {
+            duringPass.withLock { $0 = body }
         }
 
         var passes: [CalendarDay] { state.withLock { $0.passes } }
+        var peakConcurrency: Int { state.withLock { $0.peak } }
 
         func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome {
             let outcome = state.withLock { current -> ScheduleOutcome? in
                 current.passes.append(today)
+                current.live += 1
+                current.peak = max(current.peak, current.live)
                 return current.outcome
             }
+            defer { state.withLock { $0.live -= 1 } }
+
+            let pending = duringPass.withLock { $0 }
+            let alreadyFired = firedDuringPass.withLock { was -> Bool in
+                let previous = was
+                was = true
+                return previous
+            }
+            if let pending, !alreadyFired {
+                await MainActor.run { pending() }
+            } else {
+                // A suspension point, so a sibling pass CAN interleave here if
+                // anything let one start. Without it every pass would run to
+                // completion before the next began and the concurrency
+                // measurement would be vacuously 1.
+                await Task.yield()
+            }
+
             guard let outcome else { throw PassRefused() }
             return outcome
         }
@@ -134,6 +180,115 @@ struct NotificationCoordinatorTests {
         #expect(reported == nil)
     }
 
+    // MARK: - Coalescing (F10)
+
+    /// ⛔ F10. Every §6.2 trigger used to spawn its own unstructured `Task`.
+    ///
+    /// Measured at `00cb0f1`, before the gate, with this exact test: five
+    /// triggers produced **5 passes at a peak concurrency of 3** - three
+    /// simultaneous full reschedules, each loading every subscription,
+    /// reconciling every ledger and writing every watermark, racing on the same
+    /// rows. The peak is 3 rather than 5 because that is what the executor
+    /// actually interleaved; the number quoted here is the one measured, not
+    /// the one predicted. This is not a contrived burst: a foreground open
+    /// fires `.foreground` while a delivered notification fires
+    /// `.notificationDelivered`, and a timezone change and a significant-time
+    /// change arrive together.
+    ///
+    /// Deterministic without a sleep. The triggers are fired with no `await`
+    /// between them, so every `Task` the coordinator creates is still queued
+    /// when the last one is submitted; what differs is only whether five tasks
+    /// or one exist to run.
+    @Test("⛔ five triggers fired together run ONE pass, not five")
+    func triggersCoalesce() async throws {
+        let scheduler = SchedulerSpy(outcome: try healthyOutcome())
+        let coordinator = try makeCoordinator(scheduler: scheduler)
+        var published: [ScheduleOutcome?] = []
+        coordinator.onOutcome = { published.append($0) }
+
+        let triggers: [RescheduleTrigger] = [
+            .foreground, .notificationDelivered, .timeZoneChange,
+            .significantTimeChange, .notificationAction
+        ]
+        let tasks = triggers.map { coordinator.rescheduleSoon($0) }
+        for task in tasks { await task.value }
+
+        #expect(scheduler.passes.count == 1)
+        #expect(scheduler.peakConcurrency == 1)
+        // Every caller's task is the same chain, so awaiting any of them awaits
+        // the work that caller's trigger caused.
+        #expect(published.count == 1)
+    }
+
+    /// ⛔ Coalescing must not become dropping. A trigger that arrives after the
+    /// in-flight pass has already read the store describes a change that pass
+    /// cannot have seen, so exactly one follow-up has to run - and exactly one,
+    /// however many arrive.
+    @Test("⛔ a trigger that arrives DURING a pass gets one follow-up, and only one")
+    func aTriggerDuringAPassIsNotSwallowed() async throws {
+        let scheduler = SchedulerSpy(outcome: try healthyOutcome())
+        let coordinator = try makeCoordinator(scheduler: scheduler)
+        scheduler.fireDuringFirstPass { [weak coordinator] in
+            // Three more, all while the first pass is genuinely in flight.
+            _ = coordinator?.rescheduleSoon(.stateChange)
+            _ = coordinator?.rescheduleSoon(.notificationAction)
+            _ = coordinator?.rescheduleSoon(.timeZoneChange)
+        }
+
+        await coordinator.rescheduleSoon(.foreground).value
+
+        #expect(scheduler.passes.count == 2)
+        #expect(scheduler.peakConcurrency == 1)
+    }
+
+    /// The gate must not survive its own chain: a trigger arriving after
+    /// everything has settled starts a fresh pass rather than returning a
+    /// finished task and doing nothing.
+    @Test("⛔ a later trigger still runs, once the chain has drained")
+    func theGateReopensAfterTheChainDrains() async throws {
+        let scheduler = SchedulerSpy(outcome: try healthyOutcome())
+        let coordinator = try makeCoordinator(scheduler: scheduler)
+
+        await coordinator.rescheduleSoon(.foreground).value
+        await coordinator.rescheduleSoon(.backgroundRefresh).value
+        await coordinator.rescheduleSoon(.stateChange).value
+
+        #expect(scheduler.passes.count == 3)
+        #expect(scheduler.peakConcurrency == 1)
+    }
+
+    /// **Characterisation, not a regression guard.** The gate covers
+    /// `rescheduleSoon`, which is what F10 names; `handleBackgroundRefresh`
+    /// builds its own `Task` because it also owns the completion latch and the
+    /// expiration race, and it does NOT go through the gate. A background
+    /// wake-up that lands while the app is in the foreground therefore runs a
+    /// second pass rather than being coalesced into the first.
+    ///
+    /// **What this does NOT show is overlap.** The obvious next assertion -
+    /// `peakConcurrency == 2` - was written and then deleted, because it does
+    /// not reproduce: measured here the two passes run one after the other and
+    /// the peak is 1. Whether they can overlap depends on when the executor
+    /// resumes each task, and this harness does not force it. So the recorded
+    /// claim is the one that is true of every run - the background pass is not
+    /// coalesced - and no claim is made about concurrency.
+    ///
+    /// Recorded rather than fixed: routing the background pass through the same
+    /// chain changes what `expirationHandler` cancels, and that is a blast
+    /// radius this item did not measure. `PROD-READINESS-4.md` N4-3.
+    @Test("the background pass is NOT coalesced with the foreground one")
+    func theBackgroundPassIsOutsideTheGate() async throws {
+        let scheduler = SchedulerSpy(outcome: try healthyOutcome())
+        let coordinator = try makeCoordinator(scheduler: scheduler)
+        let task = FakeRefreshTask()
+
+        let foreground = coordinator.rescheduleSoon(.foreground)
+        let background = coordinator.handleBackgroundRefresh(task)
+        await foreground.value
+        await background.value
+
+        #expect(scheduler.passes.count == 2)
+    }
+
     // MARK: - The background refresh
 
     @Test("⛔ a background pass publishes its outcome, which it never did")
@@ -183,69 +338,5 @@ struct NotificationCoordinatorTests {
 
         #expect(task.completions == [false])
     }
-}
-
-// MARK: - Stubs
-
-// Nothing below is exercised by the assertions above; the coordinator's
-// initializer requires them, and stubbing is cheaper than reaching for the
-// OttoServicesTests fakes, which that target cannot export.
-
-private struct StubSubscriptionRepository: SubscriptionRepository {
-    func save(_ subscription: Subscription) async throws {}
-    func subscription(withID id: UUID) async throws -> Subscription? { nil }
-    func subscriptions() async throws -> [Subscription] { [] }
-    func subscriptionsIncludingDeleted() async throws -> [Subscription] { [] }
-    func unreadableSubscriptionCount() async throws -> Int { 0 }
-    func subscriptionReadRepairs() async throws -> [SubscriptionReadRepairReport] { [] }
-    func deleteSubscription(withID id: UUID, at instant: Date) async throws {}
-}
-
-private struct StubCancellationRepository: CancellationRepository {
-    func save(_ episode: CancellationEpisode) async throws {}
-    func openEpisode(forSubscription subscriptionID: UUID) async throws -> CancellationEpisode? { nil }
-    func episodes(forSubscription subscriptionID: UUID) async throws -> [CancellationEpisode] { [] }
-    func episodesIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [CancellationEpisode] { [] }
-}
-
-private struct StubBillingEventRepository: BillingEventRepository {
-    func save(_ event: BillingEvent) async throws {}
-    func events(forSubscription subscriptionID: UUID) async throws -> [BillingEvent] { [] }
-    func eventsIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [BillingEvent] { [] }
-    func materializeEvents(
-        for subscription: Subscription, from today: CalendarDay, horizonDays: Int,
-        maxReminderLeadDays: Int, at instant: Date
-    ) async throws -> [BillingEvent] { [] }
-    func invalidateOutdatedUpcomingEvents(
-        for subscription: Subscription, asOf today: CalendarDay, at instant: Date
-    ) async throws -> [BillingEvent] { [] }
-    func materializationWatermark(forSubscription subscriptionID: UUID) async throws -> CalendarDay? { nil }
-    func initializeMaterializationWatermark(forSubscription subscriptionID: UUID, at day: CalendarDay) async throws {}
-    func rewindMaterializationWatermark(forSubscription subscriptionID: UUID, to day: CalendarDay) async throws {}
-}
-
-private struct StubPriceChangeRepository: PriceChangeRepository {
-    func append(_ change: PriceChange) async throws {}
-    func history(forSubscription subscriptionID: UUID) async throws -> [PriceChange] { [] }
-    func historyIncludingDeleted(forSubscription subscriptionID: UUID) async throws -> [PriceChange] { [] }
-}
-
-private struct StubNotificationClient: NotificationClient {
-    func permission() async -> NotificationPermission { .authorized }
-    func requestAuthorization() async -> NotificationPermission { .authorized }
-    func pendingRequests() async -> [NotificationRequestSpec] { [] }
-    func deliveredIdentifiers() async -> [String] { [] }
-    func add(_ spec: NotificationRequestSpec) async throws {}
-    func removePendingRequests(withIdentifiers identifiers: [String]) async {}
-}
-
-private struct StubCenter: UserNotificationCentering {
-    func setNotificationCategories(_ categories: Set<UNNotificationCategory>) {}
-    func authorizationStatus() async -> UNAuthorizationStatus { .authorized }
-    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool { true }
-    func pendingNotificationRequests() async -> [UNNotificationRequest] { [] }
-    func deliveredNotificationIdentifiers() async -> [String] { [] }
-    func add(_ request: UNNotificationRequest) async throws {}
-    func removePendingNotificationRequests(withIdentifiers identifiers: [String]) {}
 }
 #endif

@@ -134,22 +134,66 @@ public final class NotificationCoordinator: NSObject {
         return pass
     }
 
+    /// The pass currently running, and the single trigger waiting behind it.
+    ///
+    /// F10. Every §6.2 trigger used to spawn its own unstructured `Task`, with
+    /// nothing relating them: five triggers meant five concurrent full passes,
+    /// each loading every subscription, reconciling every ledger and writing
+    /// every watermark. They arrive together in practice - a foreground open
+    /// fires `.foreground` while a delivered notification fires
+    /// `.notificationDelivered`, and a timezone change fires beside a
+    /// significant-time change - and the passes then race on the same rows.
+    private var inFlight: Task<Void, Never>?
+    private var queued: RescheduleTrigger?
+
     /// Not private since R4-2: the simulator-hosted coordinator tests reach it
     /// through `@testable`, and returning the `Task` is what makes the pass
     /// awaitable instead of a race.
+    ///
+    /// **Coalesced, not dropped and not queued without bound.** A trigger that
+    /// arrives while a pass is running leaves exactly one follow-up behind it,
+    /// however many arrive: the pass is idempotent and recomputes the whole plan
+    /// from current state, so N triggers need at most one more run, but they do
+    /// need that one - a trigger that arrives after the in-flight pass has
+    /// already read the store describes a change that pass cannot have seen.
+    ///
+    /// The returned `Task` is the whole chain, so awaiting it awaits every pass
+    /// the caller's trigger caused.
     @discardableResult
     func rescheduleSoon(_ trigger: RescheduleTrigger) -> Task<Void, Never> {
-        Task { [scheduler, now, today, timeZone, onOutcome] in
-            // A failed pass is REPORTED as nil, not dropped. The old shape
-            // discarded the failure entirely, so the store kept publishing the
-            // last successful outcome and Today went on stating coverage that
-            // this pass had just failed to renew. The pass itself is already
-            // logged by the trigger-tagged wrapper (OttoLog).
-            let outcome = try? await scheduler.reschedule(
-                now: now(), today: today(), timeZone: timeZone(), trigger: trigger
-            )
-            onOutcome?(outcome)
+        if let inFlight {
+            queued = trigger
+            return inFlight
         }
+        let pass = Task { [weak self] in
+            guard let self else { return }
+            var next: RescheduleTrigger? = trigger
+            while let current = next {
+                // Cleared BEFORE the pass, never after: a trigger that lands
+                // while this pass is in flight must survive into the next loop,
+                // and clearing afterwards would swallow it.
+                self.queued = nil
+                await self.runPass(current)
+                next = self.queued
+            }
+            self.inFlight = nil
+        }
+        inFlight = pass
+        return pass
+    }
+
+    /// One pass, and what it publishes.
+    ///
+    /// A failed pass is REPORTED as nil, not dropped. The old shape discarded
+    /// the failure entirely, so the store kept publishing the last successful
+    /// outcome and Today went on stating coverage that this pass had just failed
+    /// to renew. The pass itself is already logged by the trigger-tagged
+    /// wrapper (OttoLog).
+    private func runPass(_ trigger: RescheduleTrigger) async {
+        let outcome = try? await scheduler.reschedule(
+            now: now(), today: today(), timeZone: timeZone(), trigger: trigger
+        )
+        onOutcome?(outcome)
     }
 
     // MARK: - Background refresh

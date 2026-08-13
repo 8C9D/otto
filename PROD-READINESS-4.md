@@ -196,3 +196,115 @@ Every one byte-for-byte. `-2+3+cmd|' /C calc'!A0` is the DDE shape that asks the
 
 Item 1's four tests are UIKit-hosted, so they land in the simulator's third bucket (36 → 40) and not in `verify.sh`'s total.
 Item 2's two tests are domain tests and land in both.
+
+## ITEM 3 - N3-1 / N3-2, the two calendars round 3 could not reach
+
+**HALF RESOLVED**, stage 2, commit `2afde29`: **Indian/Saka is closed, Ethiopic is not and cannot be.**
+The `createdAt` cross-check is **declined**, on a measurement rather than an argument.
+The V3 schema freeze is untouched - nothing here needs a schema at all.
+
+### Reconfirmed at HEAD by executing the defect
+
+The real `NotificationScheduler` was driven over the day a pre-F1 build stored on each device for Gregorian 2026-08-06, with `today` at 2026-08-11:
+
+```
+indian(-78)   anchor=1948-05-15 scheduled=4 ledgerFailures=0 canClaimCoverage=true
+              fireDays=[2026-8-12, 2026-9-12, 2026-9-23, 2026-10-12]
+ethiopic(-8)  anchor=2018-11-30 scheduled=4 ledgerFailures=0 canClaimCoverage=true
+              fireDays=[2026-8-27, 2026-9-27, 2026-10-19, 2026-10-27]
+healthy       anchor=2026-08-06 scheduled=4 ledgerFailures=0 canClaimCoverage=true
+              fireDays=[2026-9-3, 2026-10-3, 2026-11-3, 2026-11-4]
+buddhist      anchor=2569-08-06 scheduled=0 ledgerFailures=1 canClaimCoverage=false
+```
+
+Four reminders on the 12th or the 27th instead of the 3rd, with the pass reporting itself healthy on every field Today reads. The Buddhist control shows round 3's guard working.
+
+### The decision: the `createdAt` cross-check is declined
+
+Re-derived independently, from a standalone Foundation script that imports no Otto code.
+
+**The K sweep reproduces, with one correction.**
+
+| K(days) | this run | round 3's ledger | `reviews-3/REVIEW-3.md` |
+|---|---|---|---|
+| 1 | 3 / 4001 (0.07%) | 3 | 2 |
+| 3 | 7 / 4001 (0.17%) | 7 | - |
+| 7 | 15 / 4001 (0.37%) | 15 | 14 |
+| 31 | **63** / 4001 (1.57%) | **64** | **63** |
+
+**64 is wrong and 63 is right, arithmetically**: a window of ±K days over a single collision point contains exactly 2K+1 days, and 3, 7, 15, 63 is that sequence. Round 3's ledger overrode `reviews-3/REVIEW-3.md`'s correct 63 with 64, and `reviews-3/REVIEW-4.md` recorded that it "re-derived it to the digit". Three documents agreed on a number that 2K+1 refutes.
+
+**The premise the sweep hides, measured.** "Sensitivity 13/13" is measured with the stored day *equal to the creation day*. A real stored day is a date the user picked, which is not the day they added the record. Sensitivity against that gap:
+
+```
+gap(days) | K=1   | K=3   | K=7   | K=31    (of the 13 calendars that can corrupt)
+        0 | 13/13 | 13/13 | 13/13 | 13/13
+        1 | 13/13 | 13/13 | 13/13 | 13/13
+        3 |  1/13 | 13/13 | 13/13 | 13/13
+        7 |  0/13 |  0/13 | 13/13 | 13/13
+       14 |  0/13 |  0/13 |  0/13 | 13/13
+       30 |  0/13 |  0/13 |  0/13 | 13/13
+       60 |  0/13 |  0/13 |  0/13 |  0/13
+      365 |  0/13 |  0/13 |  0/13 |  0/13
+```
+
+The rule detects a corrupted day only when the user picked a date within K days of creating the record. The prompt says "Sensitivity does not decay as the window narrows," which is true and is not the axis that matters: it does not decay with K, it collapses with the gap, and the sweep held the gap at zero.
+
+**`lastUsedDate` and a distant `pauseEndsOn`, which the prompt requires characterising and round 3 did not.** At the most generous window tested, K=31:
+
+| what is stored | Ethiopic | Indian |
+|---|---|---|
+| `lastUsedDate` recorded the day the record was created | caught | caught |
+| `lastUsedDate` recorded 6 months after creation | **MISSED** | **MISSED** |
+| `lastUsedDate` recorded 5 years after creation | **MISSED** | **MISSED** |
+| `pauseEndsOn` 3 months out, record created today | **MISSED** | **MISSED** |
+| `pauseEndsOn` 1 year out, record created today | **MISSED** | **MISSED** |
+| `pauseEndsOn` 1 year out, record created 4 years ago | **MISSED** | **MISSED** |
+
+`createdAt` is the wrong reference instant for both fields, structurally and not by tuning. `lastUsedDate` is written when the user records a use; `pauseEndsOn` is a future date chosen at pause time; and `cycleStartDay` is `let` but replaced wholesale at trial conversion, with `createdAt` preserved. The one instant the rule can compare against is the one instant none of them was written at.
+
+**Declined**, therefore: it detects a corrupted anchor only in the narrow case where the user's billing date is the day they added the subscription, it detects a corrupted `lastUsedDate` or `pauseEndsOn` essentially never, and it costs a false positive that silences a working subscription's reminders. That trade is worse at every K than not having it.
+
+### What was adopted instead, and why the prompt's premise is wrong
+
+**The prompt says no distance threshold can reach either calendar. That is false for Indian/Saka, and round 3's own doc comment contains the refutation** - it justified a century as *"forty years beyond the oldest plausible billing anchor"*, which is a statement that sixty years is already beyond it.
+
+Round 3's rule was **symmetric**; the corruption is not. Measured over every day of a year against Foundation:
+
+```
+buddhist            [ +543,  +543]      hebrew   [+3760, +3761]     <- ahead
+indian              [  -79,   -78]      islamic{,Civil,Tabular,UmmAlQura} [-579, -578]
+japanese            [-2018, -2018]      persian  [ -622,  -621]
+coptic              [ -284,  -283]      minguo   [-1911, -1911]
+chinese             [-1984, -1983]                                  <- behind
+ethiopicAmeteMihret [   -8,    -7]                         <- still unreachable
+```
+
+So the window becomes **70 years behind, 100 ahead**.
+
+- **Indian/Saka is caught**, in every month and for every one of the five checked fields, with eight years of margin against its 78-79 year offset. Measured field by field: an anchor at creation, an anchor a month out, an anchor a year out, an anchor ten years in the past, a trial start, a `lastUsedDate` five years old and a `pauseEndsOn` a year out are all caught. The single miss is a `pauseEndsOn` **eight** years out, and a subscription with one of those has an anchor that is caught anyway.
+- **Ethiopic is not, and no threshold reaches it.** Seven to eight years behind is an ordinary anchor for a subscription somebody has held since 2018.
+- **The cost is measured, not asserted.** The oldest accepted stored day moves from 1926-01-01 to 1956-01-01. Every day from 1900 to 2126 was swept: the rule newly rejects only 1900-01-01 to 1955-12-31, it rejects nothing in the forward direction that the old rule accepted, and the only stored days any of the five fields can carry are a cycle origin, a trial start, a derived conversion date, a pause resume and a last use - none of which can sensibly precede 1956. The Unix epoch survives with fourteen years of room.
+
+**The only pre-1956 fixtures in the tree are `DateEngineEdgeCaseTests.swift:52-54`** (1896, 1900, 1904), which call `billingDate(occurrence:anchor:cycle:)` directly and never reach a scheduler or `implausibleStoredDays`. Re-derived here rather than carried from round 3's claim about the ±100 rule.
+
+### An assertion was changed, and it is the mechanism working rather than being weakened
+
+`StoredDayPlausibilityTests.knownUncatchable` loses `indian`. Round 3 wrote that set as a **positive** assertion precisely so that catching one of its members would fail the test and force the record to be updated - its own comment says *"the right response is to update this set and the ledger, not to delete the assertion."* That is what happened. `realDatesSurvive` loses `1926-08-11`, which is a century old and is now correctly rejected; `windowEdges` gains the second bound and the assertion that the two differ.
+
+### Falsified four ways
+
+| what was broken | result |
+|---|---|
+| back to round 3's symmetric century | 6 domain issues **and 2 through the real scheduler** - Indian escapes both |
+| backward bound set to **78**, Indian's exact offset | the same 6 + 2; pins that the eight-year margin is load-bearing and 70 is not padding |
+| both bounds set to 70 (asymmetry removed the other way) | 5 issues - a far-future prepaid term is rejected, which is the other half of why it is asymmetric |
+| the scheduler stops calling `implausibleStoredDays` | 6 issues over 4 tests |
+
+### What a user on those two calendars is actually left with
+
+**Indian/Saka**, as of this run: the same position as the other eleven. Reminders are still scheduled and still on the wrong days (see N4-2), Today no longer claims coverage, the gap card appears, the log names the exact days, the list shows the wrong dates in plain sight, and `docs/next-wave.md` now tells them how to repair it.
+
+**Ethiopic**: unchanged and undetectable. No card, no log line, no signal of any kind from Otto. Four reminders arrive on the wrong days of the month while Today states full coverage. The only thing that is visibly wrong is the date on the subscription list, which is off by eight years and is the one thing a user might notice unaided. `docs/next-wave.md` now says so explicitly, which is the whole of what this run can do for them.
+
+Live exposure for both remains nil under ASSUMPTION 1, and no locale defaults to either calendar.
