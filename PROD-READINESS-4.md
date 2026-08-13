@@ -69,8 +69,13 @@ Each later stage's range starts at the previous stage's **reviewed head**, and e
 | 2 - item 3 | `6ef51ee..00cb0f1` | `00cb0f1` | (`reviews-4/REVIEW-2.md`) |
 | 3 - item 4 | `00cb0f1..54bb611` | `54bb611` | (`reviews-4/REVIEW-3.md`) |
 | 4 - item 5 + stage 1's remediation | `54bb611..05ff987` | `05ff987` | (`reviews-4/REVIEW-4.md`) |
-| 5 - items 6 + 7 | `05ff987..1a1d23b` | `1a1d23b` | (`reviews-4/REVIEW-5.md`) |
-| aa92ca7 | `aa92ca7^..aa92ca7` | `aa92ca7` | (`reviews-4/REVIEW-AA92CA7.md`) |
+| 5 - items 6 + 7 | `05ff987..1a1d23b` | `1a1d23b` | **PASS-WITH-FINDINGS** (`reviews-4/REVIEW-5.md`) |
+| aa92ca7 | `aa92ca7^..aa92ca7` | `aa92ca7` | **REJECT** (`reviews-4/REVIEW-AA92CA7.md`) - an inherited commit; see its own section |
+| 6 - every remediation | `1a1d23b..<final>` | | (`reviews-4/REVIEW-6.md`) |
+
+**Stage 6 exists because all five stage reviewers and the `aa92ca7` reviewer were dispatched before their findings could be routed.** Four of the six returned findings that needed code, and every one of those fixes therefore lands after the last range this run had issued. Leaving them outside a range would reproduce N3-4 - the defect this run was sent to close - inside the run that closed it. So the remediations get a range and a fresh reviewer of their own.
+
+That is a consequence of dispatching reviewers in parallel to save wall time, and it is the honest cost of having done so: a serial run would have folded each remediation into the next stage's range, which is what rounds 2 and 3 did.
 
 Stage 4's range carries stage 1's remediation, which is the disclosed one-stage lag: a remediation lands after the head it remediates and is therefore read by the next stage's reviewer.
 
@@ -739,3 +744,13 @@ Against `reviews-4/BASELINE-4.md`: **+8 host tests, +18 simulator tests, no lint
 - Three coordinator tests changed which triggers they fire - **neither**; it is a correction, because the triggers they used never reach that entry point in production.
 
 **No assertion was weakened anywhere in this run**, and that sentence is worth less than the six falsification tables it sits under, all of which were re-derived at least once after a reviewer measured one wrong.
+
+## THE FULL-BRANCH BUILD SWEEP
+
+**Every one of this run's 30 commits builds all three packages** with `--build-tests`, swept in a detached worktree at the end of the run:
+
+```
+SWEEP: 30 building, 0 non-building, 30 commits
+```
+
+Round 2 shipped a commit that does not compile and recorded it; rounds 3 and 4 have none, and the sweep is the artifact rather than the claim.
