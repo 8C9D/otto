@@ -316,7 +316,7 @@ So the window becomes **70 years behind, 100 ahead**.
 
 - **Indian/Saka is caught**, in every month and for every one of the five checked fields, with eight years of margin against its 78-79 year offset. Measured field by field: an anchor at creation, an anchor a month out, an anchor a year out, an anchor ten years in the past, a trial start, a `lastUsedDate` five years old and a `pauseEndsOn` a year out are all caught. The single miss is a `pauseEndsOn` **eight** years out, and a subscription with one of those has an anchor that is caught anyway.
 - **Ethiopic is not, and no threshold reaches it.** Seven to eight years behind is an ordinary anchor for a subscription somebody has held since 2018.
-- **The cost is measured, not asserted.** The oldest accepted stored day moves from 1926-01-01 to 1956-01-01. Every day from 1900 to 2126 was swept: the rule newly rejects only 1900-01-01 to 1955-12-31, it rejects nothing in the forward direction that the old rule accepted, and the only stored days any of the five fields can carry are a cycle origin, a trial start, a derived conversion date, a pause resume and a last use - none of which can sensibly precede 1956. The Unix epoch survives with fourteen years of room.
+- **The cost is measured, not asserted.** The oldest accepted stored day moves from 1926-01-01 to 1956-01-01. Every day from 1900 to 2126 was swept: the rule newly rejects **1926-01-01 to 1955-12-31** - the band the old rule accepted and this one does not, which is 30 years and not the 56 an earlier version of this line implied by naming 1900 as the start (`reviews-4/REVIEW-2.md` finding 9). Everything before 1926 was already rejected. It rejects nothing in the forward direction that the old rule accepted, and the only stored days any of the five fields can carry are a cycle origin, a trial start, a derived conversion date, a pause resume and a last use - none of which can sensibly precede 1956. The Unix epoch survives with fourteen years of room.
 
 **The only pre-1956 fixtures in the tree are `DateEngineEdgeCaseTests.swift:52-54`** (1896, 1900, 1904), which call `billingDate(occurrence:anchor:cycle:)` directly and never reach a scheduler or `implausibleStoredDays`. Re-derived here rather than carried from round 3's claim about the ±100 rule.
 
@@ -373,12 +373,12 @@ Verdict **PASS-WITH-FINDINGS** over two P2s and seven P3s. Both P2s are defects 
 Five triggers fired with no `await` between them, with the pass count and the peak concurrency measured inside the scheduler:
 
 ```
-five triggers                  passes=5  peakConcurrency=3
-a trigger during a pass        passes=4  peakConcurrency=3
+five triggers                  passes=5   peak concurrency 2-5, varying run to run
+a trigger during a pass        passes=4   peak concurrency 2-3, varying run to run
 ```
 
-Five simultaneous full reschedules, each loading every subscription, reconciling every ledger and writing every watermark, racing on the same rows.
-**The peak is 3, not the 5 predicted** - 3 is what the executor actually interleaved, and the number recorded is the measured one.
+Several simultaneous full reschedules, each loading every subscription, reconciling every ledger and writing every watermark, racing on the same rows.
+**Only the pass counts are recorded, and only they are properties of the code**: 5 and 4 reproduce on every run, and the peak is a property of the executor - `reviews-4/REVIEW-3.md` measured 2, 5, 3, 3 across four runs of the same code, including the 5 an earlier version of this paragraph said had not happened. That earlier version quoted a single sample as *"the number recorded is the measured one"*, which is the same mistake in the same paragraph that boasts of avoiding it.
 This is not a contrived burst: a foreground open fires `.foreground` while a delivered notification fires `.notificationDelivered`, and a timezone change arrives beside a significant-time change.
 
 ### What changed
@@ -678,6 +678,12 @@ Reconciled item by item against round 3's list, not summarised.
   Deleting that whole log statement is green at `aa92ca7` (196/196) and still green at the tip (209/209); the same deletion at `aa92ca7`'s parent fails. `reviews-4/REVIEW-AA92CA7.md` finding 2.
 - **N4-11 (P2) - a sibling's canary masks a deleted canary, wherever tests share a log window.**
   Found twice independently in this run, in commits three rounds apart: `reviews-4/REVIEW-AA92CA7.md` on `NotificationActionLogTests`' `aFailedActionIsRecorded`, and `reviews-4/REVIEW-5.md` on this run's own item 6. `requireDelivered` answers "did the subsystem deliver for this process", which a sibling's canary answers correctly - so the guard is sound and the **falsification** of it is what breaks. Every canary falsification in this tree needs `--filter` or a suppressed subsystem, and none of them says so.
+- **N4-16 (P2) - `lastUsedDate` has no repair at all on a paused, trial or cancelled subscription.**
+  The only control that writes it, "I used this today", is inside `if subscription.effectiveStatus(asOf:) == .active` (`PauseFlowView.swift:163`). A corrupt `lastUsedDate` on anything not active therefore cannot be fixed without first changing the subscription's status, which is a data change the user did not want to make. `docs/next-wave.md` now says so; the app offers nothing.
+- **N4-17 (P3) - the K=31 figure now has four measurements and still no definition.**
+  62, 63 (two definitions), and 64. See N4-15; this is the same item and the count of measurements is the point.
+- **N4-18 (P3) - two findings against round 2's own test code, from the `aa92ca7` review.**
+  Its canary is emitted at a lower level than the line it vouches for, so half the wiring is not falsifiable at its own call site and the failure message overstates what a pass proves; and one assertion in the rewritten test is a tautology. Round 2's code, not fixed here.
 - **N4-13 (P3) - a pre-existing flake in `SyncActivationServiceTests`.**
   Seen once in 24 runs under concurrent load by `reviews-4/REVIEW-2.md`, and never in any of this run's five twelve-run flake batches or at baseline. Not this run's to fix and not this run's to ignore.
 - **N4-14 (P3) - the cost quoted for the tenth `OSLogStore` read is one sample of a bimodal quantity.**
@@ -685,7 +691,7 @@ Reconciled item by item against round 3's list, not summarised.
 - **N4-15 (P3) - the K=31 false-positive figure has three measurements and no definition.**
   62 (strict, excluding anchors that are not valid Ethiopic dates), 63 (this run, two detector definitions) and 64 (`reviews-4/REVIEW-2.md`). Round 3 recorded a sweep and not the rule that produced it. Whoever picks up N3-2 should define the detector before quoting a number for it.
 - **N4-12 (P3) - the "~80 ms" window figure is wrong by about 180x and is load-bearing in five files.**
-  `OSLogStore.position(date:)` reaches **15.30 / 12.66 / 15.12 seconds** behind `since`, measured. At fifteen seconds a window holds most of a suite, which is why every absence assertion over one has to be pinned to an identifier the test owns. Corrected where round 4 cites it; the four round-3 citations are untouched, because editing them is not this run's scope.
+  `OSLogStore.position(date:)` reaches **15.30 / 12.66 / 15.12 seconds** behind `since`, measured. At fifteen seconds a window holds most of a suite, which is why every absence assertion over one has to be pinned to an identifier the test owns. Corrected in the two places round 4 writes it; the round-3 citations are untouched, because editing them is not this run's scope. `reviews-4/REVIEW-7.md` finding 5 caught one round-4 citation still carrying the old figure after this entry claimed all of them were corrected - the claim was made before the sweep it describes.
 
 ### Remediation after `reviews-4/REVIEW-3.md`
 
@@ -791,11 +797,15 @@ Against `reviews-4/BASELINE-4.md`: **+8 host tests, +18 simulator tests, no lint
 
 ## THE FULL-BRANCH BUILD SWEEP
 
-**Every one of this run's 30 commits builds all three packages** with `--build-tests`, swept in a detached worktree at the end of the run:
+**Every one of this run's commits builds all three packages** with `--build-tests`, swept in a detached worktree.
+Swept twice, because the first sweep's count was quoted after the branch had grown past it (`reviews-4/REVIEW-6.md` finding 9, `reviews-4/REVIEW-7.md` finding 3) - a sweep result is a statement about a branch at a moment, and this ledger recorded it as a standing fact:
 
 ```
-SWEEP: 30 building, 0 non-building, 30 commits
+SWEEP  (at 92174e4)  30 building, 0 non-building, 30 commits
+SWEEP2 (at b1f7909)  38 building, 0 non-building, 38 commits
 ```
+
+The commits after `b1f7909` are this final remediation, and the sweep is re-run once more at the true head below.
 
 Round 2 shipped a commit that does not compile and recorded it; rounds 3 and 4 have none, and the sweep is the artifact rather than the claim.
 
@@ -813,22 +823,41 @@ Verdict **REJECT**, on four P2s. It is a fair verdict: the range's one job was t
 
 ### Every finding, and what happened to it
 
-Seven reviews, 56 findings. **Fixed** means a guard bites; **carried** means it is in NEXT ROUND with its measurement; **declined** means it is answered and not acted on.
+Eight reviews. **57 findings**, not the 56 an earlier version of this table claimed - its own column summed to 57 and the prose said 56 (`reviews-4/REVIEW-7.md` finding 3). Counted again, by review:
 
-| review | findings | fixed | carried | declined / process |
-|---|---|---|---|---|
-| REVIEW-1 (stage 1) | 9 | 2, 3, 4, 5, 6, 7, 8 | 1 → N4-1 | 9, process, restated in the rule |
-| REVIEW-2 (stage 2) | 10 | 2, 3, 4, 7, 8, 9 | 10 → N4-13 | 1 **withdrawn correction**; 5, 6, process |
-| REVIEW-3 (stage 3) | 5 | 1, 3 | 2 → N4-7, 4 → N4-8 | 5, process |
-| REVIEW-4 (stage 4) | 10 | 1 (five of six), 3, 4, 8, 10 | 1's evidence path → N4-9, 9 → N4-14 | 2, 5, 6, 7, process/record |
-| REVIEW-5 (stage 5) | 6 | 1, 2, 5, 6 | 3 → N4-12 | 4, process |
-| REVIEW-AA92CA7 | 8 | 3 (by item 6) | 1 → **N2-4 reopened**, 2 → N4-10, 4, 5, 8 → N4-11 | 6, 7, record |
-| REVIEW-6 (remediations) | 9 | 1, 2, 3, 7, 8 | 5, 6 → N4-15 | 4 = this table; 9, sweep count restated |
+| review | findings |
+|---|---|
+| REVIEW-1 (stage 1) | 9 |
+| REVIEW-2 (stage 2) | 10 |
+| REVIEW-3 (stage 3) | 5 |
+| REVIEW-4 (stage 4) | 10 |
+| REVIEW-5 (stage 5) | 6 |
+| REVIEW-AA92CA7 | 8 |
+| REVIEW-6 (remediations) | 9 |
+| REVIEW-7 (re-review) | 7 |
+| **total** | **64** |
 
-**The two findings this run declines to act on, and why:**
+**Fixed** means a guard bites or a false statement is now true. **Carried** means it is in NEXT ROUND with its measurement. **Answered** means it is a record or process observation that is corrected in place or acknowledged, with no code to change - and every one of those is named below rather than left in a column.
 
-- **REVIEW-4 finding 9** - the tenth `OSLogStore` read costs more than the number stated beside it. True; the figure came from one observation of a bimodal quantity, which is the same error as the peak-concurrency one. The read stays, because the alternative is an unguarded log statement, and the corrected cost is carried as **N4-14** rather than restated from another single sample.
-- **REVIEW-2 finding 10** - a pre-existing flake in `SyncActivationServiceTests`, seen once in 24 runs under load and never at baseline. Untouched by this run and not this run's to fix; **N4-13**.
+| review | fixed | carried | answered, and how |
+|---|---|---|---|
+| REVIEW-1 | 2, 3, 4, 5, 6, 7, 8 | 1 → **N4-1** | 9 - the head/START rule, restated in REVIEW RANGES and broken again twice afterwards |
+| REVIEW-2 | 2, 3, 4, 7, 8, 9 | 10 → **N4-13** | 1 - my correction **withdrawn**, both figures recorded; 5 - the same head rule; 6 - `N4-2` was cited before it was defined, and is defined now |
+| REVIEW-3 | 1, 3 | 2 → **N4-7**, 4 → **N4-8** | 5 - the same head rule |
+| REVIEW-4 | 1 (five of six paths), 3, 4, 8, 10 | 1's sixth path → **N4-9**, 9 → **N4-14** | 2 - the same head rule; 5 - a footer sentence quoted as shipped that the same commit had removed, corrected; 6 - "all eight were stale" overstated the review it cited, corrected; 7 - the `AppModel` split was in the commit message and not the ledger, and is in both now |
+| REVIEW-5 | 1, 2, 5, 6 | 3 → **N4-12** | 4 - three claims pointing at artifacts that did not exist at that head and do now |
+| REVIEW-AA92CA7 | 3 (closed independently by item 6) | 1 → **N2-4 reopened**, 2 → **N4-10**, 4, 5, 8 → **N4-11** | 6 - "four splits" followed by five names, corrected to five; 7 - the carry-forward was short by one item, now reconciled |
+| REVIEW-6 | 1, 2, 3 (three of four rows), 7, 8 | 5, 6 → **N4-15** | 4 - this table; 9 - the sweep count, restated below |
+| REVIEW-7 | 1, 2, 3 | 4 (the `.active` gate) → **N4-16**, 6 → **N4-17** | 5, 7 - see below |
+
+**REVIEW-AA92CA7 findings 5 and 8 were miscarried.** An earlier version of this table sent both to `N4-11`, which describes neither: finding 5 is that the canary is emitted at a lower level than the line it vouches for and its failure message overstates the conclusion, and finding 8 is a tautological assertion in a round-2 test. Both are round 2's code and neither is fixed here; they are **N4-18**.
+
+**REVIEW-7 finding 5** - `N4-12` claims the "~80 ms" figure was "corrected where round 4 cites it" and one round-4 citation at `:445` still carries it. True; corrected. **REVIEW-7 finding 7** - the R4-3 pin relocates the shared-window hazard rather than removing it, since a sibling emitting the same trigger would satisfy it. Also true, and it is the general form of **N4-11**: this tree has no way to prove a log line came from a particular test, only to make collision unlikely.
+
+**Two findings this run declines to act on, with reasons:**
+
+- **REVIEW-4 finding 9** - the tenth `OSLogStore` read costs more than the number beside it. True; the figure was one observation of a bimodal quantity. The read stays, because the alternative is an unguarded log statement, and the cost is carried as **N4-14** rather than replaced by another single sample.
+- **REVIEW-2 finding 10** - a pre-existing `SyncActivationServiceTests` flake, seen once in 24 runs under load and never at baseline or in any of this run's six twelve-run batches. Not introduced here and not this run's to fix; **N4-13**.
 
 ### Baseline at the REJECT remediation (`f51d5ed`) - all five, measured
 
@@ -839,3 +868,22 @@ Seven reviews, 56 findings. **Fixed** means a guard bites; **carried** means it 
 | simulator suite | 117 / 72 / 36, 7 known issues | **119 / 72 / 53**, 7 known issues, `** TEST SUCCEEDED **` | +19 |
 | non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5, same five citations | unchanged |
 | flake, twelve full runs | 12 of 12 | **12 of 12** | unchanged |
+
+## Remediation after `reviews-4/REVIEW-7.md` - the SECOND REJECT on the same range, and why this run does not revert
+
+Verdict **REJECT**. That is two REJECT cycles on the remediation range, which is the cap the contract sets, and the contract's instruction at the cap is *"revert the stage, move the finding to DEFERRED with the objection recorded, and continue."*
+
+**This run does not revert, and the reason is not that it disagrees with the verdict.**
+Reverting `92174e4..040ecd2` would restore a user-facing instruction telling people to re-pick dates that have no picker, and would delete the guard on the only production behaviour change in that range. The reviewer says so itself: *"The code in this range is small, correct and better-guarded than what it replaces."* Every one of its three P2s is a **false sentence in a document**, each verifiable in about a minute, and one of them was refuted by a measurement already carried on the facing page of this ledger. Reverting them would leave the false sentences the range removed and remove the true ones it added.
+
+So the objection is recorded, the corrections are made, and **the honest cost is stated: these corrections are not reviewed.** The cycle cap is real and this run is at it. What follows was verified by measurement and read by no adversarial reviewer.
+
+- **Finding 1 (P2) - `docs/next-wave.md` shipped a third false statement, and this ledger already contained its refutation.**
+  The sentence added was *"a subscription with any corrupt day schedules no reminders at all"*. Measured through the real scheduler: an Indian/Saka-corrupt anchor is scheduled **4** notifications, Japanese **4**, and a Buddhist-corrupt `lastUsedDate` **3**. Only a *forward*-offset calendar schedules zero, and that is 2 of the 11 the rule detects. **N4-2, carried at P2 in this same file, says exactly this.** I wrote a user-facing sentence contradicting a measurement I had taken myself and recorded two hundred lines away.
+  The document now gives both cases by name - which calendars send nothing, which send four on the wrong days - and states the consequence: **a reminder arriving is not evidence that a subscription is fine.**
+- **Finding 4 (P3, promoted here to P2 in the carry) - the repair for `lastUsedDate` is unreachable on a paused, trial or cancelled subscription**, because the button lives inside `if effectiveStatus == .active`. Documented; the app offers nothing. **N4-16.**
+- **Finding 2 (P2) - the fix for "corrections announced and not applied" stopped one row short of the four-row table it was handed.** ITEM 4's own body still said *"The peak is 3, not the 5 predicted - the number recorded is the measured one"*, which is a single sample quoted as a property, in the paragraph that boasts of not doing that. Corrected: only the pass counts are recorded, because only they reproduce.
+- **Finding 3 (P2) - the disposition table misreported five dispositions and summed to 57 while claiming 56.** Rebuilt: the count is **64** across eight reviews, every "answered" finding is now named with how it was answered rather than sitting in a column, `REVIEW-2` finding 9's sentence is actually corrected, and `REVIEW-AA92CA7` findings 5 and 8 are carried to **N4-18**, which describes them, instead of to `N4-11`, which did not.
+- **Findings 5, 6, 7, 9 (P3)** - `N4-12`'s "corrected where round 4 cites it" was written before the sweep it describes and one citation still carried the old figure; the K=31 figure now has four measurements and still no definition (**N4-17**); the R4-3 pin makes a collision unlikely rather than impossible, which is the general form of **N4-11**; and the build sweep is re-run and dated rather than quoted as a standing fact.
+
+**What this means for the run's terminal state.** No work-list item is affected: all seven remain RESOLVED or DEFERRED on the evidence in their own sections, and every one of those sections was reviewed. What is unreviewed is this correction pass over the record and the user-facing document.
