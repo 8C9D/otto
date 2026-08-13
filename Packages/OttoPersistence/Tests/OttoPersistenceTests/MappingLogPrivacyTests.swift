@@ -1,5 +1,4 @@
 import Foundation
-import OSLog
 import OttoDomain
 import SwiftData
 import Testing
@@ -71,6 +70,17 @@ extension SerializedPersistenceTests {
             try context.save()
 
             let since = Date()
+            // N3-3. This read had no canary, alone among the tree's log-reading
+            // tests, so a runner where the store is READABLE BUT EMPTY failed
+            // below at `#expect(!ours.isEmpty, "the store logged nothing for
+            // the record it skipped")` - a message meaning "the production log
+            // statement is gone", which is the misdiagnosis the canary exists
+            // to prevent. `PROD-READINESS-2.md` recorded the canary as covering
+            // all four log-reading tests; it covered three.
+            //
+            // No new query and no new reader: the canary rides in the window
+            // this test already opens.
+            OttoLogProbe.emitCanary()
             // Reads through `mapSkippingFailures`, which logs and skips.
             #expect(try await store.subscriptions().isEmpty)
 
@@ -82,8 +92,11 @@ extension SerializedPersistenceTests {
             // behind `since`, so the window legitimately contains lines from
             // tests that ran just before this one, and the first version of
             // this test asserted about whichever of those came first.
-            let skipped = try Self.persistenceLogLines(since: since)
-                .filter { $0.contains("Skipping unmappable record") }
+            let window = try OttoLogProbe.persistenceLines(since: since)
+            // BEFORE any assertion about content: an empty window is a fact
+            // about this machine, not about Otto's code.
+            try OttoLogProbe.requireDelivered(window)
+            let skipped = window.filter { $0.contains("Skipping unmappable record") }
 
             // The discriminating assertion: OUR line, from the record this test
             // corrupted. Every falsification of the fix fails here.
@@ -100,21 +113,6 @@ extension SerializedPersistenceTests {
             // failure here is about the subsystem, not necessarily about this
             // test's record, which is why it is separate from the block above.
             #expect(skipped.allSatisfy { !$0.contains("<private>") })
-        }
-
-        /// Every `persistence` line this process emitted since `since`.
-        private static func persistenceLogLines(since: Date) throws -> [String] {
-            let store = try OSLogStore(scope: .currentProcessIdentifier)
-            let position = store.position(date: since)
-            return try store
-                .getEntries(
-                    at: position,
-                    matching: NSPredicate(
-                        format: "subsystem == %@ AND category == %@",
-                        "com.arthurzhang.otto", "persistence"
-                    )
-                )
-                .compactMap { ($0 as? OSLogEntryLog)?.composedMessage }
         }
     }
 }

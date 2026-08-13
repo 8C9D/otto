@@ -7,16 +7,17 @@ import Testing
 /// at all", for the `persistence` category.
 ///
 /// The OttoUI test target has had this since round 2 (`OttoLogProbe` there);
-/// this target did not, and `PROD-READINESS-2.md` records the remedy as applying
-/// to all four log-reading tests. It applies to three: `MappingLogPrivacyTests`
-/// reads `OSLogStore` and asserts `!ours.isEmpty` with no canary, so on a runner
-/// where the store is readable but EMPTY it fails with a message meaning "the
-/// store logged nothing for the record it skipped" - byte-identical to the
-/// signature of the regression it exists to catch. That is the misdiagnosis the
-/// canary was introduced to prevent, still open in the one place nobody
-/// checked. Recorded in `PROD-READINESS-3.md` NEXT ROUND; not changed here,
-/// because rewriting a passing test from another round's item is outside this
-/// run's scope.
+/// this target did not, and `PROD-READINESS-2.md` recorded the remedy as
+/// applying to all four log-reading tests when it applied to three.
+/// `MappingLogPrivacyTests` read `OSLogStore` and asserted `!ours.isEmpty` with
+/// no canary, so on a runner where the store is readable but EMPTY it failed
+/// with a message meaning "the store logged nothing for the record it skipped" -
+/// byte-identical to the signature of the regression it exists to catch.
+///
+/// **Closed in round 4 (N3-3).** Every test in this target that reads the log
+/// now emits the canary into the window it already opens and calls
+/// `requireDelivered` before asserting anything about content. No new query and
+/// no new reader was added to do it.
 enum OttoLogProbe {
 
     static let canary = "otto.test.canary"
