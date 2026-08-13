@@ -9,7 +9,7 @@ verdict: PASS-WITH-FINDINGS
 ## Summary
 
 **The coalescing logic is correct, and I could not break it.**
-I falsified it five ways - the builder's four plus one of my own aimed at the wiring line rather than the loop - and every mutation was caught by a shipped assertion, with the issue counts the ledger records.
+I falsified it five ways - the builder's four, whose recorded issue counts (5 / 1 / 2 / 1) reproduce exactly, plus one of my own aimed at the wiring line rather than the loop - and every mutation was caught by a shipped assertion.
 The ordering invariant the change rests on holds under analysis and under test: `queued` is cleared before the pass and read after it, both inside the same `@MainActor` step, so there is no window in which a trigger is both wiped and unobserved.
 A trigger that arrives before the pass body starts is wiped, and that is right rather than a drop, because the pass has not yet read the store.
 The gate reopens after a pass that throws, after a pass that is coalesced into, and after the chain drains; I probed the first of those, which no shipped test covers.
@@ -105,7 +105,7 @@ The two passes overlap in 45 of 240 iterations.
 `NotificationScheduler` is an `actor` (`NotificationScheduler.swift:11`), which is not a defence: `reschedule` suspends at `await client.permission()` before it does anything and again at `try await subscriptions.subscriptions()` before `reconcileLedger` performs its first write, so the actor does not serialise passes - it interleaves them, which is what peak 2 means.
 That overlap is F10 itself: two full passes, each loading every subscription, reconciling every ledger and writing every watermark, against the same rows and the same shared `NotificationScheduler` instance (`OttoApp.swift:60-72` passes one scheduler to both the coordinator and the store).
 
-Deferring the fix is defensible and the reason given at `PROD-READINESS-4.md:381` ("routing the background pass through the same chain changes what `expirationHandler` cancels") is a real blast radius.
+Deferring the fix is defensible and the reason given in the same paragraph, and at `NotificationCoordinatorTests.swift:275-277` ("routing the background pass through the same chain changes what `expirationHandler` cancels"), is a real blast radius.
 Recording that the overlap does not happen is not defensible, and it is now written into the source where the next person to touch this file will read it as measured fact.
 
 **Why the builder missed it.** `#expect(peakConcurrency == 2)` fails on any run that scheduled serially, which is 5 runs in 6. A single red run reads as "does not reproduce", and the conclusion was drawn from the failure of a *flaky positive* rather than from a distribution. The same trap the round-4 flake dimension exists to catch, approached from the other side: the builder measured a non-deterministic quantity once and recorded the sample as the property.
@@ -113,7 +113,7 @@ Recording that the overlap does not happen is not defensible, and it is now writ
 ### 2 - P2. A third ungated entry point into the same race, named nowhere
 
 **Evidence.**
-`NotificationStatusStore.reschedule()` (`Packages/OttoUI/Sources/OttoStores/NotificationStatusStore.swift:43-50`) calls `scheduler.reschedule(now:today:timeZone:trigger: .stateChange)` directly.
+`NotificationStatusStore.reschedule()` (`Packages/OttoUI/Sources/OttoStores/NotificationStatusStore.swift:43-48`) calls `scheduler.reschedule(now:today:timeZone:trigger: .stateChange)` directly.
 It is driven by `AppModel.swift:118` (`subscriptionsStore.onMutation` - every create, edit and delete), `AppModel.swift:134` (`settings.onReminderTimeChange`) and `AppModel.swift:149` (`flowFinished()` - every Wave 5 flow).
 It shares the one `NotificationScheduler` instance with the coordinator and never touches `rescheduleSoon`, so the gate cannot see it.
 Measured, a coordinator pass and a store pass overlap in 33 of 240 iterations:
@@ -126,10 +126,10 @@ coordinator+store peak distribution [(1, 51), (2,  9)]  worst=2
 ```
 
 Nothing discloses this.
-`ITEM 4` is marked **RESOLVED** at `PROD-READINESS-4.md:340` under the framing "Five simultaneous full reschedules ... racing on the same rows", the `rescheduleSoon` doc comment at `NotificationCoordinator.swift:153-161` asserts "Coalesced, not dropped and not queued without bound" with no scope, and the background exception at `:381` is disclosed as if it were the only one.
+`ITEM 4` is marked **RESOLVED** (`PROD-READINESS-4.md:345`) under the framing "Five simultaneous full reschedules ... racing on the same rows" (`:356`), the `rescheduleSoon` doc comment at `NotificationCoordinator.swift:153-161` asserts "Coalesced, not dropped and not queued without bound" with no scope, and the background exception at `:377-381` is disclosed as if it were the only one.
 The store path is the most frequent trigger class in ordinary use - it fires on every edit - and it is the one the record is silent about.
 
-Aggravating, and the reason I did not read this as merely "out of scope": `NotificationCoordinatorTests.swift:233` and `:254` fire `rescheduleSoon(.stateChange)`, and `:255` fires `rescheduleSoon(.backgroundRefresh)`.
+Aggravating, and the reason I did not read this as merely "out of scope": `NotificationCoordinatorTests.swift:233` and `:254` fire `rescheduleSoon(.stateChange)`, and `:253` fires `rescheduleSoon(.backgroundRefresh)`.
 No production caller passes either value to `rescheduleSoon` - `.stateChange` goes through the store and `.backgroundRefresh` through `handleBackgroundRefresh`.
 The suite therefore depicts a gate covering trigger classes it does not cover, which is how a reader would conclude the coalescing is complete.
 
@@ -138,7 +138,7 @@ The suite therefore depicts a gate covering trigger classes it does not cover, w
 ### 3 - P3. `peakConcurrency=3` is one sample of a variable quantity, and the sentence built on it is refuted
 
 **Evidence.**
-`PROD-READINESS-4.md:352-353` records the pre-fix reconfirmation as `passes=5 peakConcurrency=3` and `passes=4 peakConcurrency=3`, and `:354` explains "**The peak is 3, not the 5 predicted** - 3 is what the executor actually interleaved, and the number recorded is the measured one."
+`PROD-READINESS-4.md:352-353` records the pre-fix reconfirmation as `passes=5 peakConcurrency=3` and `passes=4 peakConcurrency=3`, and `:357` explains "**The peak is 3, not the 5 predicted** - 3 is what the executor actually interleaved, and the number recorded is the measured one."
 Restoring the exact `00cb0f1` body and running the same tests four times, I measured peak **2, 5, 3, 3** for the five-trigger case and **2, 2, 2, 3** for the trigger-during-a-pass case.
 The pass counts (5 and 4) are stable and reproduce every time; the peak is not a property of the code, and 5 - the number the ledger says did not happen - occurred on my second run.
 
@@ -150,10 +150,10 @@ No shipped assertion depends on it: under the fix `peakConcurrency == 1` is stru
 ### 4 - P3. Coalesced triggers vanish from the log entirely, and the follow-up is attributed to whichever arrived last
 
 **Evidence.**
-The only place a trigger reaches the log is `OttoLog.swift:174` (`pass begin trigger=...`) and `:104` (`pass end trigger=...`), both inside the `reschedule(now:today:timeZone:trigger:)` wrapper.
+The only place a trigger reaches the log is `OttoLog.swift:171` (`pass begin trigger=...`) and `:104` via `passEndFields` (`pass end trigger=...`), both inside the `reschedule(now:today:timeZone:trigger:)` wrapper.
 A coalesced trigger never calls that wrapper, so it produces no log line of any kind.
 `NotificationCoordinator.swift:165` is `queued = trigger`, an unconditional overwrite, so when several triggers arrive during a pass the follow-up is tagged with the last one and the others leave no trace.
-`RescheduleTrigger`'s own doc comment (`OttoLog.swift:140-143`) states the purpose this defeats: "Logged so a later investigation can tell a background wake-up from a foreground open without inferring it from timestamps."
+`RescheduleTrigger`'s own doc comment (`OttoLog.swift:139-142`) states the purpose this defeats: "Logged so a later investigation can tell a background wake-up from a foreground open without inferring it from timestamps."
 
 Before this stage, a burst of five triggers produced five `pass begin` lines; it now produces one or two, and which trigger names them is a race.
 This is an inherent and acceptable cost of coalescing - it is not a defect in the design - but it is a deliberate reduction in the investigative surface this codebase spends heavily to maintain, and it is disclosed nowhere.
@@ -165,11 +165,14 @@ This is an inherent and acceptable cost of coalescing - it is not a defect in th
 **Evidence.**
 `git show 54bb611:PROD-READINESS-4.md` line 49 still reads `| 4 | **F10** | ... | pending |`, and line 67 is `| 3 - item 4 | | | |` - the stage's range and reviewed head were never filled in.
 The `## ITEM 4` section that carries every number I was asked to reproduce does not exist at `54bb611`; it was added by `2082b69` ("Record items 4 through 7"), outside my range.
-`PROD-READINESS-4.md:61` states the rule this breaks - "every start is recorded **when the stage opens**, not when its verdict lands" - and `:78` states "A stage's reviewed head is the commit that RECORDS its measurements, not its last code commit", which `54bb611` is not.
+`PROD-READINESS-4.md:63` states the rule this breaks - "every start is recorded **when the stage opens**, not when its verdict lands" - and `:87` states "A stage's reviewed head is the commit that RECORDS its measurements, not its last code commit", which `54bb611` is not.
 
 The consequence is not severe: `54bb611`'s commit message carries the same numbers as the later ledger section, word for word, so the evidence *is* inside the range I was given.
 But this is the second stage in a row with the same drift - `reviews-4/REVIEW-1.md` finding 9 recorded it for stage 1 - and it was not corrected between them.
-Independently, at current HEAD all four work-list rows for items 1-4 still read "pending" while their sections read RESOLVED or HALF RESOLVED; that is later work, not mine, and I note it only so it is not read as something my range introduced.
+
+**Recorded in fairness:** the branch advanced by twelve commits while I was reviewing, and six of them are documentation.
+As of the tree I finished against, `PROD-READINESS-4.md:49` now reads `**RESOLVED** - stage 3` and `:70` reads `| 3 - item 4 | `00cb0f1..54bb611` | `54bb611` | (reviews-4/REVIEW-3.md) |`, so the row has since been filled in - pointing at this file before it existed.
+The finding stands as a statement about the head I was given, not about the tree today.
 
 **Why the builder missed it.** The table is updated when a verdict lands rather than when a stage opens, despite the rule directly above it saying the opposite.
 
@@ -180,7 +183,7 @@ Independently, at current HEAD all four work-list rows for items 1-4 still read 
 - **Severity inflation or deflation.** Deflation, twice: the background overlap is recorded as not happening when it happens 18.8 % of the time (finding 1), and the store-layer entry point is recorded nowhere at all (finding 2). No inflation found.
 - **Features smuggled past the no-features rule.** None. The diff is four files: one production file (coalescing only), two test files, one ledger. No user-facing copy, no navigation, no new public API - `rescheduleSoon` was already internal-not-private since R4-2 and its signature is unchanged.
 - **Any SwiftData schema change.** None. `git diff --name-only 00cb0f1 54bb611` touches nothing under `Packages/OttoPersistence`; the V3 schema files are untouched; nothing in the diff imports SwiftData.
-- **Prohibited actions.** None found. No `.github/workflows/` change, no `.swiftlint.yml` change, no `Package.swift` change, no new dependency, no new config key, no Swift language-mode or SDK change, no reformatting or reorganisation beyond the one justified file split. No test was weakened - the four added tests are new, no existing assertion was changed or removed, and I confirmed the whole pre-existing suite still runs (44 tests in the third bucket versus 36 at baseline, +4 from stage 1 and +4 here).
+- **Prohibited actions.** None found. No `.github/workflows/` change, no `.swiftlint.yml` change, no `Package.swift` change, no new dependency, no new config key, no Swift language-mode or SDK change, no reformatting or reorganisation beyond the one justified file split. No test was weakened - the four added tests are new and **no existing assertion was changed or removed**. The shared `SchedulerSpy` was modified, which I checked separately: it gains instrumentation (`live`, `peak`, `duringPass`) and one suspension point (`await Task.yield()`, or the injected body on the first pass), both additive. The five pre-existing tests in the suite keep their exact assertions and passed in all thirteen runs I made. The third simulator bucket is 44 tests against 36 at baseline: +4 from stage 1 and +4 here, none removed.
 - **Fixes that relocated a bug rather than removed it.** This is the substance of findings 1 and 2. Within `rescheduleSoon` the bug is removed, not relocated. Across the subsystem it is narrowed from three independent racing entry points to two.
 - **Can the coalescing DROP work rather than merge it?** No. The one window that looks like a drop - `self.queued = nil` at the top of the loop wiping triggers that arrived before the body started - is safe by construction: the pass has not yet called `now()`, `today()` or `subscriptions()`, so it will observe every change those triggers describe. Any trigger arriving after that line leaves a follow-up, because `queued` is read after the `await` with no suspension between the read and the loop's exit. F2 and F5 both confirm the shipped tests catch a real drop.
 - **Can it deadlock?** No. There is no lock in the path; the only shared state is two `@MainActor` properties; nothing awaits `inFlight` from inside a pass, and `onOutcome` in production is `notifications?.apply(outcome)` (`OttoApp.swift:87-89`), which is synchronous and cannot re-enter `rescheduleSoon`. If it could, the `while` loop would never terminate - that is the one live-lock shape, and the wiring forecloses it.
@@ -190,10 +193,10 @@ Independently, at current HEAD all four work-list rows for items 1-4 still read 
 - **Verification that does not exercise the changed path.** Present but disclosed. `verify.sh` and all twelve flake runs compile none of `NotificationCoordinator.swift` (`#if os(iOS)`). The simulator suite is the entire verification, which is why I ran it three times in full and ten times scoped.
 - **Tests that pass for the wrong reason.** I broke what each added test claims to guard. `triggersCoalesce` fails on F1 and F3; `aTriggerDuringAPassIsNotSwallowed` fails on F1, F2 and F5; `theGateReopensAfterTheChainDrains` fails on F4; nothing survived that should not have. The exception is `theBackgroundPassIsOutsideTheGate`, which is honestly labelled characterisation, and whose `passes.count == 2` is true of every run - but see finding 1 for the assertion it should also have carried.
 - **Flaky or environment-dependent tests.** None added. Every new assertion is structurally determined under the fix: with the gate in place `passes` and `peakConcurrency` cannot vary. Three full simulator runs and ten scoped runs produced identical results. The flakiness in this stage is confined to the ledger's prose about pre-fix and background behaviour (findings 1 and 3).
-- **Anything marked resolved without an artifact.** Nothing was marked resolved at all inside my range (finding 5). The RESOLVED marking added later at `PROD-READINESS-4.md:340` carries the artifact - a falsification table I reproduced - but overstates the scope for the reasons in findings 1 and 2.
+- **Anything marked resolved without an artifact.** Nothing was marked resolved at all inside my range (finding 5). The RESOLVED marking added later (`PROD-READINESS-4.md:345`) carries the artifact - a falsification table I reproduced in full - but overstates the scope for the reasons in findings 1 and 2.
 - **A further `OSLogStore`-reading test.** None added. The nine reads recorded in `reviews-4/BASELINE-4.md` are unchanged; neither new test file mentions `OSLogStore`.
 - **Every commit in the range builds all three packages.** One commit; all three build with `--build-tests`.
-- **Later work breaking my range.** No. `git diff 54bb611 HEAD` is empty for all three code files in the range. The only later change touching this stage is documentary: the `## ITEM 4` section and its RESOLVED marking.
+- **Later work breaking my range.** No. The branch advanced twelve commits past `54bb611` while I reviewed (`12024ab` .. `80eeb97`), and `git diff 54bb611 HEAD` is **empty** for all three code files in my range - `NotificationCoordinator.swift`, `NotificationCoordinatorTests.swift` and `NotificationCoordinatorStubs.swift` are byte-identical at HEAD. Every later change touching this stage is documentary: the `## ITEM 4` section (`2082b69`), the work-list and range rows (`80eeb97`, `d609790`). All line numbers I cite into `PROD-READINESS-4.md` are against the tree as I finished; the quoted text is the stable reference, because that file moved twice under me mid-review.
 
 ## What I could not check, and why
 
@@ -201,4 +204,5 @@ Independently, at current HEAD all four work-list rows for items 1-4 still read 
 - **Cancellation of the chain.** The gate now makes several callers share one `Task`, so cancelling it cancels work those callers did not start, and `NotificationScheduler.reschedule` does honour cancellation (`try Task.checkCancellation()` at `:115`). No production caller retains or cancels the returned task - `appDidBecomeActive()`'s result is discarded at `OttoApp.swift:122` and the two delegate paths discard it too - so this is latent rather than live, and my probe could not settle it because the test spy ignores cancellation. Not raised as a finding.
 - **Release configuration, a physical device, and any non-Gregorian simulator.** Debug only, simulator only, per this run's constraints and ASSUMPTION 3.
 - **Real `BGAppRefreshTask` behaviour.** The background path is driven through the `BackgroundRefreshTask` protocol with a fake; the OS's actual scheduling of a refresh task concurrent with a foreground activation is not observable here, so finding 1's 18.8 % is a statement about the executor on this host, not about field frequency.
-- **`git worktree list` does not show only the main tree, and I did not make it do so.** I created two worktrees and removed both. Two others - `scratchpad/rev2-wt` at `00cb0f1` and `scratchpad/wt-aa92ca7` at `aa92ca7` - belong to concurrent sessions reviewing the other ranges in this run, and were present before I started. Removing them would repeat exactly the failure round 3's first reviewer committed, so I left them and am reporting them instead.
+- **`git worktree list` does not show only the main tree, and I did not make it do so.** I created two worktrees (`scratchpad/r3/wt` and `scratchpad/r3/wt-flake`), confirmed both clean, and removed both; neither appears in `git worktree list` now. Eleven others remain - `rev2-*` at `00cb0f1`, `rev4/*` at `05ff987`, `rev5/*` at `1a1d23b`, `wt-aa92ca7`, `wt-parent`, `wt-tip` - belonging to the other reviewers and stages running concurrently in this run. Every one of them predates my session or was created outside it. Removing another agent's live worktree is precisely the failure round 3's first reviewer committed, so I left them and am reporting them instead.
+- **The main working tree was dirty when I finished, and none of it is mine.** I modified nothing in `/Users/<user>/dev/otto` except writing this file. At the moment I finished, `git status` showed `NotificationCoordinator.swift` and `NotificationCoordinatorTests.swift` modified and an untracked `Packages/OttoUI/Tests/OttoUITests/ZZOverlapProbe.swift`. Reading them, they are the builder's in-progress remediation *of this review* - the new `rescheduleSoon` doc comment cites `reviews-4/REVIEW-3.md` and quotes my 45/240 and 33/240 figures, and the probe file's first line reads "TEMPORARY - independent re-measurement of reviews-4/REVIEW-3.md finding 1". This file was committed as `f3e5aa1` before I had finished correcting its citations, so it also shows as modified; the content on disk is my final version. I touched none of it.
