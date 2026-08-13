@@ -146,10 +146,16 @@ struct SchedulingLogTests {
 
         let since = Date()
         OttoLogProbe.emitCanary(to: OttoLog.scheduling)
+        // The TRIGGER-TAGGED entry point, which every production caller uses -
+        // the coordinator, the action handler and NotificationStatusStore all
+        // route through it. Using it here costs nothing (the same pass, the
+        // same window, the same single query) and puts the `pass end` line in
+        // this test's window, which is what closes N4-5 below.
         _ = try await fixture.scheduler.reschedule(
             now: Date(timeIntervalSince1970: 1_786_000_000),
             today: try day(2026, 8, 11),
-            timeZone: TimeZone(identifier: "America/Toronto") ?? .current
+            timeZone: TimeZone(identifier: "America/Toronto") ?? .current,
+            trigger: .foreground
         )
 
         let lines = try Self.schedulingLogLines(since: since)
@@ -171,6 +177,23 @@ struct SchedulingLogTests {
         #expect(!line.contains("Zzyzx"))
         #expect(!line.contains("999"))
         #expect(!line.contains("$"))
+
+        // ⛔ R4-3's EMISSION, in the window this test already opened.
+        //
+        // `OttoLog.passEndFields` has a unit test of its own, and
+        // `reviews-4/REVIEW-5.md` measured what that is worth: restoring the
+        // pre-fix interpolation at the call site leaves the composer correct,
+        // its test green, and all 209 host tests passing - the whole of R4-3
+        // put back in production behind a green guard. An earlier version of
+        // this run declined to close that on the grounds that it would cost a
+        // tenth `OSLogStore` reader. It costs none: this query is already open.
+        let passEnd = try #require(
+            lines.last { $0.hasPrefix("pass end trigger=foreground") },
+            "the trigger-tagged pass emitted no pass-end line"
+        )
+        #expect(passEnd.contains("truncatedAfter="))
+        #expect(passEnd.contains("coveredThrough="))
+        #expect(passEnd.contains("ledgerFailures="))
     }
 
     /// Every `scheduling` line this process emitted since `since`.

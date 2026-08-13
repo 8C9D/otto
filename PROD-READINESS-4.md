@@ -453,10 +453,13 @@ The canary rides in the window this test already opens and `requireDelivered` ru
 
 | what was broken | result |
 |---|---|
-| the canary emission deleted | fails at `requireDelivered`: *"The unified log delivered NOTHING for this process ... This is an environment failure ... Do not fix it by deleting the assertions it guards."* |
+| the canary emission deleted, **under `--filter`** | fails at `requireDelivered`: *"The unified log delivered NOTHING for this process ... This is an environment failure ... Do not fix it by deleting the assertions it guards."* |
+| the canary emission deleted, **in the suite as shipped** | **green** - a sibling test's canary is in the shared window, and that is the canary answering its own question correctly: the subsystem *did* deliver |
 | the **production** skip statement deleted, canary intact | fails at the target line: *"the store logged nothing for the record it skipped"* |
+| the whole target run under `OS_ACTIVITY_MODE=disable` | all three OttoPersistence log-reading tests fail at `requireDelivered` with the environment message |
 
-**Before this change both produced the second message.**
+**Before this change the last row produced the third row's message**, which is the misdiagnosis.
+The first row as originally written **did not reproduce in the full suite**, and the ledger did not say it was measured under a filter - `reviews-4/REVIEW-5.md` finding 2. That is the third falsification row in this run recorded from a narrower scope than the one it was quoted at. The substance is unaffected and is now demonstrated the way that actually distinguishes the two causes: by suppressing the subsystem.
 
 ### N3-4, the commit outside every review range
 
@@ -484,7 +487,9 @@ byte-identical, for a pass that silently dropped rungs and one that did not.
 
 The line's fields are composed in `OttoLog.passEndFields` so a test can read them **without opening `OSLogStore`**. The tree already blocks on that daemon nine times and this run adds a tenth for item 5; an eleventh for one field is not a trade worth making.
 
-**What that does not guard is the emission itself.** Deleting the `OttoLog.scheduling.notice` call leaves the composition test green. That line was already unguarded before this run - no test read it - so this does not make it worse, and it is not closed either. **N4-5.**
+**The emission is guarded too, and my reason for not guarding it was wrong.**
+I declined on the grounds that it would cost a tenth `OSLogStore` reader. `reviews-4/REVIEW-5.md` measured what that decision was worth - restoring the pre-fix interpolation at the call site leaves the composer correct, its unit test green, and **all 209 host tests passing**, so the whole of R4-3 could be put back in production behind a green ⛔ guard - and then closed it at **zero** additional reads, inside a `scheduling`-category window `SchedulingLogTests` already holds open.
+Done here the same way: that test's pass now goes through the trigger-tagged entry point every production caller uses, and asserts the `pass end` line carries `truncatedAfter=`. Falsified with the reviewer's own mutation: **1 issue**, where it was green before. **N4-5 is closed**, and the cost I quoted for it was never the cost on the table.
 
 **A user-facing consumer is still absent**, and adding one is new copy this run may not write: the person whose annual renewals were dropped past the budget learns it only from an earlier date in "Reminders scheduled through …". **N4-6.**
 
@@ -629,8 +634,7 @@ Reconciled item by item against round 3's list, not summarised.
   `handleBackgroundRefresh` owns the completion latch and the expiration race and builds its own `Task`, so a background wake-up landing during a foreground pass runs a second pass. Whether the two can OVERLAP is **not** established - the assertion was written, measured at peak concurrency 1, and deleted. Routing it through the chain changes what `expirationHandler` cancels.
 - **N4-4 (P3) - two writers still do not withdraw a prepared export.**
   `NotificationActionHandler` writes state through `model.flows` without passing through `AppModel`, and a bare scheduling pass materializes ledger rows the CSV prints. Both leave a prepared export on offer describing data that has changed. The user-facing copy no longer claims otherwise.
-- **N4-5 (P3) - the `pass end` emission is unguarded.**
-  Item 7 made the line's *composition* testable without a log read, and deleting the `OttoLog.scheduling.notice` call still leaves that test green. The line was unguarded before this run, so this is not a regression; it is the price of not adding an eleventh `OSLogStore` reader, and it should be paid deliberately or not at all.
+- **N4-5 - CLOSED in the stage-5 remediation**, at zero additional `OSLogStore` reads, inside a window `SchedulingLogTests` already holds open. Left here as a record of the reasoning that nearly shipped it open: the cost I declined to pay was not the cost the fix required.
 - **N4-6 (P3) - no surface tells a user their reminders were truncated.**
   `truncatedAfter` now reaches an investigator through the log. The person whose annual renewals were dropped past the 64-slot budget still learns it only from an earlier date in "Reminders scheduled through …", which is honest and does not say why.
 
@@ -683,3 +687,10 @@ Both verdicts are **PASS-WITH-FINDINGS**, and between them they overturn one of 
 - **Finding 2 (P2), and `reviews-4/REVIEW-3.md` finding 5, and `reviews-4/REVIEW-1.md` finding 9 are the same finding, three times.** The reviewed head did not record the item the stage delivered. This is the run's worst process defect and it was restated twice without being fixed: the rule is written at the head of REVIEW RANGES, and the practice was to write the ledger section after the reviewer had already been dispatched.
 
 **A file was split rather than a rule relaxed**, again: `SettingsExportTests.swift` passed both `file_length` and `type_body_length`, and the withdrawal tests moved to `SettingsExportWithdrawalTests.swift`. The spies lose `private` so both files share them.
+
+### Remediation after `reviews-4/REVIEW-5.md`
+
+Verdict **PASS-WITH-FINDINGS**. It confirmed item 6 the hard way - under `OS_ACTIVITY_MODE=disable` all three OttoPersistence log-reading tests fail at `requireDelivered` with the environment message instead of the misdiagnosis - and then found that item 7's guard guarded a string builder.
+
+- **The `pass end` emission is now guarded, at zero cost, and my justification for leaving it open was wrong.** Restoring the pre-fix interpolation at the call site left the composer correct, its unit test green and **all 209 host tests passing** - R4-3 fully restorable behind a green guard. I had declined to close it "because a tenth `OSLogStore` reader is not a trade worth making"; the reviewer closed it inside a query `SchedulingLogTests` already opens, for **no additional reads at all**. Done the same way here, falsified with the reviewer's own mutation: 1 issue.
+- **One falsification row was measured under a `--filter` the ledger did not mention.** In the suite as shipped, deleting one test's canary leaves a sibling's canary in the shared window and the run stays green - which is the canary answering its own question correctly, since the subsystem did deliver. The row is corrected above and the substance is now demonstrated the way that actually separates the two causes. **Third occurrence in this run of a falsification quoted at a wider scope than it was measured at**, after `reviews-4/REVIEW-1.md` finding 4 and `reviews-4/REVIEW-2.md` finding 2.
