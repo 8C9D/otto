@@ -715,3 +715,27 @@ Plus five P3s, one of which is a test that passes for the wrong reason - removin
 
 Nothing measured in this run is affected: every gate's `verify.sh` runs from a clean clone of a committed sha, `git status --porcelain` was checked and empty before each measurement, and every flake batch reported test counts identical to the clean-clone run. But the contract cannot detect this by itself, and a builder who did not happen to look would not know.
 **The rule needs an enforcement, not a sentence**: reviewers should be given a worktree rather than told to make one.
+
+## FINAL VERIFICATION AT HEAD (`8a56e52`) - all five, measured
+
+| measurement | `reviews-4/BASELINE-4.md` (`2d8913c`) | at HEAD | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 258 / 124 / 207 = **589** | exit 0, **261 / 127 / 209 = 597** | **+8**, this run's new host tests |
+| `swiftlint --strict` | clean, 220 files | **clean, 225 files** | unchanged; five new files, no rule touched |
+| simulator suite | 117 / 72 / 36 = 225, 7 known issues | **119 / 72 / 52 = 243**, 7 known issues, `** TEST SUCCEEDED **` | **+18** since baseline |
+| non-Gregorian harness | 1 / 1 / 5 | **1 / 1 / 5**, same five citations | unchanged |
+| flake, twelve full runs | 12 of 12 | **12 of 12** | unchanged |
+
+Against `reviews-4/BASELINE-4.md`: **+8 host tests, +18 simulator tests, no lint rule relaxed, no test skipped or disabled, no new known issue, and the same five non-Gregorian citations.**
+
+**Five files were split rather than a length rule relaxed**: `NotificationCoordinatorStubs.swift`, `UnreportableInvalidationTests.swift`, `AppModel+Export.swift`, `SettingsExportWithdrawalTests.swift`, and `SpyState` to file scope. Each split was forced by a measured violation, and the two that moved production code were checked for behaviour preservation.
+
+**Assertions changed, and which direction each went:**
+
+- `StoredDayPlausibilityTests.knownUncatchable` loses `indian` - a **strengthening**, and the mechanism round 3 built working: the set exists so that catching one of its members fails the test and forces the record to be updated.
+- `realDatesSurvive` loses `1926-08-11` - a **strengthening**: a century-old stored day is now correctly rejected.
+- `windowEdges` gains the second bound and the assertion that the two differ - a **strengthening**.
+- `aHandledActionIsRecorded` and the rest are untouched.
+- Three coordinator tests changed which triggers they fire - **neither**; it is a correction, because the triggers they used never reach that entry point in production.
+
+**No assertion was weakened anywhere in this run**, and that sentence is worth less than the six falsification tables it sits under, all of which were re-derived at least once after a reviewer measured one wrong.
