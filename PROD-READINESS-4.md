@@ -501,6 +501,29 @@ Done here the same way: that test's pass now goes through the trigger-tagged ent
 
 **A user-facing consumer is still absent**, and adding one is new copy this run may not write: the person whose annual renewals were dropped past the budget learns it only from an earlier date in "Reminders scheduled through …". **N4-6.**
 
+## EVERY UNVERIFIED FIX, AND WHY
+
+The prompt asks for these by name. A fix is listed here when something about it rests on reading rather than on running.
+
+| fix | what is unverified | why |
+|---|---|---|
+| item 1's export **button** | that a tap reaches `AppModel.requestExport` | Nothing in this project renders a view for behaviour. This run added the first test that renders one at all, and it renders `SettingsView` to prove an **absence**. `requestExport` itself is now guarded; the closure that calls it is not, and closing that needs a UI-test target - a dependency this run may not add. **N4-1.** |
+| item 1's two cancellation-evidence withdrawals | that they fire | Both editors return early unless the subscription has an open cancellation episode, which needs multi-step state this test target does not build. **N4-9.** |
+| item 3's asymmetric window, on a real device | that a device that was Indian/Saka now shows the gap card | No non-Gregorian device exists to test, and the harness offers Buddhist, Japanese and Islamic-umalqura only. What is verified is the detector and the scheduler pass, on a Gregorian host, where the corruption lives in the stored values and reproduces exactly. |
+| item 4's coalescing, on a device | that the trigger bursts it merges are the bursts iOS actually delivers | The gate is proved against a fake scheduler on the simulator. `BGAppRefreshTask`'s real behaviour stays CANNOT ASSESS, as in every round. |
+| item 5's log line, on a CI runner | that the tenth `OSLogStore` read is readable there | Unchanged CANNOT ASSESS. It passes here, in `verify.sh`, and in every flake batch. |
+| everything, under **Release** | all of it | No Release build was produced this run (ASSUMPTION 3). |
+
+Nothing else in this run is verified only by reading.
+
+## ITEM 1, ANSWERED DIRECTLY: does a complete financial record still reach `tmp` unasked?
+
+**No, and the "under what conditions" has two real answers rather than one.**
+
+- **Opening Settings writes nothing.** Measured by rendering the screen in a window and letting its `.task` modifiers run, with a control proving they ran: `completeSnapshotCalls == 0`, no file on disk. Before the fix the same measurement gave 2 and two files.
+- **A tap writes one file, into `tmp`, and leaves it there.** That is the point of the feature and it is what the user asked for. `withdrawPreparedExports()` stops Otto **offering** it; it does not delete it, because deleting a file the share sheet may already be reading is a worse failure than leaving one the system reclaims. So after a deliberate export, a complete unencrypted record does sit in the temporary directory until iOS clears it - as it did before, and now only when asked.
+- **The file's protection class is not established.** F8's original P2 severity rested partly on it, and it needs a device this run may not touch. Unchanged from round 1, and out of this item's frozen scope.
+
 ## VERIFICATION - all five dimensions, at each measured commit
 
 | measurement | `reviews-4/BASELINE-4.md` (`2d8913c`) | stage 1 (`a412a07`) | stages 2-4 (`b054506`) | stage 5 (`8a62c0c`) |
