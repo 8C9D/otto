@@ -520,3 +520,39 @@ All seven work-list items were reconfirmed by **executing** the defect before be
 - **R0-7's repair** - repairing calendar days already stored under a non-Gregorian device calendar. Unchanged from round 3, and for round 3's reason: the writing calendar was never recorded and cannot be recovered. Round 4 closed **detection** for one of the two calendars round 3 could not reach; the days stay wrong until a human fixes them, and `docs/next-wave.md` now tells that human how.
 - **Ethiopic detection** - no distance threshold reaches 7-8 years, and the `createdAt` cross-check is declined on the measurement under ITEM 3. Nothing known closes it.
 - **F7 - clock monotonicity in merge resolution.** Scoped to the CloudKit wave; prior analysis in `docs/sync-safety.md`. Untouched by all four rounds.
+
+## WHAT IS WRONG OR UNDERSPECIFIED IN THE ROUND-4 PROMPT
+
+Ten, measured rather than asserted. Rounds 1, 2 and 3 found six, six and eight.
+
+1. **"There are six" `OSLogStore`-reading tests. There are nine.**
+   Seven in OttoUI, two in OttoPersistence, counted by enumerating the call sites of every helper that opens a store: `NotificationActionLogTests` reads **four** times (58, 91, 153, 180), `SchedulingLogTests` twice, `BoundaryLogTests` once, plus `CorruptWatermarkTests` and `MappingLogPrivacyTests`. `NotificationActionTests` matches a `grep` for `OSLogStore` and reads nothing - the string is in a doc comment. Six is what a **file**-level count returns. The rule built on the number ("do not add a seventh") therefore names a threshold that was already passed before this run started.
+
+2. **"no distance threshold can" reach Ethiopic or Indian is false for Indian/Saka**, and round 3's own doc comment contains the refutation.
+   Round 3's rule was **symmetric**; the corruption is not. Indian is 78 or 79 years *behind* in every month and for every field, and round 3 justified its century as *"forty years beyond the oldest plausible billing anchor"* - which is a statement that sixty years is already beyond it. A backward bound of 70 catches Indian with eight years of margin, moves the oldest accepted stored day from 1926 to 1956, and touches no fixture in the tree that reaches a scheduler. The prompt froze a conclusion that one measurement overturns.
+
+3. **The K-sweep table is wrong at K=31, and three documents agree on the wrong number.**
+   A window of ±K days around a single collision point contains exactly **2K+1** days: 3, 7, 15, **63**. The prompt says 64, `PROD-READINESS-3.md` says 64, and `reviews-3/REVIEW-4.md` records that it "re-derived it to the digit" - overruling `reviews-3/REVIEW-3.md`, which had 63 and was right.
+
+4. **"Sensitivity does not decay as the window narrows" is true and is not the axis that matters.**
+   The 13/13 figure is measured with the stored day **equal to the creation day**. Measured against the gap between them, it is 13/13 at 0-1 days, 1/13 at 3 days for K=1, and **0/13 at 60 days for every K including 31**. For a `lastUsedDate` recorded six months after creation and for a `pauseEndsOn` three months out it is 0/13. The prompt presents a property of the fixture as a property of the rule, and asks the run to weigh a trade whose benefit side is mis-stated.
+
+5. **"The only known route is the one round 3 measured and declined" is not the only route.**
+   An asymmetric distance bound needs no new evidence source, no `createdAt`, no schema question, and closes half the residual. The prompt's framing made the `createdAt` cross-check look like a take-it-or-leave-it, which is the shape that produces a bad decision either way.
+
+6. **The flake protocol names a command that does not read the commit.**
+   `swift test --package-path Packages/OttoUI` compiles the **working tree**; `verify.sh` clones the committed head. The prompt requires twelve runs "at the end of every stage" without saying the tree must be clean, so a run with the next item's edit half-written measures a state that has no commit and no name. This bit twice in this run and was caught both times only because the edits were parked deliberately.
+
+7. **"Commit each review as its own commit" is not achievable as specified.**
+   Reviewers write their verdict into the **main** working tree while the builder is working in it, so a builder's `git add -A` sweeps it into whatever is being committed. That is exactly what happened to `reviews-4/REVIEW-1.md`, which is inside item 5's commit. Either the reviewer should write somewhere the builder does not stage, or the contract should say the builder must stage explicit paths.
+
+8. **The worktree rule protects the source tree and not the build directory.**
+   `Packages/*/.build/` in the main tree contains compiled artifacts named `ZZReviewProbeTests` and `ZZProbe2` - probe files no commit has ever contained. The source tree stayed clean and no measurement here is contaminated, but a `--package-path` pointing at the main tree writes to a cache the builder's own gates read. The rule needs to name the build directory.
+
+9. **Item 1's scope exception grants navigation into the one layer this project cannot test.**
+   Nothing in the tree renders a view for behaviour; this run added the first test that renders one at all, and it renders it to prove an *absence*. Turning an automatic behaviour into a button therefore moves the feature's correctness somewhere no gate reaches - `reviews-4/REVIEW-1.md` finding 1 measured it: deleting the button's action leaves every gate green. The exception is the right call and the prompt should have said what it costs.
+
+10. **"Do not add a seventh `OSLogStore`-reading test without stating what it costs and why a shared query would not do" gives no way to decline the requirement.**
+    Item 5's honest fix logs a row it cannot describe, and a log statement with no reader is the R5-2 shape this project has shipped three times. So the choice was a tenth reader or an unguarded statement. The rule is right to demand the cost be stated; it should also say which way to resolve the conflict, because "state the cost" is not a decision procedure.
+
+**One thing the prompt gets conspicuously right**, recorded because the failures above are worth less without it: the flake dimension. Round 3's 3-in-12 defect passed every other gate, and requiring twelve runs at every stage is what makes "12 of 12" mean something. It cost roughly a third of this run's wall time and it is the cheapest of the five dimensions to justify.
