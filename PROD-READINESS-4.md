@@ -467,3 +467,29 @@ The line's fields are composed in `OttoLog.passEndFields` so a test can read the
 **What that does not guard is the emission itself.** Deleting the `OttoLog.scheduling.notice` call leaves the composition test green. That line was already unguarded before this run - no test read it - so this does not make it worse, and it is not closed either. **N4-5.**
 
 **A user-facing consumer is still absent**, and adding one is new copy this run may not write: the person whose annual renewals were dropped past the budget learns it only from an earlier date in "Reminders scheduled through …". **N4-6.**
+
+## VERIFICATION - all five dimensions, at each measured commit
+
+| measurement | `reviews-4/BASELINE-4.md` (`2d8913c`) | stage 1 (`a412a07`) | stages 2-4 (`b054506`) | stage 5 (`8a62c0c`) |
+|---|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 258 / 124 / 207 = **589** | exit 0, 260 / 124 / 207 = **591** | exit 0, 261 / 127 / 208 = **596** | exit 0, **261 / 127 / 209 = 597** |
+| `swiftlint --strict` | clean, 220 files | clean, 221 | clean, 224 | **clean, 224** |
+| simulator suite | 117 / 72 / 36 = 225, 7 known issues | 117 / 72 / 40 = 229 | 118 / 72 / 48 = 238 | **119 / 72 / 48 = 239**, 7 known issues, `** TEST SUCCEEDED **` |
+| non-Gregorian harness | 1 / 1 / 5 | 1 / 1 / 5 | 1 / 1 / 5 | **1 / 1 / 5**, same five citations |
+| flake, twelve full runs | 12 of 12 | 12 of 12 | 12 of 12 | **12 of 12** |
+
+**+8 host tests and +14 simulator tests against the baseline**, no lint rule relaxed, no test skipped or disabled, no new known issue, and the same five non-Gregorian citations throughout.
+
+**Where the numbers land, since the split confuses every round.** Items 1 and 4 are UIKit-hosted and land only in the simulator's third bucket (36 → 48). Item 3 adds one test to `OttoServicesTests`, which is the simulator's first bucket **and** `verify.sh`'s OttoUI count (117 → 119 across two stages, 207 → 209). Items 2 and 5 are host tests and land in both.
+
+**Two deviations from the per-stage measurement protocol, recorded rather than glossed.**
+
+1. **Stages 2, 3 and 4 were measured jointly at `b054506`, not three times at three heads.** Build, host tests and lint were run at each item's own commit and were green each time; the non-Gregorian harness and the twelve-run flake were run once, after the three. The review trail restores the per-stage measurement, because each stage's reviewer re-runs all five at its own reviewed head independently.
+2. **The flake protocol reads the WORKING TREE, not the committed head.** `swift test --package-path Packages/OttoUI` is not `verify.sh`; it compiles whatever is on disk. Twice in this run an edit for the next item was in progress when a gate started, and both times the edit was parked out of the tree and restored afterwards so the measurement was of the commit it names. The prompt specifies this command without saying the tree has to be clean, and a run that forgets is measuring something that has no commit.
+
+## A process risk observed in this run's own review contract
+
+`Packages/OttoPersistence/.build/` and `Packages/OttoUI/.build/` contain compiled artifacts named `ZZReviewProbeTests`, `ZZProbe2` and similar - probe files no commit in this repository has ever contained.
+The contract requires every reviewer to do its mutation work in a detached worktree, and the **source** tree is clean (`git status --porcelain` empty at the end of every stage, and every flake run in every gate reported the same test counts as the clean-clone `verify.sh`), so nothing measured here is contaminated.
+But a build cache under the main package path can only be written by a command whose `--package-path` pointed at the main tree.
+**The worktree rule protects the source and says nothing about the build directory**, which is shared, and that is a real gap in the contract rather than in any one reviewer.
