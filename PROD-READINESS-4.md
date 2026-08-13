@@ -127,7 +127,7 @@ F8REPRO importedSubscriptions=1
 - **"Which exports were asked for" moves onto `AppModel`** as `prepared: [ExportKind: URL]`, with `preparedExport(_:)` to read and `withdrawPreparedExports()` to drop. A view's `@State` is reachable from nothing that knows an import happened, which is precisely why the stale file survived.
 - **`withdrawPreparedExports()` is called from `flowFinished()`** - every §5.4 flow and the import - **and from `subscriptionsStore.onMutation`** - create, edit, delete.
 - **That hook is now wired unconditionally.** It used to be installed only inside `if let notifications`, so "the data changed" was observable only on a model that could schedule reminders.
-- **`AppModel.exportJSONFile()` and `exportChargesCSVFile()` are gone.** `prepareExport(_:)` is the only path that writes an export file, so there is no second, unrecorded writer for the defect to come back through.
+- **`AppModel.exportJSONFile()` and `exportChargesCSVFile()` are gone.** `prepareExport(_:)` is the only caller in `OttoStores` that writes an export file. It is **not** a constraint: `ExportService`'s two methods are `public` and have to be, because `OttoStores` is a different module, so a future view holding `model.exports` could write one without recording it. An earlier version of this line claimed there was "no second, unrecorded writer", which is a claim about code that does not exist yet (`reviews-4/REVIEW-1.md` finding 7).
 - **`ExportKind`** is new public API in `OttoServices`, beside `ImportPickerOutcome`.
 
 **The scope exception was taken and is bounded.** The two rows become buttons - navigation the prompt's item-1 allowance explicitly permits - and the footer gains one sentence: *"Otto builds a file only when you ask for it, and stops offering it once your data changes - a backup is a complete copy of your finances, and a stale one is worse than none."* No settings key, no new screen, no dependency.
@@ -136,12 +136,17 @@ F8REPRO importedSubscriptions=1
 
 Each mutation printed the text it removed and asserted exactly one occurrence before running (process rule 2).
 
+Every count below is **re-derived against the shipped tests** after the stage-1 remediation, not carried from the run that produced it. `reviews-4/REVIEW-1.md` finding 4 caught one of these eight numbers being stale; all of them were, because the tables were written as the mutations ran and the tests grew afterwards.
+
 | what was broken | result |
 |---|---|
-| an appearance-time `prepareExport` pair re-added to `ExportSection` | **3 issues** - `snapshotCalls == 0` fails, both `preparedExport(...) == nil` fail, and the two files are back in the simulator's `tmp` |
-| `withdrawPreparedExports()` deleted from `flowFinished()` | **2 issues** - the import withdraws neither export |
-| `withdrawPreparedExports()` deleted from the `onMutation` hook | **1 issue** - a delete no longer withdraws |
-| `prepareExport` stops recording the URL | **4 issues across 3 tests** |
+| an appearance-time `prepareExport` pair re-added to `ExportSection` | **3 issues / 1 test** - `snapshotCalls == 0` fails, both `preparedExport(...) == nil` fail, and the two files are back in the simulator's `tmp` |
+| `withdrawPreparedExports()` deleted from `flowFinished()` | **2 issues / 1 test** - the import withdraws neither export |
+| `withdrawPreparedExports()` deleted from the `onMutation` hook | **2 issues / 2 tests** |
+| `prepareExport` stops recording the URL | **7 issues / 6 tests** |
+| the hook re-wrapped in `if notifications != nil` (the reviewer's own mutation) | **1 issue** - it left the whole suite green before the remediation |
+| `PaymentMethodsStore`'s `onMutation` call removed | **1 issue** |
+| the generation guard removed from `prepareExport` | **2 issues** |
 
 ### What this does NOT do
 
@@ -177,12 +182,14 @@ Every one byte-for-byte. `-2+3+cmd|' /C calc'!A0` is the DDE shape that asks the
 
 ### Falsified four ways
 
+Re-derived against the shipped tests, as above.
+
 | what was broken | result |
 |---|---|
-| the neutralizer not called at all | 5 issues over 2 tests |
-| the four triggers the finding names removed, TAB and CR kept | 5 issues over 2 tests |
-| neutralize **after** quoting instead of before | 2 issues - the apostrophe lands outside the quotes |
-| the neutralizer applied to the **amount** column | 8 issues - the control, and the reason the row is asserted whole |
+| the neutralizer not called at all | **8 issues / 2 tests** |
+| the four triggers the finding names removed, TAB / CR / LF kept | **5 issues / 2 tests** |
+| neutralize **after** quoting instead of before | **3 issues / 2 tests** - the apostrophe lands outside the quotes |
+| the neutralizer applied to the **amount** column | **9 issues / 1 test** - the control, and the reason the row is asserted whole |
 
 ### Baseline at the end of STAGE 1 (`a412a07`) - all five, measured
 
@@ -308,3 +315,22 @@ So the window becomes **70 years behind, 100 ahead**.
 **Ethiopic**: unchanged and undetectable. No card, no log line, no signal of any kind from Otto. Four reminders arrive on the wrong days of the month while Today states full coverage. The only thing that is visibly wrong is the date on the subscription list, which is off by eight years and is the one thing a user might notice unaided. `docs/next-wave.md` now says so explicitly, which is the whole of what this run can do for them.
 
 Live exposure for both remains nil under ASSUMPTION 1, and no locale defaults to either calendar.
+
+### Remediation after `reviews-4/REVIEW-1.md`
+
+Verdict **PASS-WITH-FINDINGS** over two P2s and seven P3s. Both P2s are defects in this stage's own work and are fixed here (`b054506`); the remediation commit lands after the reviewed head and is therefore inside stage 4's range.
+
+- **Finding 2 (P2) - a false promise, shipped to the user.**
+  The footer said *"stops offering it once your data changes"* and `withdrawPreparedExports()` was reachable from **two** of at least **six** paths that change exported data. The reviewer demonstrated by execution that saving a payment method leaves the stale JSON backup on offer.
+  Fixed on both sides. `PaymentMethodsStore` gains the `onMutation` hook it never had - `paymentMethods` is a stored collection of `OttoDataSnapshot` - and both cancellation-evidence editors withdraw, because `evidenceNotes` are encoded in the export. The copy now says only what is true.
+  **A code comment of mine was measured false and is corrected**: it claimed a notification-time change "changes no record", and the reschedule it triggers calls `materializeEvents`, which writes ledger rows the CSV prints. That path withdraws now.
+  `NotificationActionHandler` and a bare scheduling pass still do not withdraw - **N4-4**, disclosed rather than claimed closed.
+- **Finding 1 (P2) - shrunk, not closed.** Deleting the Button's action left every gate in the project green, and after this stage a mis-wired button means backups become *impossible* rather than stale. The whole state machine moved onto `AppModel`, where eight tests reach it, and the view is now one call with no logic in it. What no test in this project can reach is that single closure. Carried at the reviewer's severity as **N4-1**.
+- **Findings 3, 5, 6 (P3) - fixed, each with a guard that bites.** A withdrawal landing during an in-flight build was overwritten by it (a generation counter now refuses to install a file built from a superseded snapshot); the test that claimed to pin the unconditional `onMutation` wiring could not see it, because every model in the suite had a notification store (there is now one without); `preparing` and `failure` were single-valued and cleared unconditionally across kinds (both are per-kind).
+- **Finding 8 (P3)** - `\n` was covered by the trigger set's own stated rationale and absent from the set. Added, with its case.
+- **Finding 4 (P3) - it found one stale falsification count; all eight were stale.** Every number in both tables above is re-derived against the shipped tests.
+- **Finding 7 (P3)** - "no second, unrecorded writer" was a claim about code that does not exist yet. Reworded above.
+- **Finding 9 (P3, process) - the reviewed head I handed the reviewer disagreed with the ledger at that commit.** True and inherent to the rule this run introduced: a head that is the measurement commit cannot be written into the table before it exists. The range issued was the wider of the two and the drift is documentation-only, but the rule is worth restating: **the START is recorded when the stage opens, the HEAD when it closes, and the one-line commit that writes the head is in the next range.**
+
+**One process defect of this run, recorded rather than hidden.**
+`reviews-4/REVIEW-1.md` was swept into item 5's commit (`12024ab`) by `git add -A`, because the reviewer writes its verdict into the main tree while the builder is working in it. The contract requires each review to be its own commit. History is not rewritten to hide it; explicit paths are used from here.
