@@ -31,6 +31,46 @@ struct SchedulingLogTests {
         #expect(!rendered.contains("("))
     }
 
+    /// ⛔ R4-3. `ScheduleOutcome.truncatedAfter` reached nothing at all - the
+    /// scheduler set it, `coveredThrough` was derived from the same local, and
+    /// no reader anywhere asked the outcome for it.
+    ///
+    /// The discriminating case, which is the whole finding: two passes that
+    /// agree on EVERY field the line used to carry, one of which dropped rungs
+    /// past the 64-slot budget and one of which dropped none. `coveredThrough`
+    /// cannot tell them apart, because a truncated pass's covered day IS its
+    /// truncation point and a whole pass's is its horizon end - and those are
+    /// the same day whenever the horizon happens to land there. Before this the
+    /// two lines were byte-identical.
+    @Test("⛔ the pass-end line distinguishes a truncated pass from a whole one")
+    func thePassEndLineCarriesTheTruncation() throws {
+        let day = try day(2026, 9, 1)
+        let truncated = ScheduleOutcome(
+            permission: .authorized, scheduledCount: 64,
+            truncatedAfter: day, coveredThrough: day
+        )
+        let whole = ScheduleOutcome(
+            permission: .authorized, scheduledCount: 64,
+            truncatedAfter: nil, coveredThrough: day
+        )
+
+        let truncatedLine = OttoLog.passEndFields(trigger: .foreground, outcome: truncated)
+        let wholeLine = OttoLog.passEndFields(trigger: .foreground, outcome: whole)
+
+        #expect(truncatedLine != wholeLine)
+        #expect(truncatedLine.contains("truncatedAfter=2026-09-01"))
+        #expect(wholeLine.contains("truncatedAfter=none"))
+        // The fields that were already there are still there, in a line that is
+        // now composed rather than interpolated at the call site.
+        for line in [truncatedLine, wholeLine] {
+            #expect(line.hasPrefix("pass end trigger=foreground"))
+            #expect(line.contains("permission=authorized"))
+            #expect(line.contains("scheduled=64"))
+            #expect(line.contains("coveredThrough=2026-09-01"))
+            #expect(line.contains("ledgerFailures=0"))
+        }
+    }
+
     @Test("no failures reads as a dash, like the other identifier lists")
     func noFailures() {
         #expect(OttoLog.failures([]) == "-")

@@ -83,6 +83,35 @@ public enum OttoLog {
         identifiers.isEmpty ? "-" : identifiers.sorted().joined(separator: " ")
     }
 
+    /// The `pass end` line's fields, as a value.
+    ///
+    /// **R4-3.** `ScheduleOutcome.truncatedAfter` reached nothing at all: the
+    /// scheduler set it, `coveredThrough` was computed from the same local, and
+    /// no reader anywhere - production or UI - ever asked the outcome for it.
+    /// This line carried every OTHER field of the outcome and not that one, so a
+    /// pass that dropped rungs past the budget and a pass that dropped none
+    /// logged identically whenever their `coveredThrough` agreed, which is
+    /// exactly when the distinction matters.
+    ///
+    /// Composed here rather than interpolated at the call site so a test can
+    /// read the line without opening `OSLogStore` - the tree already blocks on
+    /// that daemon nine times, and a tenth reader for one field is not a trade
+    /// worth making. What this does NOT guard is the emission; see
+    /// `PROD-READINESS-4.md` N4-5.
+    ///
+    /// Every field is an opaque count, a control-flow outcome or a calendar
+    /// day, which is what `.public` on the whole string is allowed to mean.
+    static func passEndFields(trigger: RescheduleTrigger, outcome: ScheduleOutcome) -> String {
+        """
+        pass end trigger=\(trigger.rawValue) \
+        permission=\(String(describing: outcome.permission)) \
+        scheduled=\(outcome.scheduledCount) \
+        coveredThrough=\(String(describing: outcome.coveredThrough)) \
+        truncatedAfter=\(dayText(outcome.truncatedAfter)) \
+        ledgerFailures=\(outcome.ledgerFailures.count)
+        """
+    }
+
     /// Failed rungs as `identifier=ErrorType` pairs.
     ///
     /// The reason, not just the identifier. `reconcile` attempts every rung and
@@ -142,13 +171,9 @@ extension ReminderScheduling {
         OttoLog.scheduling.notice("pass begin trigger=\(trigger.rawValue, privacy: .public)")
         do {
             let outcome = try await reschedule(now: now, today: today, timeZone: timeZone)
-            OttoLog.scheduling.notice("""
-                pass end trigger=\(trigger.rawValue, privacy: .public) \
-                permission=\(String(describing: outcome.permission), privacy: .public) \
-                scheduled=\(outcome.scheduledCount, privacy: .public) \
-                coveredThrough=\(String(describing: outcome.coveredThrough), privacy: .public) \
-                ledgerFailures=\(outcome.ledgerFailures.count, privacy: .public)
-                """)
+            OttoLog.scheduling.notice(
+                "\(OttoLog.passEndFields(trigger: trigger, outcome: outcome), privacy: .public)"
+            )
             return outcome
         } catch {
             OttoLog.scheduling.error("""
