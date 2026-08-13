@@ -105,6 +105,9 @@ Recorded as they are made; this list is complete at the end of the run.
 3. **Release configuration behaves as Debug** except where a finding says otherwise.
    No Release build was produced this run.
 4. **`2d8913c` is the intended starting point** and no prior branch is to be merged, rebased or pushed by this run.
+5. **The `createdAt` cross-check is evaluated against two definitions of a detector round 3 never wrote down** - the fixed-reading form and the any-`D`-within-`K` form, both measured under ITEM 3. Round 3 recorded a sweep and not the rule that produced it, so any figure quoted for it, including this run's, is a figure about a reconstruction.
+6. **Every concurrency figure in this run is Debug, on this host, against a fake scheduler.** Peak-concurrency counts are properties of the executor and of how many suspension points the pass has; only the pass COUNTS are properties of the code. Nothing here is a claim about a device.
+7. **The seven known simulator issues stay known.** All seven are `EmptyStateTests` accessibility assertions and this host vends no accessibility tree; nothing in this run changes that, and no measurement here treats them as passes.
 
 ## ITEM 1 - F8 + R0-10(b), the complete financial record nobody asked for
 
@@ -642,6 +645,18 @@ Reconciled item by item against round 3's list, not summarised.
 - **N4-5 - CLOSED in the stage-5 remediation**, at zero additional `OSLogStore` reads, inside a window `SchedulingLogTests` already holds open. Left here as a record of the reasoning that nearly shipped it open: the cost I declined to pay was not the cost the fix required.
 - **N4-6 (P3) - no surface tells a user their reminders were truncated.**
   `truncatedAfter` now reaches an investigator through the log. The person whose annual renewals were dropped past the 64-slot budget still learns it only from an earlier date in "Reminders scheduled through …", which is honest and does not say why.
+- **N4-7 (P2) - the reschedule gate is in the wrong class.**
+  Three callers share one `NotificationScheduler`: the coordinator's `rescheduleSoon` (gated), `handleBackgroundRefresh` (not), and `NotificationStatusStore.reschedule()` (not, and the most frequent in ordinary use). Measured overlap with a coordinator pass: **45 of 240** for the background path and **33 of 240** for the store path, re-measured independently at **74 of 180** for the background path with a spy that models the real pass's suspensions. Closing it means putting the gate at the `ReminderScheduling` seam all three share, which is a larger change than F10 was scoped to and needs its own measurement of what `expirationHandler` then cancels.
+- **N4-8 (P3) - a coalesced trigger leaves no log line.**
+  The trigger name reaches the log only through the trigger-tagged wrapper, which a coalesced trigger never calls, and `queued` is an unconditional overwrite. A burst of five that produced five `pass begin` lines now produces one or two, tagged with whichever arrived last. Inherent to coalescing; a deliberate reduction in the investigative surface this codebase pays for elsewhere.
+- **N4-9 (P3) - the two cancellation-evidence withdrawals are unguarded.**
+  `appendCancellationEvidence` and `updateCancellationEvidence` withdraw a prepared export and nothing observes it: both return early unless the subscription has an open cancellation episode, so a guard needs a fixture that opens one through the real flow. Multi-step state this test target does not build - the same shape as N3-12.
+- **N4-10 (P2) - the §6.2 reconcile diff line has no executable guard, and `aa92ca7`'s file split is what removed it.**
+  Deleting that whole log statement is green at `aa92ca7` (196/196) and still green at the tip (209/209); the same deletion at `aa92ca7`'s parent fails. `reviews-4/REVIEW-AA92CA7.md` finding 2.
+- **N4-11 (P2) - a sibling's canary masks a deleted canary, wherever tests share a log window.**
+  Found twice independently in this run, in commits three rounds apart: `reviews-4/REVIEW-AA92CA7.md` on `NotificationActionLogTests`' `aFailedActionIsRecorded`, and `reviews-4/REVIEW-5.md` on this run's own item 6. `requireDelivered` answers "did the subsystem deliver for this process", which a sibling's canary answers correctly - so the guard is sound and the **falsification** of it is what breaks. Every canary falsification in this tree needs `--filter` or a suppressed subsystem, and none of them says so.
+- **N4-12 (P3) - the "~80 ms" window figure is wrong by about 180x and is load-bearing in five files.**
+  `OSLogStore.position(date:)` reaches **15.30 / 12.66 / 15.12 seconds** behind `since`, measured. At fifteen seconds a window holds most of a suite, which is why every absence assertion over one has to be pinned to an identifier the test owns. Corrected where round 4 cites it; the four round-3 citations are untouched, because editing them is not this run's scope.
 
 ### Remediation after `reviews-4/REVIEW-3.md`
 
