@@ -6,9 +6,18 @@ name: CI
 # https://github.com/actions/runner-images), it appears once per job below and
 # nowhere else. Everything else in this file has been exercised locally.
 
+# Every job here runs on a macOS runner at the 10x rate, so branch pushes do
+# not trigger CI: main and pull requests only. August 2026's entire Actions
+# allowance went to redundant per-branch runs in one morning.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A second push supersedes the in-flight run instead of paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   domain-tests:
