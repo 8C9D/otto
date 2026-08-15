@@ -156,7 +156,13 @@ struct SchedulingLogTests {
         let subscription = try makeSubscription(
             index: 88, name: "Zzyzx Streaming", amountCents: 999_99, cycleStartDay: try day(2569, 8, 6)
         )
-        await fixture.subscriptions.seed([subscription])
+        // A healthy subscription of this test's own (index 6_610, used nowhere
+        // else in the package): the skipped subscription plans nothing since
+        // stage 2, so without it this pass would add zero rungs and the N4-10
+        // diff assertion below could not pin `added=[...]` to an identifier
+        // this test owns.
+        let healthy = try makeSubscription(index: 6_610, cycleStartDay: try day(2026, 8, 25))
+        await fixture.subscriptions.seed([subscription, healthy])
 
         let since = Date()
         OttoLogProbe.emitCanary(to: OttoLog.scheduling)
@@ -218,6 +224,34 @@ struct SchedulingLogTests {
         // a second emission site could not reintroduce R4-3 beside this one.
         let allPassEnds = lines.filter { $0.hasPrefix("pass end ") }
         #expect(allPassEnds.allSatisfy { $0.contains("truncatedAfter=") })
+
+        // ⛔ N4-10: the §6.2 reconcile diff line, in this same open window.
+        //
+        // The guard that read `hasPrefix("reconcile ")` was narrowed to
+        // `"reconcile failed=["` by `aa92ca7`'s file split, and from that
+        // commit to this stage's head deleting the diff statement left the
+        // whole host suite green (re-measured before this edit: 228 of 228).
+        // Guarded the way R4-3's emission is guarded above - inside a query
+        // this test already opens, at no new `OSLogStore` reader - and pinned
+        // to the healthy subscription seeded above, whose rungs no sibling
+        // test in the window can add.
+        let addedID = try fixtureUUID(6_610).uuidString.lowercased()
+        let diff = try #require(
+            lines.last { $0.hasPrefix("reconcile pending=") && $0.lowercased().contains(addedID) },
+            "the pass emitted no reconcile diff line naming this test's added rungs"
+        )
+        // The identifier-carrying fields, not only the prefix: identifiers,
+        // never counts, is the diff line's whole doctrine - a count cannot
+        // tell a correct replacement from a wipe.
+        #expect(diff.contains("desired="))
+        #expect(diff.contains("snoozesSpared="))
+        #expect(diff.contains("removed=[-]"))
+        #expect(diff.contains("added=["))
+        // A clean pass reports zero failures on the diff line and emits no
+        // per-rung failure entry - the no-failure half of item 3's emission
+        // shape, pinned to an identifier this test owns.
+        #expect(diff.contains("failedCount=0"))
+        #expect(!lines.contains { $0.hasPrefix("reconcile failed ") && $0.lowercased().contains(addedID) })
     }
 
     /// Every `scheduling` line this process emitted since `since`.
