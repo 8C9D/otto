@@ -36,6 +36,10 @@ It used to depend on which calendar wrote the year - the behind-offset calendars
 **Silence plus the coverage-gap card IS the corruption signal.**
 Reminders resume on the first scheduling pass after every day the log line names is fixed.
 
+**One carve-out: snoozes.**
+Otto never cancels a snooze you created, so a reminder snoozed before this build updates still fires once, and tapping "Remind me later" on a wrong-day reminder that was already delivered schedules that one snooze - each from a subscription this section otherwise calls silent.
+Nothing follows them: after a snooze fires, the silence holds until the dates are repaired.
+
 **One calendar leaves no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders still arrive on the wrong days - Ethiopic is the one calendar the round-5 silencing cannot reach. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
 
 ---

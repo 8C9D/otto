@@ -42,9 +42,9 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 | # | id | what | terminal state |
 |---|---|---|---|
 | 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED** - stage 1; one REJECT cycle (`reviews-5/REVIEW-1.md`), remediated, re-review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-2.md`) |
-| 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | **RESOLVED pending review** - stage 2; the decision was taken by the user (stop scheduling), and the stop is measured per family |
+| 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | **RESOLVED** - stage 2; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-3.md`), three P3s: one corrected in place, two carried (N5-4, N5-5) |
 | 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | open |
-| 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | **RESOLVED pending review** - stage 2; the section shows wherever the stored day is implausible, the write is status-free, and the copy question is flagged |
+| 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | **RESOLVED** - stage 2; reviewed with item 2 (**PASS-WITH-FINDINGS**, `reviews-5/REVIEW-3.md`); the recorded falsification reproduced to the byte, and the flagged wording question's deferral was endorsed |
 | 5 | **N4-1** | The export button's action is verified by nothing | open |
 | 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | open |
 | 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | open |
@@ -245,10 +245,13 @@ The suite-scoped simulator dimension finding 2 added: **18 of 18 green** at this
 
 ## ITEM 2 - N4-2, detected corruption stops scheduling
 
-**RESOLVED pending review**, stage 2 (run jointly with item 4; one range).
-The adversarial review of this stage's range has not happened yet; nothing in this section is final until it has.
+**RESOLVED**, stage 2 (run jointly with item 4; one range).
+The R3 range (`c94dbbd..cdb509e`) was reviewed at `773672c`: **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-3.md`), three P3 findings - finding 2 is corrected in place below, findings 1 and 3 are disclosed below and carried as N5-4 and N5-5.
 
 **The decision this item was waiting on has been taken - by the user, not by this run**: a detected-implausible anchor stops scheduling entirely (option 2 of the five presented), paired with item 4 so the repair is reachable, because stopping without a repair path strands the user.
+**Correction after `reviews-5/REVIEW-3.md` finding 2** - the sentence above names the anchor, and the shipped guard silences on ANY detected-implausible stored field: anchor, trial dates, `pauseEndsOn` and `lastUsedDate`.
+The per-field extension is this stage's own inference, not part of the option-2 sentence: the ledger loop has treated any implausible stored day as a per-subscription failure since round 3, so the planner now agrees with the ledger it already skipped on, and a partially-wrong plan is indistinguishable from a healthy one - the defect class this item exists to kill.
+Owned here so no future reader quotes "the user decided" for a rule wider than the decision sentence states.
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -286,6 +289,7 @@ Measured after, same sweep: **0 scheduled / 0 pending for every detected family 
 - The `SKIPPED reason=implausibleStoredDays days=[...]` log line is emitted by the untouched ledger loop and still names the exact days; `SchedulingLogTests` guards it as before. No log surface changed and no `OSLogStore` reader was added.
 - `docs/next-wave.md` is rewritten where this change falsified it (`22f2a72`): all nine detected families now send nothing, **silence plus the coverage-gap card is the corruption signal**, and Ethiopic - undetectable, so unreachable by this policy - still sends wrong-day reminders with no card. The claim "reminders do arrive - on the wrong days" is gone because it is no longer true.
 - The gap card now appears with zero reminders on every detected calendar, which makes its presence more consistent than before; its COPY is still item 9's business (N3-5) and is not touched here. This change does not make the copy more false: the card's trigger set is unchanged.
+- **The silencing has one carve-out, measured by the review (`reviews-5/REVIEW-3.md` finding 1)**: reconcile spares snoozes by design (`NotificationScheduler+Reconcile.swift:36`), so a wrong-day snooze created on a pre-guard build survives every silencing pass, and `snooze` checks no plausibility, so remind-me-later on an already-delivered wrong-day notification schedules one new request. `docs/next-wave.md` now discloses it; whether the pass should also drop snoozes for ledger-failed subscriptions is a behaviour change no round has decided - carried as **N5-4**.
 
 ### Tests
 
@@ -301,7 +305,8 @@ Measured after, same sweep: **0 scheduled / 0 pending for every detected family 
 
 ## ITEM 4 - N4-16, the lastUsedDate repair is reachable
 
-**RESOLVED pending review**, stage 2 (run jointly with item 2; one range).
+**RESOLVED**, stage 2 (run jointly with item 2; one range); reviewed in R3 - **PASS-WITH-FINDINGS**, `reviews-5/REVIEW-3.md`.
+The review reproduced the recorded pixel falsification to the byte (gate reverted -> byte-identical 34,674-byte windows; restored -> pass), confirmed `recordUsage` carries no status gate, and answered the flagged wording question: the deferral is correct, and the re-wording belongs with item 9's copy work.
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -361,7 +366,8 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R0** `9e73378..d7cbd37` | `1b352f4` (the merge; parents `cd9778c` and `9e73378` - `cd9778c` is main's CI-workflow commit and enters the tree here), `756b8b1`, `d7cbd37` | **no dedicated adversarial review.** The merge's diff against `9e73378` is nine lines of `.github/workflows/ci.yml`, measured at merge time and re-verified by `reviews-5/BASELINE-5.md`; `756b8b1` and `d7cbd37` are docs-only, and the baseline measured the tree they describe. Declared honestly as reviewed-by-measurement only, and flagged for the round's terminal reconciliation |
 | **R1** `d7cbd37..c26b2a7` | `eb4d2ae`, `c26b2a7` | `reviews-5/REVIEW-1.md` - **REJECT** |
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
-| **R3** `c94dbbd..` the stage-2 head | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), and the five-dimension verification commit that is the range's HEAD | **review pending** - items 2 and 4 |
+| **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
+| **R4** `cdb509e..` the stage-3 head | `773672c` (the review artifact) and the finding-routing commit (R3's record-only tail), then stage 3 | **review pending** |
 
 ## NEXT ROUND
 
@@ -378,3 +384,9 @@ Round 4's NEXT ROUND section remains the ledger of record for everything this ro
 - **N5-3 (P3) - the §5.2a derivation still reads an implausible `pauseEndsOn` outside planning.**
   Stage 2 measured a behind-offset resume date silently deriving a paused subscription to `.active`; the planner guard stops the phantom reminders, but list rows, detail screens and the §7.2 report still derive status from the corrupt date, so a subscription the user paused can still DISPLAY as active until the date is repaired.
   Whether the derivation itself should consult plausibility is a §5.2a design question, not a patch.
+- **N5-4 (P3) - whether the silencing pass should also drop snoozes for ledger-failed subscriptions.**
+  `reviews-5/REVIEW-3.md` finding 1, executed: a pre-guard wrong-day snooze survives every silencing pass (reconcile spares snoozes by design), and remind-me-later on an already-delivered wrong-day notification schedules one new request with its deadline cap computed from the corrupt anchor.
+  Disclosed in ITEM 2 and in `docs/next-wave.md`; cancelling user-created state from a corruption guard is its own decision, taken by no round.
+- **N5-5 (P3) - the §7.2 zombie report reads a corrupt `lastUsedDate` raw.**
+  `reviews-5/REVIEW-3.md` finding 3, executed: a behind-offset day puts a subscription IN the report (~78 years unused) and an ahead-offset day keeps a genuinely unused one OUT, both wrong until the item-4 button is tapped.
+  The `lastUsedDate` sibling of N5-3's `pauseEndsOn` display surface; pre-existing, mitigated by item 4 making the repair reachable.
