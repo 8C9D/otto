@@ -19,16 +19,25 @@ private struct SecondCause: Error {}
 @Suite("What a failed scheduling pass leaves behind (RF-3)")
 struct SchedulingLogTests {
 
-    @Test("each failure contributes its own reason, not a shared one")
-    func failuresCarryReasonsPerRung() {
-        let rendered = OttoLog.failures([
-            (id: "b|2026-08-20|renewal", error: SecondCause()),
-            (id: "a|2026-08-20|trialLead", error: FirstCause())
-        ])
-        // Sorted, so a diff of two passes is readable.
-        #expect(rendered == "a|2026-08-20|trialLead=FirstCause b|2026-08-20|renewal=SecondCause")
+    /// Followed the item-3 emission change (N2-4 reopened): `OttoLog.failures`
+    /// joined every rung into ONE entry, `os_log`'s ~1024-byte per-entry budget
+    /// cut the join at 15-16 of 64 rungs named, and the joined-and-sorted
+    /// rendering this test asserted no longer exists. Each rung renders alone
+    /// now, on an entry of its own, and the ceiling test below asserts that
+    /// all 64 arrive - which is what the sorted join could never survive.
+    @Test("each failure carries its own reason, rendered as identifier=ErrorType")
+    func failedRungCarriesItsReason() {
+        #expect(
+            OttoLog.failedRung("a|2026-08-20|trialLead", FirstCause())
+                == "a|2026-08-20|trialLead=FirstCause"
+        )
+        // Two causes stay distinguishable pair by pair.
+        #expect(
+            OttoLog.failedRung("b|2026-08-20|renewal", SecondCause())
+                == "b|2026-08-20|renewal=SecondCause"
+        )
         // The type, never the value - an error can carry a payload.
-        #expect(!rendered.contains("("))
+        #expect(!OttoLog.failedRung("a|2026-08-20|trialLead", FirstCause()).contains("("))
     }
 
     /// ⛔ R4-3. `ScheduleOutcome.truncatedAfter` reached no PRODUCTION reader -
@@ -74,25 +83,29 @@ struct SchedulingLogTests {
         }
     }
 
-    @Test("no failures reads as a dash, like the other identifier lists")
-    func noFailures() {
-        #expect(OttoLog.failures([]) == "-")
-    }
-
-    /// The call site, read back out of this process's own log.
+    /// The call site, read back out of this process's own log - at the ceiling.
     ///
-    /// Without this the fix has no executable guard: `OttoLog.failures` could be
-    /// correct and unused, which is exactly the shape round 1 shipped for F2 and
-    /// recorded as R5-2.
-    @Test("⛔ the reconcile line the scheduler actually emits names a reason per failed rung")
-    func theEmittedReconcileLineCarriesReasons() async throws {
+    /// Without this the fix has no executable guard: `OttoLog.failedRung` could
+    /// be correct and unused, which is exactly the shape round 1 shipped for F2
+    /// and recorded as R5-2. And the ceiling is the load this guard must carry:
+    /// this test's predecessor asserted one subscription's failures inside the
+    /// round-2 aggregate entry, which is why the aggregate's truncation - ~1037
+    /// characters naming 15 of 64 failed rungs at the 64-slot device ceiling,
+    /// measured at this stage's own head - stayed green for two rounds (N2-4
+    /// reopened, `reviews-4/REVIEW-AA92CA7.md`).
+    @Test("⛔ every failed rung at the 64-rung device ceiling is named, each with its own reason")
+    func everyFailedRungIsNamedAtTheCeiling() async throws {
         let fixture = SchedulerFixture()
-        // A distinctive id, and one plain monthly subscription: this line has to
-        // be identifiable among the reconcile lines of every other test in the
-        // window (OSLogStore.position(date:) reaches ~80 ms behind `since`), and
-        // short enough that os_log does not truncate the field being asserted.
-        let subscription = try makeSubscription(index: 77, cycleStartDay: try day(2026, 8, 25))
-        await fixture.subscriptions.seed([subscription])
+        // 64 subscriptions this test owns - indices 9_100...9_163, used nowhere
+        // else in the package - so every asserted line pins to identifiers no
+        // sibling test in the window can emit.
+        var subscriptions: [Subscription] = []
+        for index in 9_100..<9_164 {
+            subscriptions.append(
+                try makeSubscription(index: index, cycleStartDay: try day(2026, 8, 25))
+            )
+        }
+        await fixture.subscriptions.seed(subscriptions)
         await fixture.client.refuseAdds(after: 0)
 
         let since = Date()
@@ -105,28 +118,26 @@ struct SchedulingLogTests {
             )
         }
 
-        // One read, checked for both the canary and the real line.
+        // The fake records every attempted add, refused ones included, so the
+        // expected set is calibrated by the pass itself rather than predicted -
+        // and its size is the device ceiling, which is the whole point.
+        let attempted = await fixture.client.addCalls.map(\.identifier)
+        #expect(attempted.count == 64)
+
+        // One read, checked for the canary and all 64 entries.
         let lines = try Self.schedulingLogLines(since: since)
         try OttoLogProbe.requireDelivered(lines)
 
-        let mine = try fixtureUUID(77).uuidString.lowercased()
-        let line = try #require(
-            lines.last { $0.hasPrefix("reconcile failed=[") && $0.lowercased().contains(mine) },
-            "the pass logged no reconcile failure line naming this subscription"
-        )
-
-        // The identifiers were always here. The reasons were not. They are on
-        // their own entry now, so `os_log`'s per-entry budget cannot truncate
-        // them away behind the (deliberately complete) added/removed lists.
-        #expect(line.contains("failed=["))
-        #expect(line.contains("=AddRefused"))
-        // Not the bare-identifier shape: every failed rung is followed by its
-        // own reason, so two causes are distinguishable.
-        let failed = try #require(line.components(separatedBy: "failed=[").last)
-        let identifiers = failed.replacingOccurrences(of: "]", with: "")
-            .split(separator: " ").map(String.init)
-        #expect(!identifiers.isEmpty)
-        #expect(identifiers.allSatisfy { $0.contains("=") })
+        // Byte-for-byte, one COMPLETE entry per failed rung, reason included:
+        // a prefix or contains match could still be satisfied by a truncated
+        // tail, and a rung that fails and is then not named is exactly the
+        // loss RF-3 exists to repair.
+        for identifier in attempted {
+            #expect(
+                lines.contains { $0 == "reconcile failed \(identifier)=AddRefused" },
+                "failed rung \(identifier) has no complete entry of its own"
+            )
+        }
     }
 
     /// R0-7 / N2-2's line, read back the same way and for the same reason.

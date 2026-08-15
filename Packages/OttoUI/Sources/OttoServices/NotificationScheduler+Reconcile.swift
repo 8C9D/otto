@@ -64,19 +64,26 @@ extension NotificationScheduler {
             added=[\(OttoLog.list(added), privacy: .public)] \
             failedCount=\(failures.count, privacy: .public)
             """)
-        // The failures get their OWN entry, not another field on the line above.
+        // The failures get one entry EACH, not one entry joining them all.
         //
-        // `os_log` gives one entry a fixed argument budget, and this line's
-        // identifier lists are deliberately logged in full - a count cannot tell
-        // a correct three-rung replacement from a wipe. So the last field is the
-        // one that gets truncated: at four subscriptions the enriched
-        // `failed=` list already lost its tail mid-identifier, and at sixty-four
-        // rungs the whole field came back as `<decode: missing data>`. A rung
-        // that fails and is then not named is the exact loss this is meant to
-        // repair, so the failure list is given a budget of its own.
-        if !failures.isEmpty {
+        // `os_log` gives one entry a fixed ~1024-byte budget. Round 2 moved the
+        // failure list off the diff line onto an aggregate entry of its own,
+        // and that bought only the ~200 bytes the diff's other fields had been
+        // spending: the joined list still pinned at ~1037 characters and named
+        // 15-16 of 64 failed rungs at the device ceiling
+        // (`reviews-4/REVIEW-AA92CA7.md`), and a truncated list reads as a
+        // complete one. A rung that fails and is then not named is the exact
+        // loss this is meant to repair, so each failure is named on its own
+        // ~86-byte entry - the shape `OttoStore.watermarkDay` and the ledger
+        // loop's SKIPPED lines already use - which no per-entry budget can
+        // truncate at any scale the 64-slot ceiling allows. The aggregate entry
+        // is gone rather than kept alongside: a knowingly-truncating list
+        // masquerading as the record is the defect, and the diff line above
+        // still carries `failedCount=` for the total. Identifiers, never
+        // counts: the names live here.
+        for failure in failures {
             OttoLog.scheduling.error("""
-                reconcile failed=[\(OttoLog.failures(failures), privacy: .public)]
+                reconcile failed \(OttoLog.failedRung(failure.id, failure.error), privacy: .public)
                 """)
         }
         // After the log lines, so an investigation sees which rungs landed.
