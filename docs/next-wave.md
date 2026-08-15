@@ -24,20 +24,19 @@ log show --predicate 'subsystem == "com.arthurzhang.otto" AND category == "sched
 | the next charge date (`cycleStartDay`) | Edit the subscription and re-pick **Next charge on** (or **Started on**). Since F1 the picker writes Gregorian whatever the device calendar is. |
 | the trial start / conversion date | Edit the subscription and re-pick **Trial started**. The conversion date is derived from it and repairs with it. |
 | a pause resume date (`pauseEndsOn`) | **There is no picker for this on an already-paused subscription.** Resume the subscription and pause it again, setting **Billing resumes** in the pause flow. |
-| the last recorded use (`lastUsedDate`) | Open the subscription and tap **I used this today**, in the Usage section of its detail screen. There is no picker; that button is the only control that writes this field, and it writes *today*, which is correct. **Two warnings.** First, do not wait for a usage check-in notification: the check-in is scheduled 90 days *from* `lastUsedDate`, so a value in 2569 schedules it in 2569, and measured through the real planner such a subscription is planned **zero** check-ins where a healthy one is planned one - the corruption suppresses the reminder that would prompt the repair. Second, **the Usage section only appears while the subscription is active**: on a paused, trial or cancelled subscription there is no button and therefore no repair for this field at all. Resume or convert it first, or accept that its check-in cadence stays wrong until you do. |
+| the last recorded use (`lastUsedDate`) | Open the subscription and tap **I used this today**, in the Usage section of its detail screen. There is no picker; that button is the only control that writes this field, and it writes *today*, which is correct. **Two things to know.** First, do not wait for a notification to prompt you: a subscription with any detected-corrupt day is sent nothing at all (see below), so the reminder that would prompt the repair is exactly what the corruption suppresses. Second, when this field is corrupt the Usage section appears **whatever the subscription's status** - paused, trial and cancelled included - so the repair is always reachable; on a healthy subscription the section stays active-only, as before. |
 
 Nothing is deleted and no charge history is lost; only the stored dates change. A subscription is repaired - and starts scheduling again on the next pass - once **every** day the log line names is fixed, so a paused or never-used subscription may need the second and third rows above as well as the first.
 
 **Every repair above is something you do in the app, on purpose. Do not wait to be prompted.**
 
-Whether a corrupted subscription sends you anything at all depends on which calendar the device used, and neither answer is a signal you can act on:
+**A subscription with any detected-corrupt day is sent nothing at all - on every detected calendar.**
+Buddhist, Hebrew, Japanese, Minguo, Islamic, Persian, Coptic, Chinese and Indian/Saka corruption all behave the same way now: no reminders are scheduled from any of the subscription's dates, Today shows the coverage-gap card, and the log line above names the exact days to fix.
+It used to depend on which calendar wrote the year - the behind-offset calendars projected the corrupt dates forward and sent four reminders on days that were not the billing dates - and that ended in round 5: a wrong-day reminder read as a healthy subscription, so detected corruption now stays silent on purpose.
+**Silence plus the coverage-gap card IS the corruption signal.**
+Reminders resume on the first scheduling pass after every day the log line names is fixed.
 
-- **Buddhist or Hebrew** (the year is written *ahead*): every stored date is centuries in the future, so nothing is planned and **no reminders arrive**. Today shows the coverage-gap card.
-- **Japanese, Minguo, Islamic, Persian, Coptic, Chinese or Indian/Saka** (the year is written *behind*): the dates are in the past, so Otto still projects them forward and **reminders do arrive - on the wrong days**. Measured through the real scheduler, such a subscription is sent **four** notifications, on dates that are not its billing dates. The coverage-gap card appears as well, which is the only thing that distinguishes this from a healthy subscription.
-
-So a reminder arriving is **not** evidence that a subscription is fine, and no reminder arriving is not the only symptom. The dates on the subscription list are the reliable tell.
-
-**Two calendars leave no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders arrive on the wrong days. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
+**One calendar leaves no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders still arrive on the wrong days - Ethiopic is the one calendar the round-5 silencing cannot reach. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
 
 ---
 
