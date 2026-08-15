@@ -2,6 +2,52 @@ import Foundation
 import Testing
 @testable import OttoDomain
 
+/// R3-1's predicate, where it lives. The watermark policy asks "does this
+/// device have ledger progress worth keeping", and `isEmpty` answered a
+/// different question - whether there is anything to merge WITH - which a
+/// database full of tombstones answers "yes" to.
+@Suite("A snapshot with no live subscriptions (R3-1)")
+struct LiveSubscriptionPredicateTests {
+
+    @Test("an empty snapshot has no live subscriptions")
+    func emptySnapshot() {
+        let snapshot = OttoDataSnapshot()
+        #expect(snapshot.isEmpty)
+        #expect(snapshot.hasNoLiveSubscriptions)
+    }
+
+    @Test("⛔ a tombstoned subscription beside a LIVE payment method still counts as no progress")
+    func tombstonedSubscriptionWithSurvivingCard() throws {
+        // The state a user actually reaches: `deleteSubscription` cascades to
+        // trials, episodes, billing events and price changes, but a payment
+        // method is not a child of a subscription and survives. A predicate
+        // that demanded every record type be tombstoned would answer
+        // "something is live" here and leave the watermarks nil.
+        var snapshot = try fullSnapshot()
+        let buriedAt = Date(timeIntervalSince1970: 9_000)
+        for index in snapshot.subscriptions.indices {
+            snapshot.subscriptions[index].deletedAt = buriedAt
+        }
+        #expect(!snapshot.paymentMethods.isEmpty)
+        #expect(snapshot.paymentMethods.contains { $0.deletedAt == nil })
+        #expect(!snapshot.isEmpty)
+        #expect(snapshot.hasNoLiveSubscriptions)
+    }
+
+    @Test("one live subscription is progress worth keeping, however much else is tombstoned")
+    func oneLiveSubscriptionIsEnough() throws {
+        var snapshot = try fullSnapshot()
+        let buriedAt = Date(timeIntervalSince1970: 9_000)
+        for index in snapshot.subscriptions.indices where index > 0 {
+            snapshot.subscriptions[index].deletedAt = buriedAt
+        }
+        for index in snapshot.billingEvents.indices { snapshot.billingEvents[index].deletedAt = buriedAt }
+        for index in snapshot.paymentMethods.indices { snapshot.paymentMethods[index].deletedAt = buriedAt }
+        #expect(snapshot.subscriptions.contains { $0.deletedAt == nil })
+        #expect(!snapshot.hasNoLiveSubscriptions)
+    }
+}
+
 // MARK: - Round trip
 
 @Suite("Export round trip (spec §3.5, Wave 8)")

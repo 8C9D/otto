@@ -25,7 +25,9 @@ public actor NotificationScheduler: ReminderScheduling {
     private let subscriptions: any SubscriptionRepository
     private let cancellations: any CancellationRepository
     private let billingEvents: any BillingEventRepository
-    private let client: any NotificationClient
+    // Not private: `reconcile` moved to NotificationScheduler+Reconcile.swift
+    // when this file passed file_length, and `private` is file-scoped.
+    let client: any NotificationClient
     /// Read fresh on every pass (Wave 8): the notification-time setting must
     /// reach background passes too, and a provider does that without the
     /// scheduler knowing where settings live.
@@ -145,59 +147,6 @@ public actor NotificationScheduler: ReminderScheduling {
         )
     }
 
-    /// The diff (Wave 10, defect B): removes only identifiers the plan no
-    /// longer wants, adds only identifiers the device does not already hold
-    /// with identical content - `UNUserNotificationCenter` replaces on same
-    /// identifier, so a changed spec is one idempotent add, and an unchanged
-    /// one is no call at all. Removes go first only because they free budget
-    /// slots; no desired rung is ever among them.
-    ///
-    /// The conversion announcement is never cancelled by a reschedule (Wave
-    /// 10, defect C; spec §6.3): the escalation is a request and can be
-    /// waived, the announcement is a fact and cannot. A pending announcement
-    /// dated TODAY is structurally exempt from removal - if the desired plan
-    /// would drop it (as the passed-hour filter did at 09:01 on conversion
-    /// day, permanently cancelling the one notification that says money
-    /// started moving), the device keeps it anyway. Past-dated announcements
-    /// are removable: a day-late "converted today" is the dishonesty v1.4
-    /// legislated against, and future-dated ones must go when a trial is
-    /// cancelled before converting.
-    private func reconcile(
-        desired specs: [NotificationRequestSpec],
-        pending: [NotificationRequestSpec],
-        today: CalendarDay
-    ) async throws {
-        let desiredByID = Dictionary(uniqueKeysWithValues: specs.map { ($0.identifier, $0) })
-        let planned = pending.filter { !NotificationPlanIdentifier.isSnooze($0.identifier) }
-        let stale = planned.filter { existing in
-            desiredByID[existing.identifier] == nil && !isTodaysAnnouncement(existing, today: today)
-        }
-        if !stale.isEmpty {
-            await client.removePendingRequests(withIdentifiers: stale.map(\.identifier))
-        }
-        let pendingByID = Dictionary(uniqueKeysWithValues: planned.map { ($0.identifier, $0) })
-        var added: [String] = []
-        for spec in specs where pendingByID[spec.identifier] != spec {
-            try await client.add(spec)
-            added.append(spec.identifier)
-        }
-        // The evidence that this is a diff and not the old remove-all: over an
-        // unchanged plan both lists are empty while `pending` is not.
-        // Identifiers, never counts - a count cannot tell a correct three-rung
-        // replacement from a wipe.
-        OttoLog.scheduling.notice("""
-            reconcile pending=\(planned.count, privacy: .public) desired=\(specs.count, privacy: .public) \
-            snoozesSpared=\(pending.count - planned.count, privacy: .public) \
-            removed=[\(OttoLog.list(stale.map(\.identifier)), privacy: .public)] \
-            added=[\(OttoLog.list(added), privacy: .public)]
-            """)
-    }
-
-    private func isTodaysAnnouncement(_ spec: NotificationRequestSpec, today: CalendarDay) -> Bool {
-        NotificationPlanIdentifier.kind(of: spec.identifier) == .conversionAnnouncement
-            && CalendarDay(year: spec.year, month: spec.month, day: spec.day) == today
-    }
-
     /// The cancellation records the plan needs - and loading them doubles as the
     /// §5.4 roll-forward: every scheduling pass catches unanswered checks up to
     /// today, so the three-strike escalation depends on stored state and the
@@ -262,6 +211,36 @@ public actor NotificationScheduler: ReminderScheduling {
             if Task.isCancelled {
                 OttoLog.scheduling.notice("ledger pass cancelled, \(failures.count, privacy: .public) failures so far")
                 break
+            }
+            // R0-7 / N2-2. A stored day centuries from today is not a date
+            // this pass can schedule against, and the pass's SILENCE about it
+            // is the defect: measured at HEAD, an era-numbered anchor produced
+            // zero reminders with `ledgerFailures` empty and `coveredThrough`
+            // at the full horizon - the outcome a healthy subscription
+            // returns. Recorded as a failure so the pass cannot claim coverage
+            // it does not have, and skipped rather than materialized, because
+            // materializing from a corrupt anchor writes ledger rows on dates
+            // nothing will ever charge. It is NOT repaired here: which
+            // calendar wrote the day was never recorded, and guessing it is
+            // not acceptable on billing dates (PROD-READINESS-3.md ITEM 1).
+            //
+            // Skipping suppresses `invalidateOutdatedUpcomingEvents` for this
+            // subscription too, so era-numbered `.upcoming` rows a pre-F1 pass
+            // already wrote are RETAINED rather than tombstoned, and stay
+            // visible on the detail screen's ledger. Deliberate: this stage
+            // prefers visible wrongness to a tidy lie, the rows are the same
+            // evidence the log line names, and they clear on the next pass
+            // once the user repairs the dates.
+            let implausible = subscription.implausibleStoredDays(asOf: today)
+            if !implausible.isEmpty {
+                failures.append(subscription.id)
+                OttoLog.scheduling.error("""
+                    ledger \(subscription.id.uuidString, privacy: .public) \
+                    SKIPPED reason=implausibleStoredDays \
+                    today=\(String(describing: today), privacy: .public) \
+                    days=[\(OttoLog.list(implausible.map(String.init(describing:))), privacy: .public)]
+                    """)
+                continue
             }
             // Before AND after, not only on change: "correctly did not
             // advance" is as much an observation as an advance, and omitting

@@ -151,6 +151,27 @@ extension CalendarDay: Codable {
 // MARK: - Foundation boundary
 
 extension CalendarDay {
+    /// The calendar every conversion between a `CalendarDay` and Foundation must
+    /// resolve in, at both ends - reading a day out of an instant and handing a
+    /// day's numbers back to a Foundation API.
+    ///
+    /// `CalendarDay` is proleptic Gregorian by construction: `ordinalDay`,
+    /// `isLeapYear` and `daysIn(month:year:)` apply Gregorian rules to `year`
+    /// directly. Resolving those same numbers through `Calendar.current` on a
+    /// device set to another calendar therefore produces an era-numbered year -
+    /// 2569 rather than 2026 on a Buddhist device - which the domain's own
+    /// arithmetic then treats as Gregorian.
+    ///
+    /// The timezone is autoupdating on purpose. `Calendar.current` re-reads the
+    /// device zone on every access, so pinning a fixed zone here would change
+    /// behaviour for a user who travels; `Calendar(identifier:)` alone carries a
+    /// *snapshot* of the zone in force when it was constructed.
+    public static var conversionCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar
+    }
+
     /// The day as `DateComponents`, carrying only year, month, and day.
     public var dateComponents: DateComponents {
         DateComponents(year: year, month: month, day: day)

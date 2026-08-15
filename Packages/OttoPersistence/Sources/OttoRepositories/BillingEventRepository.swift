@@ -39,8 +39,18 @@ public protocol BillingEventRepository: Sendable {
     /// Spec §5.3 (v1.3): soft-deletes every live `.upcoming` row that no longer
     /// matches the subscription's effective charge sequence - the phantom charges a
     /// changed anchor, cycle, or amount leaves behind. Rows in any other state are
-    /// never touched: a confirmed charge is history. Returns the invalidated events.
+    /// never touched: a confirmed charge is history.
     /// Callers re-materialize afterwards; the scheduler (Wave 4) runs both on save.
+    ///
+    /// **Returns the invalidated events, which is not the same as every row it
+    /// tombstoned** (R0-11). A row that passes the sequence check but cannot be
+    /// mapped back to a `BillingEvent` - a partially synced arrival missing an
+    /// audit field - is still tombstoned, because a live unmappable `.upcoming`
+    /// row blocks its own date in `materializeEvents`' dedup forever. There is
+    /// no value to hand back for it, so it is named in the persistence log
+    /// instead and the count here is short by one per such row. An empty result
+    /// therefore means "nothing this method could describe", not "nothing
+    /// changed"; the implementation commits on whether it MUTATED a row.
     func invalidateOutdatedUpcomingEvents(
         for subscription: Subscription,
         asOf today: CalendarDay,

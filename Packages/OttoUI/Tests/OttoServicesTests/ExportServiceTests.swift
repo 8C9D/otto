@@ -113,6 +113,89 @@ struct ExportServiceTests {
         #expect(await transfer.restoredWatermarkPolicies == [.keep])
     }
 
+    /// The recovery case: restoring into a fresh install. The UI never asks
+    /// merge-or-replace when there is nothing to merge with, so the restore
+    /// that matters most arrives here as a `.merge` - and `.keep` kept nothing,
+    /// leaving every watermark nil and making the ledger materialize from today
+    /// instead of from the file's last charge.
+    ///
+    /// The assertion is the POLICY, because the policy is the decision this
+    /// seam owns; what `.reconstruct` then does to the stored watermarks is
+    /// proved against the real store in OttoPersistence's DataTransferTests
+    /// ("watermarks reconstruct from the ledger: latest LIVE row, anchor when
+    /// none, never today").
+    @Test("a merge into an EMPTY database reconstructs anyway - the empty database is the recovery case")
+    func mergeIntoEmptyDatabaseReconstructsWatermarks() async throws {
+        // No seed: this is a fresh install, exactly as SettingsView finds it.
+        let transfer = MockTransfer()
+        let service = ExportService(transfer: transfer)
+        let incoming = try seededSnapshot()
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("otto-empty-merge-test.json")
+        try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
+
+        _ = try await service.performImport(
+            from: file, strategy: .merge, now: Date(timeIntervalSince1970: 11_000)
+        )
+
+        #expect(await transfer.restoredWatermarkPolicies == [.reconstruct])
+        // And the data itself still arrived, so this is not reconstruction
+        // bought by dropping the import.
+        let stored = await transfer.snapshot
+        #expect(stored.subscriptions.count == 1)
+        #expect(stored.billingEvents.count == 1)
+    }
+
+    /// R3-1. `isEmpty` was the wrong predicate for the stated principle: a
+    /// database whose every record is tombstoned has no ledger progress worth
+    /// keeping either, but it is not `isEmpty` - `completeSnapshot()` carries
+    /// tombstones by design - so the prompt appeared and answering Merge
+    /// reproduced F6 exactly. Narrower than F6 (it takes a deliberate answer at
+    /// an explicit prompt rather than a silent default), which is why round 1
+    /// rated it P2, but the prompt asks about *records* and the user is not
+    /// consenting to this.
+    @Test("⛔ a merge into an ALL-TOMBSTONED database reconstructs too - tombstones are not progress")
+    func mergeIntoAllTombstonedDatabaseReconstructsWatermarks() async throws {
+        // Every record present and every record tombstoned: not `isEmpty`, and
+        // nothing live to keep.
+        var buried = try seededSnapshot()
+        let buriedAt = Date(timeIntervalSince1970: 9_000)
+        for index in buried.subscriptions.indices { buried.subscriptions[index].deletedAt = buriedAt }
+        for index in buried.billingEvents.indices { buried.billingEvents[index].deletedAt = buriedAt }
+        // A LIVE payment method, deliberately. `deleteSubscription` cascades to
+        // trials, episodes, billing events and price changes but not to payment
+        // methods, so this is the state a user actually reaches by deleting
+        // every subscription - and a predicate that demanded every record type
+        // be tombstoned would answer "something is live" and miss it.
+        buried.paymentMethods = [PaymentMethod(
+            id: try fixtureUUID(300),
+            label: "Test card",
+            last4: "4821",
+            issuer: "Test Issuer",
+            expiryMonth: 12,
+            expiryYear: 2030,
+            isDefault: true,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )]
+        #expect(!buried.isEmpty)
+        #expect(buried.hasNoLiveSubscriptions)
+
+        let transfer = MockTransfer(snapshot: buried)
+        let service = ExportService(transfer: transfer)
+        var incoming = try seededSnapshot()
+        incoming.subscriptions[0].updatedAt = Date(timeIntervalSince1970: 50_000)
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("otto-tombstoned-merge-test.json")
+        try exportData(from: incoming, exportedAt: Date(timeIntervalSince1970: 0)).write(to: file)
+
+        _ = try await service.performImport(
+            from: file, strategy: .merge, now: Date(timeIntervalSince1970: 11_000)
+        )
+
+        #expect(await transfer.restoredWatermarkPolicies == [.reconstruct])
+    }
+
     @Test("a replace import names the reconstruct policy, so the store runs the §5.3 sequence")
     func replaceImportReconstructsWatermarks() async throws {
         let transfer = MockTransfer(snapshot: try seededSnapshot())

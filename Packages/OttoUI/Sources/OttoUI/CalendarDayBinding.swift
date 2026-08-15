@@ -4,7 +4,11 @@ import OttoDomain
 extension Binding where Value == CalendarDay {
     /// Bridges a `CalendarDay` to `DatePicker`'s `Date` at the display boundary
     /// only - the converted instant never feeds billing arithmetic (spec §4.1).
-    func asDate(calendar: Calendar = .current) -> Binding<Date> {
+    ///
+    /// Both directions resolve in `CalendarDay.conversionCalendar`, never the
+    /// device's: the picker renders the instant in the reader's own calendar
+    /// either way, and the numbers written back have to be the domain's.
+    func asDate(calendar: Calendar = CalendarDay.conversionCalendar) -> Binding<Date> {
         Binding<Date>(
             get: {
                 // A valid CalendarDay always resolves in the Gregorian calendar;

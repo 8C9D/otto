@@ -13,6 +13,15 @@ public final class PaymentMethodsStore {
     private let repository: any PaymentMethodRepository
     private let dates: DateProvider
 
+    /// Called after any write that changes what an export would contain.
+    ///
+    /// `paymentMethods` is a stored collection of `OttoDataSnapshot`, so a card
+    /// saved or deleted after an export was prepared makes that file stale -
+    /// `reviews-4/REVIEW-1.md` finding 2 demonstrated the stale copy still being
+    /// offered. `SubscriptionsStore` has had the same hook since Wave 4; this
+    /// store did not, so nothing above it could know its writes had happened.
+    public var onMutation: (@MainActor () async -> Void)?
+
     public init(repository: any PaymentMethodRepository, dates: DateProvider = .live) {
         self.repository = repository
         self.dates = dates
@@ -41,6 +50,7 @@ public final class PaymentMethodsStore {
         }
         try await repository.save(method)
         await refresh()
+        await onMutation?()
     }
 
     /// Soft-deletes at the current instant. Subscriptions keep their
@@ -49,5 +59,6 @@ public final class PaymentMethodsStore {
     public func delete(paymentMethodID: UUID) async throws {
         try await repository.deletePaymentMethod(withID: paymentMethodID, at: dates.now())
         await refresh()
+        await onMutation?()
     }
 }

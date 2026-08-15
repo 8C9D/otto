@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import UserNotifications
+import OttoDomain
 @testable import OttoServices
 
 // Wave 10: `LiveNotificationClient` had zero test coverage, and both device
@@ -87,13 +88,14 @@ struct LiveNotificationClientTests {
     private func spec(
         identifier: String = "test|2026-08-20|conversionAnnouncement",
         timeSensitive: Bool = true,
-        category: String = NotificationCategory.actionable
+        category: String = NotificationCategory.actionable,
+        year: Int = 2026, month: Int = 8, day: Int = 20
     ) -> NotificationRequestSpec {
         NotificationRequestSpec(
             identifier: identifier,
             title: "Gate Test trial converted",
             body: "Your Gate Test trial converted today.",
-            year: 2026, month: 8, day: 20, hour: 9, minute: 0,
+            year: year, month: month, day: day, hour: 9, minute: 0,
             isTimeSensitive: timeSensitive,
             categoryIdentifier: category
         )
@@ -119,6 +121,29 @@ struct LiveNotificationClientTests {
         // timezone here would pin the instant and fire mid-night after a
         // flight.
         #expect(components.timeZone == nil)
+    }
+
+    @Test("⛔ the trigger NAMES the Gregorian era, so a non-Gregorian device still fires (F1)")
+    func addPinsTheGregorianEra() async throws {
+        // A day far enough ahead that `nextTriggerDate()` is never behind us,
+        // computed rather than hard-coded so the assertion does not rot.
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        let target = try #require(gregorian.date(byAdding: .day, value: 30, to: Date()))
+        let day = try #require(CalendarDay(
+            dateComponents: gregorian.dateComponents([.year, .month, .day], from: target)
+        ))
+
+        try await client.add(spec(year: day.year, month: day.month, day: day.day))
+
+        let request = try #require(center.pending.first)
+        let trigger = try #require(request.trigger as? UNCalendarNotificationTrigger)
+        // A nil calendar is resolved by iOS in `Calendar.current`. On a device
+        // set to Buddhist, year 2026 is 1483 CE - behind us - so
+        // `nextTriggerDate()` is nil and the reminder can never fire. Naming
+        // the era is the half of F1 that decides whether anything is delivered.
+        #expect(trigger.dateComponents.calendar?.identifier == .gregorian)
+        #expect(trigger.nextTriggerDate() == day.fireDate(hour: 9, minute: 0, in: .current))
     }
 
     @Test("content carries title, body, sound, category, and the time-sensitive interruption level")

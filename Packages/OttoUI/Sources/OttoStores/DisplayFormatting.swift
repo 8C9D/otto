@@ -28,16 +28,22 @@ public func monthlyEquivalentText(
 }
 
 extension CalendarDay {
-    /// The day rendered for display in the current calendar - formatting only;
-    /// billing arithmetic never touches `Date` (spec §4.1).
-    public func displayDate(calendar: Calendar = .current) -> Date? {
+    /// The day as the instant it denotes - formatting only; billing arithmetic
+    /// never touches `Date` (spec §4.1).
+    ///
+    /// The default is `CalendarDay.conversionCalendar`, not `Calendar.current`:
+    /// the day's numbers are Gregorian, so resolving them in a device calendar
+    /// that numbers years differently yields a `Date` centuries away. The
+    /// *rendering* still follows the reader's calendar, because that is the
+    /// locale's job downstream, not this conversion's.
+    public func displayDate(calendar: Calendar = CalendarDay.conversionCalendar) -> Date? {
         calendar.date(from: dateComponents)
     }
 
     /// The day as localized text, e.g. "Aug 15, 2026" in en-CA.
     public func displayText(
         style: Date.FormatStyle.DateStyle = .abbreviated,
-        calendar: Calendar = .current,
+        calendar: Calendar = CalendarDay.conversionCalendar,
         locale: Locale = .current
     ) -> String {
         guard let date = displayDate(calendar: calendar) else {
@@ -54,7 +60,7 @@ extension DisputeSummary {
     /// screenshot (spec §5.4, §7.1 screen 6). Every fact the summary holds, in
     /// sentence form, real formatters throughout.
     public func spokenText(
-        calendar: Calendar = .current,
+        calendar: Calendar = CalendarDay.conversionCalendar,
         timeZone: TimeZone = .current,
         locale: Locale = .current
     ) -> String {

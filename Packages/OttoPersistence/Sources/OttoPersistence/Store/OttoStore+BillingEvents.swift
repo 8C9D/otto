@@ -153,6 +153,24 @@ extension OttoStore: BillingEventRepository {
             .filter { $0.deletedAt == nil && $0.state == upcomingRaw }
 
         var invalidated: [BillingEvent] = []
+        // R0-11. Counted separately from `invalidated`, because they are
+        // different questions: this one is "did this method change a row", and
+        // the save below depends on THAT and not on whether the changed row
+        // could be described back to the caller.
+        //
+        // Measured at `54bb611`, before this existed, on two future-dated
+        // `.upcoming` rows whose `createdAt` a partial sync had left nil - a
+        // shape `toDomain()` rejects and this method's own guards do not:
+        //
+        //     reported=0 ("nothing invalidated" is true)
+        //     committedTombstonesRightAfter=0
+        //     committedTombstonesAfterAnUnrelatedSave=2
+        //
+        // Both rows were soft-deleted in memory, the caller was told nothing
+        // had happened, no save ran - and the next unrelated `save()` on this
+        // actor's context flushed both tombstones in a transaction that had
+        // nothing to do with them.
+        var mutated = 0
         for record in candidates {
             guard let stored = record.expectedDate,
                   let day = CalendarDay(yyyymmdd: stored),
@@ -175,11 +193,33 @@ extension OttoStore: BillingEventRepository {
             }
             record.deletedAt = instant
             record.updatedAt = instant
-            if let event = try? record.toDomain() {
-                invalidated.append(event)
+            mutated += 1
+            do {
+                invalidated.append(try record.toDomain())
+            } catch {
+                // The row IS tombstoned - deliberately, because a live
+                // `.upcoming` row blocks its own date in `materializeEvents`'
+                // dedup above, which reads the raw column and never maps it. An
+                // unmappable phantom left live would silently prevent the
+                // correct replacement row from ever being written.
+                //
+                // What it cannot do is come back in `invalidated`: there is no
+                // `BillingEvent` to return. So the return value undercounts
+                // here by construction, and this line is the only place that
+                // says so. Never the amount or the vendor - an opaque row id, a
+                // packed calendar day, and the redacted mapping summary.
+                mappingLogger.error("""
+                    Invalidation tombstoned an unreportable row \
+                    subscription=\(subscription.id.uuidString, privacy: .public) \
+                    day=\(stored, privacy: .public) \
+                    reason=\(mappingLogSummary(error), privacy: .public)
+                    """)
             }
         }
-        if !invalidated.isEmpty {
+        // On `mutated`, not on `invalidated`. Those differ exactly when a row
+        // was tombstoned and could not be described, and keying the save on the
+        // describable ones is what left the soft-deletes uncommitted.
+        if mutated > 0 {
             try modelContext.save()
         }
         return invalidated.sorted { ($0.expectedDate, $0.id.uuidString) < ($1.expectedDate, $1.id.uuidString) }

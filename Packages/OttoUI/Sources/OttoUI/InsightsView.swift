@@ -114,7 +114,7 @@ struct InsightsView: View {
     private func next12MonthsSection(_ data: InsightsData) -> some View {
         Section {
             ForEach(data.next12Months, id: \.self) { month in
-                LabeledContent(monthText(month)) {
+                LabeledContent(Self.monthText(month)) {
                     Text(currencyText(cents: month.totalCents, currencyCode: data.currencyCode))
                         .font(.body.monospacedDigit())
                         .foregroundStyle(isCluster(month, in: data) ? .primary : .secondary)
@@ -134,12 +134,17 @@ struct InsightsView: View {
         month.totalCents > data.monthlyBurnCents + data.monthlyBurnCents / 2 && month.totalCents > 0
     }
 
-    private func monthText(_ month: MonthlyProjection) -> String {
+    /// Not private, and static: it reads no view state, and a `private` member
+    /// of a `View` is the one shape no host test can reach. It resolves domain
+    /// numbers into an instant, so it is an F1 site and needs a guard.
+    static func monthText(_ month: MonthlyProjection) -> String {
         var components = DateComponents()
         components.year = month.year
         components.month = month.month
         components.day = 1
-        guard let date = Calendar.current.date(from: components) else {
+        // The projection's year and month are domain numbers, so they resolve in
+        // the domain's calendar; `.formatted` then renders in the reader's.
+        guard let date = CalendarDay.conversionCalendar.date(from: components) else {
             return "\(month.year)-\(month.month)"
         }
         return date.formatted(.dateTime.month(.wide).year())

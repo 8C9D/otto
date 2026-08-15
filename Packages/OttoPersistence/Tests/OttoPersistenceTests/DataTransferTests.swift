@@ -272,8 +272,17 @@ extension SerializedPersistenceTests {
                 try await fresh.materializationWatermark(forSubscription: try fixtureUUID(5))
                     == (try day(2026, 1, 10))
             )
-            // A tombstoned subscription materializes nothing and needs none.
-            #expect(try await fresh.materializationWatermark(forSubscription: try fixtureUUID(4)) == nil)
+            // A tombstoned subscription gets one too, at its anchor (R0-6).
+            // This used to assert nil, on the reasoning that a tombstoned
+            // subscription materializes nothing and needs no watermark. True
+            // while it stays tombstoned - but a merge import can clear
+            // `deletedAt` and bring it back, and it then had no watermark and
+            // materialized from TODAY. Its live ledger row was tombstoned with
+            // it, so the anchor is what remains.
+            #expect(
+                try await fresh.materializationWatermark(forSubscription: try fixtureUUID(4))
+                    == (try day(2026, 3, 1))
+            )
         }
 
         @Test("an unreadable record fails the export loudly - a backup with a silent hole is worse than none")

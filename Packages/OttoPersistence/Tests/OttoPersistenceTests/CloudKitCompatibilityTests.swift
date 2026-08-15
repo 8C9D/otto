@@ -37,6 +37,94 @@ extension SerializedPersistenceTests {
             #expect(!live.entities.isEmpty)
         }
 
+        /// R0-9. `schemas` and `stages` are two independent literals, and until
+        /// this test nothing related them: appending `OttoSchemaV4` to
+        /// `schemas` and pointing `mainSchema` at it - with no stage - left all
+        /// 118 tests green, while the carry-over that moves user data out of V3
+        /// did not exist. That is the contract's own named hazard in its next
+        /// form, and this file exists to catch such a mistake at the moment it
+        /// is made rather than on a device.
+        ///
+        /// It asserts the CHAIN, not just the count. A count catches the
+        /// forgotten stage; only the chain catches a stage that was added and
+        /// wired wrong - `V2 → V4`, a duplicate, a reordering - each of which
+        /// leaves a version no stage reaches while the arithmetic still works.
+        @Test("every schema version after the first is reached by a stage, in order")
+        func stagesChainTheSchemas() throws {
+            let versions = OttoMigrationPlan.schemas.map { $0.versionIdentifier }
+            let stages = OttoMigrationPlan.stages
+            // A degenerate plan proves nothing: a single-version chain would
+            // satisfy every assertion below by having none to make.
+            #expect(versions.count >= 2)
+            #expect(!stages.isEmpty)
+            #expect(
+                stages.count == versions.count - 1,
+                "\(versions.count) schema versions need \(versions.count - 1) stages, found \(stages.count)"
+            )
+
+            // Strictly increasing, asserted separately from the hops. A new
+            // version is written by copying the previous one, and leaving
+            // `versionIdentifier` at the old value is the likeliest mistake
+            // that produces: the hop assertions below then compare 3.0.0 to
+            // 3.0.0 and agree, `mainSchema` still equals `schemas.last`, and
+            // the whole file goes green on a chain SwiftData cannot stage.
+            for index in versions.indices.dropFirst() {
+                #expect(
+                    versions[index - 1] < versions[index],
+                    """
+                    schema \(index) is \(versions[index]) and schema \(index - 1) is \(versions[index - 1]) - \
+                    versions must strictly increase; a copied version whose identifier was never bumped \
+                    makes every other assertion here vacuous
+                    """
+                )
+            }
+
+            for (index, stage) in stages.enumerated() where index + 1 < versions.count {
+                let hop = try #require(
+                    Self.versions(of: stage),
+                    """
+                    stage \(index) is a MigrationStage case this guard does not know about, so THIS \
+                    GUARD IS NOT GUARDING it. Teach `versions(of:)` the new case; do not delete the test.
+                    """
+                )
+                #expect(
+                    hop.fromVersion == versions[index],
+                    "stage \(index) starts at \(hop.fromVersion), not \(versions[index])"
+                )
+                #expect(
+                    hop.toVersion == versions[index + 1],
+                    "stage \(index) ends at \(hop.toVersion), not \(versions[index + 1])"
+                )
+            }
+        }
+
+        /// The two schema versions a `MigrationStage` connects.
+        ///
+        /// `MigrationStage` exposes no `fromVersion` property, but its cases
+        /// carry the endpoints and are public, so this destructures them.
+        /// Deliberately a `switch` and not `Mirror`: both read the same
+        /// payload, and only the switch makes a future SDK that renames or
+        /// reorders it a COMPILE error here, at the Xcode upgrade, rather than
+        /// a runtime nil that turns the suite red later for a reason nobody
+        /// will connect to the toolchain.
+        ///
+        /// It still fails closed: a SwiftData release that adds a third case
+        /// reaches `@unknown default`, returns nil, and the caller records an
+        /// issue naming that cause - because a guard that quietly stops
+        /// guarding is the exact failure this file was rebuilt to prevent.
+        private static func versions(
+            of stage: MigrationStage
+        ) -> (fromVersion: Schema.Version, toVersion: Schema.Version)? {
+            switch stage {
+            case .lightweight(let fromVersion, let toVersion):
+                return (fromVersion.versionIdentifier, toVersion.versionIdentifier)
+            case .custom(let fromVersion, let toVersion, _, _):
+                return (fromVersion.versionIdentifier, toVersion.versionIdentifier)
+            @unknown default:
+                return nil
+            }
+        }
+
         @Test("no attribute is unique, and every attribute is optional or has a default")
         func attributes() {
             for entity in OttoContainerFactory.mainSchema.entities {

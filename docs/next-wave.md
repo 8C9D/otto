@@ -2,6 +2,45 @@ Next wave: **6B - CloudKit activation**, specified in `docs/Subscription-Tracker
 Wave 10 (Notification Delivery & Check-Date Fixes, from the Aug 2026 device run) landed in between; 6B remains the next planned wave.
 Carry-over candidates for a later wave: simulator-hosted `NotificationCoordinator` tests (see `docs/implementation-notes/wave-10.md`, "Deliberately not done").
 
+---
+
+# If a device was set to a non-Gregorian calendar before this build
+
+**The repair is manual, it works, and nothing in the app says so.** This is the only place it is written down for a user rather than for a reviewer.
+
+Otto stores billing dates as plain year/month/day numbers. A build before F1 resolved those numbers through the *device's* calendar, so a phone set to Buddhist, Japanese, Islamic, Persian, Coptic, Minguo, Chinese, Hebrew or Indian wrote an era-numbered year into billing data - 2569 rather than 2026 on a Buddhist device, 1948 rather than 2026 on an Indian one. F1 stopped new writes from going wrong. **It repaired nothing already stored, and no automatic repair is possible**: which calendar wrote a given day was never recorded, and guessing it would rewrite dates that are correct. `PROD-READINESS-3.md` ITEM 1 has the full reasoning.
+
+**How to tell.** The subscription list and detail screens show the wrong dates in plain sight - "Aug 6, 2569". Today shows the coverage-gap card ("N subscriptions couldn't be updated"), and the unified log carries one line per affected subscription naming exactly which days are wrong:
+
+```
+log show --predicate 'subsystem == "com.arthurzhang.otto" AND category == "scheduling"' --last 1h
+[scheduling] ledger <uuid> SKIPPED reason=implausibleStoredDays today=2026-08-11 days=[2569-08-06 2569-08-20]
+```
+
+**How to fix it, field by field** - because not every date the log names has a picker, and an earlier version of this section said to re-pick all of them, which is not possible.
+
+| the log names | how to repair it |
+|---|---|
+| the next charge date (`cycleStartDay`) | Edit the subscription and re-pick **Next charge on** (or **Started on**). Since F1 the picker writes Gregorian whatever the device calendar is. |
+| the trial start / conversion date | Edit the subscription and re-pick **Trial started**. The conversion date is derived from it and repairs with it. |
+| a pause resume date (`pauseEndsOn`) | **There is no picker for this on an already-paused subscription.** Resume the subscription and pause it again, setting **Billing resumes** in the pause flow. |
+| the last recorded use (`lastUsedDate`) | Open the subscription and tap **I used this today**, in the Usage section of its detail screen. There is no picker; that button is the only control that writes this field, and it writes *today*, which is correct. **Two warnings.** First, do not wait for a usage check-in notification: the check-in is scheduled 90 days *from* `lastUsedDate`, so a value in 2569 schedules it in 2569, and measured through the real planner such a subscription is planned **zero** check-ins where a healthy one is planned one - the corruption suppresses the reminder that would prompt the repair. Second, **the Usage section only appears while the subscription is active**: on a paused, trial or cancelled subscription there is no button and therefore no repair for this field at all. Resume or convert it first, or accept that its check-in cadence stays wrong until you do. |
+
+Nothing is deleted and no charge history is lost; only the stored dates change. A subscription is repaired - and starts scheduling again on the next pass - once **every** day the log line names is fixed, so a paused or never-used subscription may need the second and third rows above as well as the first.
+
+**Every repair above is something you do in the app, on purpose. Do not wait to be prompted.**
+
+Whether a corrupted subscription sends you anything at all depends on which calendar the device used, and neither answer is a signal you can act on:
+
+- **Buddhist or Hebrew** (the year is written *ahead*): every stored date is centuries in the future, so nothing is planned and **no reminders arrive**. Today shows the coverage-gap card.
+- **Japanese, Minguo, Islamic, Persian, Coptic, Chinese or Indian/Saka** (the year is written *behind*): the dates are in the past, so Otto still projects them forward and **reminders do arrive - on the wrong days**. Measured through the real scheduler, such a subscription is sent **four** notifications, on dates that are not its billing dates. The coverage-gap card appears as well, which is the only thing that distinguishes this from a healthy subscription.
+
+So a reminder arriving is **not** evidence that a subscription is fine, and no reminder arriving is not the only symptom. The dates on the subscription list are the reliable tell.
+
+**Two calendars leave no signal at all.** Ethiopic writes 7-8 years behind the Gregorian year and is indistinguishable from an ordinary subscription held since 2018, so Otto cannot detect it: there is no card, no log line, and reminders arrive on the wrong days. The dates on the subscription list are still visibly wrong, and re-picking them is still the fix. Indian/Saka was in the same position until round 4 made the detection window asymmetric.
+
+---
+
 Gate 1 (2026-08-08) landed the GitHub remote and the first CI run; see `DECISIONS.md`, "Gate 1".
 Standing consequence for every later wave: **CI, not `verify.sh`, is now the gate.**
 `verify.sh` clones the committed code into the same locale on the same hardware, so it cannot see a host-environment dependency - which is exactly what CI's first run found twice.

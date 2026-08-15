@@ -27,11 +27,16 @@ public struct DateProvider: Sendable {
         self.timeZone = timeZone
     }
 
-    /// Reads the system clock and the device's current calendar.
+    /// Reads the system clock and the device's current timezone. The calendar is
+    /// deliberately NOT the device's: `CalendarDay` is Gregorian by construction,
+    /// so the day is read through `CalendarDay.conversionCalendar` and a device
+    /// set to another calendar cannot inject an era-numbered year into billing
+    /// arithmetic.
     public static let live = DateProvider(
         now: { Date() },
         today: {
-            let components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+            let components = CalendarDay.conversionCalendar
+                .dateComponents([.year, .month, .day], from: Date())
             guard let day = CalendarDay(dateComponents: components) else {
                 // The system calendar cannot produce an impossible date; if it ever
                 // does, stopping beats running billing arithmetic on garbage.

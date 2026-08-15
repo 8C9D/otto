@@ -54,7 +54,11 @@ let package = Package(
         .testTarget(name: "OttoStoresTests", dependencies: ["OttoStores"]),
         // Renders real views at accessibility type sizes; UIKit-hosted, so it runs
         // on the simulator and compiles to nothing under `swift test` on the host.
-        .testTarget(name: "OttoUITests", dependencies: ["OttoUI"])
+        // OttoServices is a direct dependency since R4-2: NotificationCoordinator
+        // is inside `#if os(iOS)` and compiles to nothing under host
+        // `swift test`, so its tests can only live in this simulator-hosted
+        // target, and they need `@testable import OttoServices` to reach it.
+        .testTarget(name: "OttoUITests", dependencies: ["OttoUI", "OttoServices"])
     ],
     swiftLanguageModes: [.v6]
 )

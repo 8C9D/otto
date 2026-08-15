@@ -5,6 +5,22 @@ import OttoDomain
 import UIKit
 import UserNotifications
 
+/// The two calls the background-refresh handler makes on its task.
+///
+/// `BGAppRefreshTask` has no public initializer, so without this seam the whole
+/// background path - the pass, the completion latch, the expiration race, and
+/// whether the outcome is published at all - is reachable only from the OS.
+/// That is R4-2: the coordinator is inside `#if os(iOS)` and compiles to
+/// nothing under host `swift test`, and even on a simulator there was nothing a
+/// test could hand it. The seam is at the system boundary, not above the
+/// handler, so a fake cannot mock away the logic under test.
+public protocol BackgroundRefreshTask: AnyObject {
+    var expirationHandler: (() -> Void)? { get set }
+    func setTaskCompleted(success: Bool)
+}
+
+extension BGAppRefreshTask: BackgroundRefreshTask {}
+
 /// The app-side wiring for spec §6.2's reschedule triggers. The app target
 /// creates one of these at launch and keeps it alive; everything else - what to
 /// schedule, when it fires, what the actions do - lives below in the scheduler,
@@ -32,8 +48,10 @@ public final class NotificationCoordinator: NSObject {
     /// cancellation URL). Set by the composition root.
     public var onFollowUp: ((NotificationActionFollowUp) -> Void)?
     /// Latest outcome, published so the store layer can surface permission and
-    /// coverage without re-running a pass.
-    public var onOutcome: ((ScheduleOutcome) -> Void)?
+    /// coverage without re-running a pass. `nil` means the pass FAILED - the
+    /// store drops the previous outcome rather than leaving the UI asserting
+    /// coverage an earlier pass earned and this one did not renew.
+    public var onOutcome: ((ScheduleOutcome?) -> Void)?
 
     public init(
         scheduler: any ReminderScheduling,
@@ -91,12 +109,12 @@ public final class NotificationCoordinator: NSObject {
             // A timezone change moves fire INSTANTS, never calendar days
             // (spec §4.1) - the full reschedule recomputes every instant in the
             // new zone.
-            MainActor.assumeIsolated { self?.rescheduleSoon(.timeZoneChange) }
+            MainActor.assumeIsolated { _ = self?.rescheduleSoon(.timeZoneChange) }
         }
         let timeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rescheduleSoon(.significantTimeChange) }
+            MainActor.assumeIsolated { _ = self?.rescheduleSoon(.significantTimeChange) }
         }
         // The coordinator lives for the app's entire lifetime (the composition
         // root retains it), so the tokens are held but never need removing.
@@ -104,19 +122,105 @@ public final class NotificationCoordinator: NSObject {
     }
 
     /// The foreground trigger - the scene phase change calls this.
-    public func appDidBecomeActive() {
-        rescheduleSoon(.foreground)
+    ///
+    /// Returns the pass's `Task` so a test can await it. R4-2: the pass ran in
+    /// a detached `Task` with no handle, so even on a simulator there was
+    /// nothing to wait for and no way to assert that the outcome reached
+    /// `onOutcome`. The app target discards the result and is unchanged.
+    @discardableResult
+    public func appDidBecomeActive() -> Task<Void, Never> {
+        let pass = rescheduleSoon(.foreground)
         scheduleNextBackgroundRefresh()
+        return pass
     }
 
-    private func rescheduleSoon(_ trigger: RescheduleTrigger) {
-        Task { [scheduler, now, today, timeZone, onOutcome] in
-            if let outcome = try? await scheduler.reschedule(
-                now: now(), today: today(), timeZone: timeZone(), trigger: trigger
-            ) {
-                onOutcome?(outcome)
-            }
+    /// The pass currently running, and the single trigger waiting behind it.
+    ///
+    /// F10. Every §6.2 trigger used to spawn its own unstructured `Task`, with
+    /// nothing relating them: five triggers meant five concurrent full passes,
+    /// each loading every subscription, reconciling every ledger and writing
+    /// every watermark. They arrive together in practice - a foreground open
+    /// fires `.foreground` while a delivered notification fires
+    /// `.notificationDelivered`, and a timezone change fires beside a
+    /// significant-time change - and the passes then race on the same rows.
+    private var inFlight: Task<Void, Never>?
+    private var queued: RescheduleTrigger?
+
+    /// Not private since R4-2: the simulator-hosted coordinator tests reach it
+    /// through `@testable`, and returning the `Task` is what makes the pass
+    /// awaitable instead of a race.
+    ///
+    /// **Coalesced, not dropped and not queued without bound.** A trigger that
+    /// arrives while a pass is running leaves exactly one follow-up behind it,
+    /// however many arrive: the pass is idempotent and recomputes the whole plan
+    /// from current state, so N triggers need at most one more run, but they do
+    /// need that one - a trigger that arrives after the in-flight pass has
+    /// already read the store describes a change that pass cannot have seen.
+    ///
+    /// The returned `Task` is the whole chain, so awaiting it awaits every pass
+    /// the caller's trigger caused.
+    ///
+    /// **This gate covers the five trigger classes that come through HERE, and
+    /// no others.** Two more paths reach the same shared `NotificationScheduler`
+    /// without passing this line, and both can overlap a pass this gate is
+    /// running - measured, not reasoned (`reviews-4/REVIEW-3.md`):
+    ///
+    ///  - `handleBackgroundRefresh`, which owns the completion latch and the
+    ///    expiration race and builds its own `Task`: overlaps in 45 of 240
+    ///    iterations;
+    ///  - **`NotificationStatusStore.reschedule()`**, which every create, edit,
+    ///    delete, §5.4 flow and reminder-time change goes through, calling the
+    ///    scheduler directly with `.stateChange`: overlaps in 33 of 240.
+    ///
+    /// So the store path - the most frequent trigger class in ordinary use - is
+    /// ungated, and `.stateChange` never arrives here at all. Closing it means
+    /// putting the gate at the `ReminderScheduling` seam the three callers
+    /// share rather than in this class, which is a larger change than F10 was
+    /// scoped to. `PROD-READINESS-4.md` N4-3 and N4-7.
+    ///
+    /// **A coalesced trigger leaves no log line.** The trigger name reaches the
+    /// log only through the `reschedule(now:today:timeZone:trigger:)` wrapper,
+    /// which a coalesced trigger never calls, and `queued` is an unconditional
+    /// overwrite - so a burst of five that used to produce five `pass begin`
+    /// lines now produces one or two, tagged with whichever arrived last. That
+    /// is an inherent cost of coalescing rather than a defect, and it is a real
+    /// reduction in the investigative surface this codebase pays for elsewhere.
+    /// `PROD-READINESS-4.md` N4-8.
+    @discardableResult
+    func rescheduleSoon(_ trigger: RescheduleTrigger) -> Task<Void, Never> {
+        if let inFlight {
+            queued = trigger
+            return inFlight
         }
+        let pass = Task { [weak self] in
+            guard let self else { return }
+            var next: RescheduleTrigger? = trigger
+            while let current = next {
+                // Cleared BEFORE the pass, never after: a trigger that lands
+                // while this pass is in flight must survive into the next loop,
+                // and clearing afterwards would swallow it.
+                self.queued = nil
+                await self.runPass(current)
+                next = self.queued
+            }
+            self.inFlight = nil
+        }
+        inFlight = pass
+        return pass
+    }
+
+    /// One pass, and what it publishes.
+    ///
+    /// A failed pass is REPORTED as nil, not dropped. The old shape discarded
+    /// the failure entirely, so the store kept publishing the last successful
+    /// outcome and Today went on stating coverage that this pass had just failed
+    /// to renew. The pass itself is already logged by the trigger-tagged
+    /// wrapper (OttoLog).
+    private func runPass(_ trigger: RescheduleTrigger) async {
+        let outcome = try? await scheduler.reschedule(
+            now: now(), today: today(), timeZone: timeZone(), trigger: trigger
+        )
+        onOutcome?(outcome)
     }
 
     // MARK: - Background refresh
@@ -140,7 +244,11 @@ public final class NotificationCoordinator: NSObject {
         }
     }
 
-    private func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+    /// Not private since R4-2, and taking the protocol rather than
+    /// `BGAppRefreshTask`, so the simulator-hosted tests can drive it. Returns
+    /// the pass's `Task` for the same reason `appDidBecomeActive` does.
+    @discardableResult
+    func handleBackgroundRefresh(_ task: any BackgroundRefreshTask) -> Task<Void, Never> {
         // This line is the §6.3 claim the spec has been unable to make since
         // Wave 4: not that the task registered, but that its handler BODY ran.
         OttoLog.background.notice("launched id=\(Self.refreshTaskIdentifier, privacy: .public)")
@@ -149,10 +257,19 @@ public final class NotificationCoordinator: NSObject {
         // end to do so.
         scheduleNextBackgroundRefresh()
         let completion = CompletionLatch()
-        let work = Task { [scheduler, now, today, timeZone] in
+        let work = Task { [scheduler, now, today, timeZone, onOutcome] in
             let outcome = try? await scheduler.reschedule(
                 now: now(), today: today(), timeZone: timeZone(), trigger: .backgroundRefresh
             )
+            // R4-2's second half. `rescheduleSoon` has reported its outcome -
+            // including a failure, as nil - since round 1's F3 fix, and this
+            // path never reported anything at all, so a failed background pass
+            // left the store publishing the last SUCCESSFUL outcome and Today
+            // stating coverage this pass had just failed to renew. Published
+            // BEFORE the latch: whether the OS has already reclaimed the task
+            // is bookkeeping about the task, and says nothing about whether the
+            // pass produced a result the UI should stop trusting.
+            onOutcome?(outcome)
             guard completion.claim() else {
                 // Expiration already ended the task. Say so rather than going
                 // quiet: this line means the pass outlived its expiration, and
@@ -175,6 +292,7 @@ public final class NotificationCoordinator: NSObject {
             OttoLog.background.notice("completing path=expiration success=false")
             task.setTaskCompleted(success: false)
         }
+        return work
     }
 }
 
@@ -217,7 +335,7 @@ extension NotificationCoordinator: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await MainActor.run { self.rescheduleSoon(.notificationDelivered) }
+        await MainActor.run { _ = self.rescheduleSoon(.notificationDelivered) }
         return [.banner, .sound, .list]
     }
 

@@ -59,9 +59,55 @@ private func stateText(_ state: BillingEvent.State) -> String {
     }
 }
 
+/// A field, neutralized against formula injection and then RFC 4180 quoted.
+///
+/// The order matters: the prefix goes on first, so a hostile name that also
+/// contains a comma is quoted around the neutralized text rather than beside it.
+private func csvField(_ value: String) -> String {
+    rfc4180Quoted(withoutLeadingFormula(value))
+}
+
+/// The characters a spreadsheet reads as "this cell is a formula" when they
+/// begin a cell (F9).
+///
+/// `=` and `+` start a formula in Excel, Numbers, LibreOffice and Sheets; `@`
+/// starts one in Excel and is the legacy Lotus form; `-` starts one wherever a
+/// leading minus is not immediately a number, which is what makes
+/// `-2+3+cmd|' /C calc'!A0` a command and not a negative amount. Tab, carriage
+/// return and newline are here because several importers strip a leading one
+/// and then evaluate what is behind it - and the rule stated has to be the rule
+/// implemented, which is why `\n` is present: `reviews-4/REVIEW-1.md` finding 8
+/// noted it was covered by the sentence and absent from the set.
+private let csvFormulaTriggers: Set<Character> = ["=", "+", "-", "@", "\t", "\r", "\n"]
+
+/// F9. Only the export's THREE text fields reach this - the subscription name,
+/// the state word and the currency code - and only the first is user-controlled.
+/// A user who names a subscription `=HYPERLINK(...)` or `-2+3+cmd|' /C calc'!A0`
+/// gets those exact characters back out of the export at HEAD; opened in a
+/// spreadsheet they are a formula, and the `cmd|...!A0` shape is a DDE request
+/// to run a program. Measured before this existed, by exporting a snapshot of
+/// five hostile names: every one came back byte-for-byte.
+///
+/// The neutralizer is a leading apostrophe, which every spreadsheet reads as
+/// "the rest of this cell is text". It is deliberately applied to the CELL and
+/// not to the stored name: nothing about the subscription changes, and this
+/// export is already documented as lossy and one-way, so a display-level
+/// apostrophe in a file meant for reading is the cheap side of the trade. The
+/// JSON export - the one that round-trips - is untouched and still carries the
+/// exact name.
+///
+/// Amounts do NOT come through here. `decimalAmount` writes `-0.50` for a
+/// negative amount and a leading minus in front of a number is a number to
+/// every spreadsheet, so quoting it would corrupt the column this file exists
+/// to let someone add up.
+private func withoutLeadingFormula(_ value: String) -> String {
+    guard let first = value.first, csvFormulaTriggers.contains(first) else { return value }
+    return "'\(value)"
+}
+
 /// RFC 4180 quoting: fields containing commas, quotes, or line breaks are
 /// quoted, with quotes doubled.
-private func csvField(_ value: String) -> String {
+private func rfc4180Quoted(_ value: String) -> String {
     guard value.contains(",") || value.contains("\"") || value.contains("\n")
             || value.contains("\r")
     else { return value }

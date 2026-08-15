@@ -41,7 +41,45 @@ line_length:
 # layer (all write flows), the repository protocols, and the app target may
 # not name it; reads route through the domain's Codable and the persistence
 # mapping, and the edit path describes with Subscription.describing.
+# F1 (spec §4.1): `CalendarDay` is proleptic Gregorian by construction, so
+# every conversion between it and Foundation must name that calendar at both
+# ends. Resolving those numbers through the DEVICE calendar produces an
+# era-numbered year - 2569 rather than 2026 on a Buddhist device - which the
+# domain's arithmetic then treats as Gregorian, and which the DatePicker write
+# path stores straight into billing data.
+# The four reading sites (DateProvider, DisplayFormatting, CalendarDayBinding,
+# InsightsView) and the trigger write site take `CalendarDay.conversionCalendar`
+# instead. Their eight guards can only fail on a NON-Gregorian host, which no CI
+# runner is, so until this rule the whole fix could be reverted with every test
+# green on every machine that runs them. This is the guard that fails on a
+# Gregorian machine.
 custom_rules:
+  device_calendar_outside_conversion_seam:
+    name: "Device calendar in a day/instant conversion"
+    # Three spellings, because the first alone was blind to the likeliest one.
+    # Four of the five protected sites take `calendar: Calendar = ...`, and in a
+    # typed position Swift resolves a bare `.current` - two tokens away from the
+    # `timeZone: TimeZone = .current` sitting on the same signature. The third
+    # alternative closes `Locale.current.calendar`, which reaches the device
+    # calendar without naming `Calendar` at all.
+    regex: '\bCalendar\s*\.\s*(?:current|autoupdatingCurrent)\b|:\s*Calendar\s*=\s*\.\s*(?:current|autoupdatingCurrent)\b|\bLocale\s*\.\s*(?:current|autoupdatingCurrent)\s*\.\s*calendar\b'
+    included:
+      - ".*/Packages/[^/]+/Sources/.*"
+      - ".*/Otto/.*\\.swift"
+    # Code only. The doc comments at CalendarDay.swift, DisplayFormatting.swift
+    # and LiveNotificationClient.swift name `Calendar.current` deliberately, as
+    # the trap being described - and a falsification that edits a comment
+    # containing the string is not a falsification at all (round 2 recorded one).
+    match_kinds:
+      - identifier
+      - typeidentifier
+    message: >-
+      A CalendarDay is proleptic Gregorian (spec §4.1, F1). Resolving its
+      numbers through the device calendar yields an era-numbered year that
+      billing arithmetic then treats as Gregorian. Use
+      CalendarDay.conversionCalendar, or fireDate(hour:minute:in:) when a
+      timezone is the question.
+    severity: error
   wire_coder_outside_export:
     name: "Wire coder outside the Exported* layer"
     regex: '\b(?:JSONEncoder|JSONDecoder|PropertyListEncoder|PropertyListDecoder|JSONSerialization)\b'
