@@ -160,23 +160,15 @@ public final class NotificationCoordinator: NSObject {
     /// The returned `Task` is the whole chain, so awaiting it awaits every pass
     /// the caller's trigger caused.
     ///
-    /// **This gate covers the five trigger classes that come through HERE, and
-    /// no others.** Two more paths reach the same shared `NotificationScheduler`
-    /// without passing this line, and both can overlap a pass this gate is
-    /// running - measured, not reasoned (`reviews-4/REVIEW-3.md`):
-    ///
-    ///  - `handleBackgroundRefresh`, which owns the completion latch and the
-    ///    expiration race and builds its own `Task`: overlaps in 45 of 240
-    ///    iterations;
-    ///  - **`NotificationStatusStore.reschedule()`**, which every create, edit,
-    ///    delete, §5.4 flow and reminder-time change goes through, calling the
-    ///    scheduler directly with `.stateChange`: overlaps in 33 of 240.
-    ///
-    /// So the store path - the most frequent trigger class in ordinary use - is
-    /// ungated, and `.stateChange` never arrives here at all. Closing it means
-    /// putting the gate at the `ReminderScheduling` seam the three callers
-    /// share rather than in this class, which is a larger change than F10 was
-    /// scoped to. `PROD-READINESS-4.md` N4-3 and N4-7.
+    /// **This gate coalesces the five trigger classes that come through HERE;
+    /// serialisation against every other entry point lives below it.** In
+    /// production the `scheduler` this class holds is the composition root's
+    /// `CoalescingReminderScheduler`, so a pass this gate starts cannot overlap
+    /// one from `handleBackgroundRefresh`, `NotificationStatusStore.reschedule()`
+    /// or `NotificationActionHandler`'s snooze paths - the seam gate serialises
+    /// all of them (round 5 item 1; the pre-gate overlap was measured at 62 and
+    /// 39 of 180 iterations). A coordinator built over a bare scheduler, as the
+    /// spy-based tests build it, still has only this gate.
     ///
     /// **A coalesced trigger leaves no log line.** The trigger name reaches the
     /// log only through the `reschedule(now:today:timeZone:trigger:)` wrapper,
@@ -286,7 +278,11 @@ public final class NotificationCoordinator: NSObject {
         }
         task.expirationHandler = {
             // Cancel FIRST, then claim: the pass must be told to stop before
-            // the task is handed back, never after.
+            // the task is handed back, never after. Under the seam gate this
+            // cancellation is COUNTED rather than forwarded: the underlying
+            // pass stops only if this background wake-up is the only caller
+            // waiting on it, so expiration cannot cancel a pass a foreground
+            // trigger or a store write is counting on (round 5 item 1).
             work.cancel()
             guard completion.claim() else { return }
             OttoLog.background.notice("completing path=expiration success=false")
