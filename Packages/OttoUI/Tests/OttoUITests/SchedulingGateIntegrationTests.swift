@@ -173,7 +173,9 @@ struct SchedulingGateIntegrationTests {
         #expect(await settle { await gate.probeQueuedWaiters == 1 })
 
         task.expirationHandler?()
-        #expect(await settle { await gate.probeQueuedTaskIsCancelled })
+        // Expiration abandons the background's sole-waiter follow-up, which
+        // vacates the queued slot (the finding-1 fix).
+        #expect(await settle { await gate.probeQueuedWaiters == 0 })
         spy.release()
         await foreground.value
         await background.value
@@ -182,12 +184,16 @@ struct SchedulingGateIntegrationTests {
         // follow-up never reached the scheduler.
         #expect(spy.passes == 1)
         #expect(spy.cancelledPasses == 0)
-        // The foreground published its outcome; the background then reported
-        // its own cancelled pass as a failure, which is R4-2's rule unchanged.
+        // Two publishes, IN EITHER ORDER: the foreground's outcome and the
+        // background's nil for its own cancelled pass (R4-2's rule unchanged).
+        // Both continuations are resumed by the same pass completion and
+        // nothing orders them - an earlier version of this test asserted
+        // first/last and failed 7 of the reviewer's 18 suite-scoped runs
+        // (reviews-5/REVIEW-1.md finding 2). What the code guarantees is the
+        // membership, and that is what is asserted.
         #expect(published.count == 2)
-        #expect(published.first??.scheduledCount == 1)
-        let lastPublished = try #require(published.last)
-        #expect(lastPublished == nil)
+        #expect(published.compactMap { $0 }.map(\.scheduledCount) == [1])
+        #expect(published.contains { $0 == nil })
         #expect(task.completions == [false])
     }
 
