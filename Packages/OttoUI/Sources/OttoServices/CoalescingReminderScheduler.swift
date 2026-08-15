@@ -140,6 +140,16 @@ public actor CoalescingReminderScheduler: ReminderScheduling {
     private func waiterCancelled(_ pass: Pass) {
         pass.cancelledWaiters += 1
         guard pass.cancelledWaiters >= pass.waiters, !pass.finished else { return }
+        // Vacate the slot BEFORE cancelling (reviews-5/REVIEW-1.md finding 1).
+        // The abandoned follow-up's corpse otherwise sits in `queued` until the
+        // in-flight pass finishes, and `join` hands it to every caller arriving
+        // in that window - an uncancelled store write or snooze then inherits
+        // `CancellationError` and no pass ever runs for its trigger. With the
+        // slot cleared, the next caller starts a fresh follow-up behind the
+        // same in-flight pass.
+        if pass === queued {
+            queued = nil
+        }
         pass.task?.cancel()
     }
 
@@ -148,6 +158,5 @@ public actor CoalescingReminderScheduler: ReminderScheduling {
     // never reads them.
     var probeQueuedWaiters: Int { queued?.waiters ?? 0 }
     var probeQueuedCancelledWaiters: Int { queued?.cancelledWaiters ?? 0 }
-    var probeQueuedTaskIsCancelled: Bool { queued?.task?.isCancelled ?? false }
     var probeInFlightTaskIsCancelled: Bool { inFlight?.task?.isCancelled ?? false }
 }

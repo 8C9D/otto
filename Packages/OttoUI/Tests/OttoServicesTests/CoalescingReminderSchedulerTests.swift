@@ -14,7 +14,13 @@ private struct SeamSpyState {
     var peak = 0
     var passes = 0
     var cancelledPasses = 0
-    var released = false
+    /// `.held` passes with a number above this wait; `release()` opens them
+    /// all, `release(upTo:)` opens a prefix so a test can hold the follow-up
+    /// while its predecessor completes (reviews-5/REVIEW-1.md finding 5).
+    var releasedUpTo = 0
+    /// The `today` each pass ran with, in pass order - what pins the
+    /// latest-joiner-arguments semantic (reviews-5/REVIEW-1.md finding 4).
+    var passDays: [CalendarDay] = []
 }
 
 /// The scheduler stand-in behind the gate. Two modes: `.yielding` suspends six
@@ -40,9 +46,14 @@ private final class SeamSpy: ReminderScheduling {
     var peak: Int { state.withLock { $0.peak } }
     var passes: Int { state.withLock { $0.passes } }
     var cancelledPasses: Int { state.withLock { $0.cancelledPasses } }
+    var passDays: [CalendarDay] { state.withLock { $0.passDays } }
 
     func release() {
-        state.withLock { $0.released = true }
+        state.withLock { $0.releasedUpTo = Int.max }
+    }
+
+    func release(upTo passNumber: Int) {
+        state.withLock { $0.releasedUpTo = max($0.releasedUpTo, passNumber) }
     }
 
     func reschedule(now: Date, today: CalendarDay, timeZone: TimeZone) async throws -> ScheduleOutcome {
@@ -50,6 +61,7 @@ private final class SeamSpy: ReminderScheduling {
             current.passes += 1
             current.live += 1
             current.peak = max(current.peak, current.live)
+            current.passDays.append(today)
             return current.passes
         }
         defer { state.withLock { $0.live -= 1 } }
@@ -57,7 +69,7 @@ private final class SeamSpy: ReminderScheduling {
         case .yielding:
             for _ in 0..<6 { await Task.yield() }
         case .held:
-            while !state.withLock({ $0.released }) {
+            while state.withLock({ $0.releasedUpTo }) < passNumber {
                 if Task.isCancelled {
                     state.withLock { $0.cancelledPasses += 1 }
                     throw CancellationError()
@@ -271,11 +283,101 @@ struct CoalescingReminderSchedulerTests {
         #expect(await settle { await gate.probeQueuedWaiters == 1 })
 
         second.cancel()
-        #expect(await settle { await gate.probeQueuedTaskIsCancelled })
+        // Abandonment VACATES the slot (the finding-1 fix); the probe that
+        // watched the corpse's cancelled task watched a mechanism that no
+        // longer exists.
+        #expect(await settle { await gate.probeQueuedWaiters == 0 })
         spy.release()
 
         #expect(try await first.value.scheduledCount == 1)
         await #expect(throws: CancellationError.self) { try await second.value }
         #expect(spy.passes == 1)
+    }
+
+    /// ⛔ The starvation `reviews-5/REVIEW-1.md` finding 1 measured, as a
+    /// permanent guard: after an abandoned follow-up is cancelled, its corpse
+    /// must not occupy the queued slot - an uncancelled caller arriving before
+    /// the in-flight pass finishes gets a FRESH follow-up and a real pass, not
+    /// the corpse's `CancellationError`. Before the fix this test's late caller
+    /// threw and `spy.passes` stayed 1, deterministically.
+    @Test("⛔ a caller after an abandoned follow-up gets a fresh pass, not the corpse")
+    func aCallerAfterAnAbandonedFollowUpGetsAFreshPass() async throws {
+        let day = try fixtureDay()
+        let spy = SeamSpy(.held, coveredThrough: day)
+        let gate = CoalescingReminderScheduler(base: spy)
+        let first = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { spy.passes == 1 })
+        let second = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { await gate.probeQueuedWaiters == 1 })
+
+        second.cancel()
+        // The fix in one observable: abandoning the follow-up VACATES the slot.
+        #expect(await settle { await gate.probeQueuedWaiters == 0 })
+
+        let third = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { await gate.probeQueuedWaiters == 1 })
+        spy.release()
+
+        #expect(try await first.value.scheduledCount == 1)
+        await #expect(throws: CancellationError.self) { try await second.value }
+        #expect(try await third.value.scheduledCount == 2)
+        #expect(spy.passes == 2)
+        #expect(spy.peak == 1)
+    }
+
+    /// ⛔ The latest-joiner-arguments semantic, pinned (`reviews-5/REVIEW-1.md`
+    /// finding 4): the follow-up runs with the MOST RECENT joiner's arguments.
+    /// Deleting `queued.arguments = arguments` left every shipped test green,
+    /// because every caller passed the same fixture day; these callers do not.
+    @Test("⛔ the follow-up runs with the most recent joiner's arguments")
+    func theFollowUpRunsWithTheLatestJoinersArguments() async throws {
+        let day = try fixtureDay()
+        let laterDay = day.adding(days: 1)
+        let latestDay = day.adding(days: 2)
+        let spy = SeamSpy(.held, coveredThrough: day)
+        let gate = CoalescingReminderScheduler(base: spy)
+        let first = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { spy.passes == 1 })
+        let second = Task { try await gate.reschedule(now: now, today: laterDay, timeZone: zone) }
+        #expect(await settle { await gate.probeQueuedWaiters == 1 })
+        let third = Task { try await gate.reschedule(now: now, today: latestDay, timeZone: zone) }
+        #expect(await settle { await gate.probeQueuedWaiters == 2 })
+        spy.release()
+
+        _ = try await (first.value, second.value, third.value)
+        #expect(spy.passDays == [day, latestDay])
+    }
+
+    /// ⛔ Serialisation in the caller-during-the-follow-up window
+    /// (`reviews-5/REVIEW-1.md` finding 5): a mutant that deletes the
+    /// promotion's `inFlight = pass` overlaps 58 of 60 iterations in the
+    /// reviewer's probe yet survived every shipped host test, because none sent
+    /// a caller while the follow-up itself was running. This one does, staged
+    /// deterministically: pass 1 completes, the follow-up is held mid-run, and
+    /// only then does the third caller arrive - it must queue behind the
+    /// follow-up, not start a concurrent pass.
+    @Test("⛔ a caller during the follow-up pass queues behind it")
+    func aCallerDuringTheFollowUpQueuesBehindIt() async throws {
+        let day = try fixtureDay()
+        let spy = SeamSpy(.held, coveredThrough: day)
+        let gate = CoalescingReminderScheduler(base: spy)
+        let first = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { spy.passes == 1 })
+        let second = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { await gate.probeQueuedWaiters == 1 })
+
+        spy.release(upTo: 1)
+        #expect(await settle { spy.passes == 2 })
+
+        let third = Task { try await gate.reschedule(now: now, today: day, timeZone: zone) }
+        #expect(await settle { await gate.probeQueuedWaiters == 1 })
+        #expect(spy.passes == 2)
+        spy.release()
+
+        #expect(try await first.value.scheduledCount == 1)
+        #expect(try await second.value.scheduledCount == 2)
+        #expect(try await third.value.scheduledCount == 3)
+        #expect(spy.passes == 3)
+        #expect(spy.peak == 1)
     }
 }
