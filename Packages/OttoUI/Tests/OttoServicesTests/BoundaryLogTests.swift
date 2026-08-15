@@ -52,8 +52,8 @@ struct BoundaryLogTests {
         let now = try fixtureNow()
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.dataTransfer)
-        OttoLogProbe.emitCanary(to: OttoLog.flows)
+        let transferCanary = OttoLogProbe.emitCanary(to: OttoLog.dataTransfer)
+        let flowsCanary = OttoLogProbe.emitCanary(to: OttoLog.flows)
 
         let exported = try await service.exportJSONFile(exportedAt: now, today: today)
         _ = try await service.exportChargesCSVFile(today: today)
@@ -66,7 +66,11 @@ struct BoundaryLogTests {
         try await exerciseRefusals(fixture.flows, absent: try fixtureUUID(9_401), now: now, today: today)
 
         let lines = try Self.boundaryLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        // Both categories, each on its own token: the shared literal let
+        // EITHER category's delivery satisfy this check, so the one read
+        // over two categories was only ever proving one of them.
+        try OttoLogProbe.requireDelivered(lines, canary: transferCanary)
+        try OttoLogProbe.requireDelivered(lines, canary: flowsCanary)
 
         // ANY line in the window carrying both parts, never `.last`.
         //

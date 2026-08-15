@@ -109,7 +109,7 @@ struct SchedulingLogTests {
         await fixture.client.refuseAdds(after: 0)
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.scheduling)
+        let canary = OttoLogProbe.emitCanary(to: OttoLog.scheduling)
         await #expect(throws: FakeNotificationClient.AddRefused.self) {
             _ = try await fixture.scheduler.reschedule(
                 now: Date(timeIntervalSince1970: 1_786_000_000),
@@ -126,7 +126,7 @@ struct SchedulingLogTests {
 
         // One read, checked for the canary and all 64 entries.
         let lines = try Self.schedulingLogLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        try OttoLogProbe.requireDelivered(lines, canary: canary)
 
         // Byte-for-byte, one COMPLETE entry per failed rung, reason included:
         // a prefix or contains match could still be satisfied by a truncated
@@ -165,7 +165,7 @@ struct SchedulingLogTests {
         await fixture.subscriptions.seed([subscription, healthy])
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.scheduling)
+        let canary = OttoLogProbe.emitCanary(to: OttoLog.scheduling)
         // The TRIGGER-TAGGED entry point, which every production caller uses -
         // the coordinator, the action handler and NotificationStatusStore all
         // route through it. Using it here costs nothing (the same pass, the
@@ -179,7 +179,7 @@ struct SchedulingLogTests {
         )
 
         let lines = try Self.schedulingLogLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        try OttoLogProbe.requireDelivered(lines, canary: canary)
 
         let mine = try fixtureUUID(88).uuidString.lowercased()
         let line = try #require(
