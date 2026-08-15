@@ -41,7 +41,7 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 
 | # | id | what | terminal state |
 |---|---|---|---|
-| 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED pending review** - stage 1 |
+| 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED** - stage 1; one REJECT cycle (`reviews-5/REVIEW-1.md`), remediated, re-review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-2.md`) |
 | 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | open |
 | 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | open |
 | 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | open |
@@ -118,8 +118,8 @@ Re-wording it is new user-facing copy; round 4's user-facing exception was grant
 
 ## ITEM 1 - N4-7 + N4-3, the gate moves to the seam
 
-**RESOLVED pending review**, stage 1.
-The adversarial review of this stage's range has not happened yet; nothing in this section is final until it has.
+**RESOLVED**, stage 1.
+The stage's range was REJECTED by `reviews-5/REVIEW-1.md` (a starvation defect in the gate and a flaky ordering assertion, both P2), remediated in `124ec44..c94dbbd`, and the re-review `reviews-5/REVIEW-2.md` (`fedb636`) verified every finding closed by execution and passed the remediation with three P3 residuals, routed to NEXT ROUND below.
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -207,7 +207,7 @@ What each finding got:
   The coalescing bullet above carries the correction and names the window in which it was false.
 - **Finding 2 (P2) - the decision is to assert the guarantee, not an order, fixed at `83f9717`.**
   The code does not order the two publishes - both continuations are resumed by the same pass completion - and enforcing an order would be a production-semantics change outside this item's scope, so the test now asserts the membership (two publishes: the foreground's outcome and one nil) and the ledger sentence above says "unordered" instead of "then".
-  Evidence at the remediation head: **18 of 18 suite-scoped simulator runs green** (`-only-testing:OttoUITests`, the reviewer's contention shape, which failed 7 of 18 at `c26b2a7`), plus the full simulator suite `** TEST SUCCEEDED **` in the five-dimension table below.
+  Evidence at the remediation head: **18 of 18 suite-scoped simulator runs green** at `-only-testing:OttoUITests`; the reviewer's own contention shape was a narrower suite scope, which failed 11 of 18 at `c26b2a7` and is also 18 of 18 green at the re-review (`reviews-5/REVIEW-2.md` finding 3 corrected the attribution this sentence originally made), plus the full simulator suite `** TEST SUCCEEDED **` in the five-dimension table below.
 - **Finding 3 (P3)** - the battery below: exact diffs, three full host runs per mutant, the stable part (which tests fail) recorded separately from the sample part (issue counts).
 - **Finding 4 (P3)** - the latest-joiner-arguments semantic is pinned by "the follow-up runs with the most recent joiner's arguments", whose callers pass three distinguishable days and whose spy records which day each pass ran with; M5 deletes the implementing line and only that test fails.
 - **Finding 5 (P3)** - the spy gained a staged release (`release(upTo:)`) so "a caller during the follow-up pass queues behind it" holds the follow-up mid-run deterministically; M6, which overlapped 58 of 60 in the reviewer's probe while surviving the shipped suite, now dies on every run.
@@ -263,9 +263,17 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 |---|---|---|
 | **R0** `9e73378..d7cbd37` | `1b352f4` (the merge; parents `cd9778c` and `9e73378` - `cd9778c` is main's CI-workflow commit and enters the tree here), `756b8b1`, `d7cbd37` | **no dedicated adversarial review.** The merge's diff against `9e73378` is nine lines of `.github/workflows/ci.yml`, measured at merge time and re-verified by `reviews-5/BASELINE-5.md`; `756b8b1` and `d7cbd37` are docs-only, and the baseline measured the tree they describe. Declared honestly as reviewed-by-measurement only, and flagged for the round's terminal reconciliation |
 | **R1** `d7cbd37..c26b2a7` | `eb4d2ae`, `c26b2a7` | `reviews-5/REVIEW-1.md` - **REJECT** |
-| **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD | **re-review pending**; the first REJECT cycle's remediation |
+| **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
 
 ## NEXT ROUND
 
-Opens empty.
 Round 4's NEXT ROUND section remains the ledger of record for everything this round's work list does not name.
+
+- **N5-1 (P3) - the expiration-during-foreground coin flip is disclosed and tracked by nothing.**
+  When a background wake-up expires while a foreground pass runs, the two publishes are unordered, so Today's final state is a coin flip between the foreground outcome and the background's nil (`reviews-5/REVIEW-2.md` finding 1).
+  The general form is R4-2's nil-publish rule itself: an expired background pass can overwrite a fresh foreground outcome with the failed-pass state.
+  Reviewed round-4 behaviour, stated in ITEM 1's record; whether to order the publishes is a decision no round has taken.
+- **N5-2 (P3) - the mutant battery's issue-count columns are samples, not properties.**
+  M1 and M7 reproduce with counts varying by one across runs (`reviews-5/REVIEW-2.md` finding 2); the stable property is each mutant's failing-test set, which reproduced identically on every run of both hosts.
+  Whoever quotes the battery should quote the failing-test sets.
+- `reviews-5/REVIEW-2.md` finding 3 - the contention-shape attribution - is corrected in place under the finding-2 remediation entry above, not carried.
