@@ -328,6 +328,16 @@ Writing *today* is a correct repair for this field on every status, because the 
 - No new flow, screen, or copy; no UI-test target (still item 5's question).
 - The other unreachable repair the round-4 ledger names - `pauseEndsOn` on an already-paused subscription has no picker (`docs/next-wave.md` row 3's resume-and-re-pause workaround) - is out of this item's scope; it is N4-16's sibling, not N4-16.
 
+### Measured at the stage-2 head (`bc2256c` plus this verification commit) - all five
+
+| measurement | at the R2 head (`c94dbbd`) | at the stage-2 head | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 261 / 127 / 220 = 608 | exit 0, **265 / 127 / 228 = 620** | +4 OttoDomain, +8 OttoUI - the stage's host tests |
+| `swiftlint --strict` | clean, 228 files | **clean, 230 files** | +2 files, the stage's two new test files |
+| simulator suite | 130 / 72 / 56, 7 known issues, `** TEST SUCCEEDED **` | **133 / 72 / 63, 9 known issues, `** TEST SUCCEEDED **`** | +3 / 0 / +7; the 2 new known issues are exactly the label/activation halves ITEM 4's cost paragraph pre-declared |
+| non-Gregorian harness | 1 / 1 / 5 | **1 / 1 / 5**, same five citations | unchanged |
+| flake, twelve full host runs | 12 of 12 (220 tests per run) | **12 of 12** (228 tests per run) | unchanged |
+
 ---
 
 ## STANDING RULES - carried forward, binding on every stage of this round
@@ -351,7 +361,7 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R0** `9e73378..d7cbd37` | `1b352f4` (the merge; parents `cd9778c` and `9e73378` - `cd9778c` is main's CI-workflow commit and enters the tree here), `756b8b1`, `d7cbd37` | **no dedicated adversarial review.** The merge's diff against `9e73378` is nine lines of `.github/workflows/ci.yml`, measured at merge time and re-verified by `reviews-5/BASELINE-5.md`; `756b8b1` and `d7cbd37` are docs-only, and the baseline measured the tree they describe. Declared honestly as reviewed-by-measurement only, and flagged for the round's terminal reconciliation |
 | **R1** `d7cbd37..c26b2a7` | `eb4d2ae`, `c26b2a7` | `reviews-5/REVIEW-1.md` - **REJECT** |
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
-| **R3** `c94dbbd..` the stage-2 head | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), and the ledger commit that is the range's HEAD | **review pending** - items 2 and 4 |
+| **R3** `c94dbbd..` the stage-2 head | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), and the five-dimension verification commit that is the range's HEAD | **review pending** - items 2 and 4 |
 
 ## NEXT ROUND
 
