@@ -41,7 +41,7 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 
 | # | id | what | terminal state |
 |---|---|---|---|
-| 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | open |
+| 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED pending review** - stage 1 |
 | 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | open |
 | 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | open |
 | 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | open |
@@ -113,6 +113,89 @@ Re-wording it is new user-facing copy; round 4's user-facing exception was grant
 ### Item 10 - N3-6b: `start()` and the delegate have no test
 
 `BGTaskScheduler.register`, `UNUserNotificationCenter.current()`, `UNNotification` and `UNNotificationResponse` still have no test-safe construction, so `NotificationCoordinator.start()` and the delegate methods remain untested (round 4 added four simulator-hosted coordinator tests around them; the entry points themselves are still unreached).
+
+---
+
+## ITEM 1 - N4-7 + N4-3, the gate moves to the seam
+
+**RESOLVED pending review**, stage 1.
+The adversarial review of this stage's range has not happened yet; nothing in this section is final until it has.
+
+### Reconfirmed at the stage start by executing the defect
+
+Round 4's overlap measurement, re-run at `d7cbd37` through the real entry points on the simulator, with the six-suspension spy `PROD-READINESS-4.md` ITEM 4 describes, three runs of sixty iterations each:
+
+```
+background vs foreground   22 / 18 / 22 of 60   = 62 of 180
+store vs foreground        15 /  8 / 16 of 60   = 39 of 180
+```
+
+Round 4 measured 74 of 180 and 33 of 240 for the same two shapes.
+The defect executes: two full scheduling passes inside the scheduler at once, from entry points the coordinator's F10 gate never sees.
+
+### The caller count in the ledger was wrong, and the corrected figure is here
+
+Item 1's own description says three callers share the scheduler.
+Measured by enumerating the call sites of `reschedule` on `any ReminderScheduling`: **four consumers** - the coordinator's `rescheduleSoon` chain, its `handleBackgroundRefresh`, `NotificationStatusStore.reschedule()`, and **`NotificationActionHandler`**, which round 4's entries never counted and which calls the scheduler directly at five `.notificationAction` sites (snoozes and action-button state work).
+The composition root hands all four the same instance, so the seam fix below covers the fourth at no extra cost - but the record should say four, and now does.
+
+### What changed
+
+`CoalescingReminderScheduler`, a new actor in OttoServices, wraps any `ReminderScheduling` and is what the composition root now builds: the store, the coordinator and the action handler all receive the one gated instance, and the wrap happens exactly once (`OttoApp.swift` says so at the wrap site).
+The coordinator's F10 gate is untouched above it and its nine tests are green unmodified; a coordinator built over a bare scheduler, as the spy tests build it, still has only its own gate.
+
+The gate's semantics, each with a test named for it:
+
+- **Serialised.** A pass starts only after the pass before it has finished - the follow-up's task awaits its predecessor before touching the base scheduler - so overlap is inexpressible rather than unlikely.
+- **Coalesced with a freshness guarantee.** Callers arriving while a pass runs share ONE follow-up, and every one of them is answered by that follow-up, a pass that starts after their calls - so the outcome a store write publishes describes a pass that read the store at or after the write.
+  The follow-up runs with the most recent joiner's arguments, the way the coordinator's `queued` trigger always overwrote; the staleness bound is the remainder of the in-flight pass.
+- **Cancellation is counted, not forwarded.** A caller's cancellation cancels the underlying pass only when every caller waiting on that pass has been cancelled.
+  A cancelled caller whose pass survives keeps waiting and returns the shared outcome; an abandoned follow-up whose waiters all cancelled never runs at all.
+
+### The expiration question, answered by measurement
+
+The open design question the round-4 ledger attached to this fix - what does `expirationHandler` cancel once the background path routes through the gate - has this answer, each half pinned by a simulator test:
+
+- **Expiring the background task while the foreground owns the running pass cancels nothing the foreground is counting on.**
+  The background's queued follow-up - a pass only it is waiting on - is abandoned unrun, the foreground pass completes uncancelled and publishes its outcome, and the `BGAppRefreshTask` is completed exactly once, unsuccessfully, by the latch.
+  The background path then publishes nil for its own cancelled pass, which is R4-2's failed-pass rule unchanged, and is asserted rather than hidden.
+- **A pass only the background wake-up is waiting on is still the expiration's to cancel** - the round-4 behaviour the gate must not lose.
+  The base scheduler observes the cancellation, the task completes once as a failure, and the gate reopens for the next caller.
+
+### Measured after the fix
+
+The same three-entry-point shape - foreground, background refresh and a store write fired together - through one gate, three runs of sixty iterations: **0 of 180**, asserted per iteration rather than summed, because under the gate `peak == 1` is structural.
+
+### Falsified four ways, and one of them survived first
+
+| what was broken | result |
+|---|---|
+| the serialisation barrier removed | **4 tests fail, 71 issues** |
+| joiners handed the in-flight pass instead of a follow-up | **2 tests fail, 15 issues** - the freshness guarantee is what breaks |
+| the cancellation refcount inverted to cancel on the first waiter | **1 test fails** - the shared pass dies |
+| the queued slot never cleared after promotion | **SURVIVED, then caught** |
+
+The fourth mutant passed every test in the suite while answering every caller after a coalesced episode with the stale follow-up outcome forever.
+The suite gained the assertion that a caller arriving after the episode gets a fresh pass, the mutant now fails it (2 issues), and the test's comment records why the assertion exists.
+
+### The log surface, stated against N4-8
+
+The gate emits two new `scheduling` notice lines - `pass deferred behind in-flight pass` and `pass coalesced into queued pass` - so a coalescing decision at the seam is visible where the coordinator's own gate leaves none.
+The per-caller `pass begin` / `pass end` lines from the trigger-tagged wrapper still surround every call, which means a begin/end pair can now bracket a SHARED pass: two callers' pairs may describe one execution of the scheduler, distinguishable by the gate's own lines between them.
+N4-8 itself - the coordinator's gate swallowing coalesced triggers' lines - is neither fixed nor worsened here.
+
+### Cost and surface, stated as the standing rules require
+
+- Eight host tests and three simulator-hosted integration tests; **no `OSLogStore` reader added** - the count stays ten.
+- The gate exposes four internal test probes read through `@testable` (the R4-2 precedent), so the deterministic tests await a state instead of sleeping; production reads none of them.
+- `OttoUITests` now declares the `OttoStores` dependency it uses; no new package, product or external dependency.
+- Host suite 209 -> 217; simulator OttoUITests 53 -> 56; no test modified, skipped or weakened - the coordinator's nine R4-2/F10 tests run byte-identical.
+
+### What this deliberately does not do
+
+- It does not route `handleBackgroundRefresh` through `rescheduleSoon`: the background path keeps the completion latch and the expiration race it owns, and gains serialisation from the seam below instead.
+- It does not change `NotificationScheduler` internals, the R4-2 nil-publish rule, or the coordinator's trigger coalescing.
+- It does not touch N4-8, and it leaves the store path's `.stateChange` trigger tagging exactly where it was.
 
 ---
 
