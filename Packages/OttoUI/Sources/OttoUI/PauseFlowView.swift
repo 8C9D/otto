@@ -150,18 +150,40 @@ struct PauseSectionView: View {
 }
 
 /// Detail's usage block (spec §7.3): the fact zombie detection counts from.
-/// Only shown while something is actually billing - recording use of a
-/// cancelled subscription would feed a report that no longer includes it.
+/// Shown while something is actually billing - recording use of a cancelled
+/// subscription would feed a report that no longer includes it - and ALSO
+/// whenever the stored `lastUsedDate` is detected-implausible, whatever the
+/// status (round 5, item 4 / N4-16): the button below is this field's only
+/// writer, so gating it on the active state left a pre-F1 corrupt day with no
+/// in-app repair short of a status change the user did not want.
 struct UsageSectionView: View {
     let detail: SubscriptionDetail
     /// The host screen's run-and-refresh wrapper, so failures surface in one place.
     let perform: (@escaping () async throws -> Void) -> Void
     @Environment(AppModel.self) private var model
 
+    /// The visibility rule, extracted so a host test can pin the whole
+    /// status-by-plausibility matrix without a rendering pass.
+    static func isShown(for subscription: Subscription, asOf today: CalendarDay) -> Bool {
+        subscription.effectiveStatus(asOf: today) == .active
+            || needsLastUsedDateRepair(subscription, asOf: today)
+    }
+
+    /// N4-16: a detected-implausible `lastUsedDate` gets the repair offered on
+    /// ANY status. `nil` is not corruption - the check-in counts from the
+    /// anchor instead - and a plausible day off the active state stays hidden,
+    /// which is §7.3's rule unchanged.
+    static func needsLastUsedDateRepair(
+        _ subscription: Subscription, asOf today: CalendarDay
+    ) -> Bool {
+        guard let lastUsed = subscription.lastUsedDate else { return false }
+        return !lastUsed.isPlausibleStoredDay(asOf: today)
+    }
+
     @ViewBuilder
     var body: some View {
         let subscription = detail.subscription
-        if subscription.effectiveStatus(asOf: model.subscriptionsStore.today) == .active {
+        if Self.isShown(for: subscription, asOf: model.subscriptionsStore.today) {
             Section(String(localized: "Usage")) {
                 LabeledContent(
                     String(localized: "Last recorded use"),

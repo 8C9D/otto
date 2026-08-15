@@ -310,3 +310,82 @@ struct PauseFlowTests {
         #expect(paused.trial != nil)
     }
 }
+
+/// N4-16 (round 5, item 4): the model half of the repair's reachability. The
+/// view now offers "I used this today" wherever `lastUsedDate` is
+/// detected-implausible, on any status - which only repairs anything because
+/// `recordUsage` itself imposes no status gate. This suite pins that: a gate
+/// added here later would hollow the view fix out while every rendering test
+/// stays green.
+@Suite("Recording use repairs lastUsedDate on any status (N4-16)")
+struct RecordUsageTests {
+
+    /// What a pre-F1 build stored on a Buddhist device.
+    private func corruptDay() throws -> CalendarDay { try day(2569, 8, 6) }
+
+    @Test("⛔ recordUsage writes today over a corrupt day on paused, trial and cancelled")
+    func writesOnEveryStatus() async throws {
+        let today = try day(2026, 8, 11)
+        let subs = [
+            try makeSubscription(
+                index: 1, status: .paused, cycleStartDay: try day(2026, 8, 6),
+                pausedOn: try day(2026, 8, 1), lastUsedDate: try corruptDay()
+            ),
+            try makeSubscription(
+                index: 2, status: .trial, cycleStartDay: try day(2026, 8, 6),
+                trial: try makeTrialTerm(startDate: try day(2026, 8, 10)),
+                lastUsedDate: try corruptDay()
+            ),
+            try makeSubscription(
+                index: 3, status: .cancelled, cycleStartDay: try day(2026, 8, 6),
+                lastUsedDate: try corruptDay()
+            )
+        ]
+        for subscription in subs {
+            let fixture = SchedulerFixture()
+            try await fixture.subscriptions.seed([subscription])
+
+            try await fixture.flows.recordUsage(
+                subscriptionID: subscription.id, on: today, now: try fixtureNow()
+            )
+
+            let repaired = try #require(
+                try await fixture.subscriptions.subscription(withID: subscription.id)
+            )
+            #expect(repaired.lastUsedDate == today)
+            // The repair changes the stored day and nothing else about the
+            // subscription's standing.
+            #expect(repaired.storedStatus == subscription.storedStatus)
+        }
+    }
+
+    @Test("the repaired subscription plans again once every implausible day is fixed")
+    func repairRestoresScheduling() async throws {
+        // The full arc item 2 and item 4 form together: a corrupt
+        // lastUsedDate silences the subscription (item 2's guard), the repair
+        // writes today (this item), and the next pass schedules again.
+        let fixture = SchedulerFixture()
+        let today = try day(2026, 8, 11)
+        let subscription = try makeSubscription(
+            index: 4, cycleStartDay: try day(2026, 8, 6), lastUsedDate: try corruptDay()
+        )
+        try await fixture.subscriptions.seed([subscription])
+
+        let silenced = try await fixture.scheduler.reschedule(
+            now: try fixtureNow(), today: today, timeZone: torontoZone
+        )
+        #expect(silenced.scheduledCount == 0)
+        #expect(silenced.ledgerFailures == [subscription.id])
+
+        try await fixture.flows.recordUsage(
+            subscriptionID: subscription.id, on: today, now: try fixtureNow()
+        )
+        let repaired = try await fixture.scheduler.reschedule(
+            now: try fixtureNow(), today: today, timeZone: torontoZone
+        )
+
+        #expect(repaired.ledgerFailures.isEmpty)
+        #expect(repaired.scheduledCount > 0)
+        #expect(repaired.canClaimCoverage)
+    }
+}
