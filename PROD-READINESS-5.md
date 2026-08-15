@@ -42,9 +42,9 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 | # | id | what | terminal state |
 |---|---|---|---|
 | 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED** - stage 1; one REJECT cycle (`reviews-5/REVIEW-1.md`), remediated, re-review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-2.md`) |
-| 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | open |
+| 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | **RESOLVED pending review** - stage 2; the decision was taken by the user (stop scheduling), and the stop is measured per family |
 | 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | open |
-| 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | open |
+| 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | **RESOLVED pending review** - stage 2; the section shows wherever the stored day is implausible, the write is status-free, and the copy question is flagged |
 | 5 | **N4-1** | The export button's action is verified by nothing | open |
 | 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | open |
 | 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | open |
@@ -243,6 +243,93 @@ The suite-scoped simulator dimension finding 2 added: **18 of 18 green** at this
 
 ---
 
+## ITEM 2 - N4-2, detected corruption stops scheduling
+
+**RESOLVED pending review**, stage 2 (run jointly with item 4; one range).
+The adversarial review of this stage's range has not happened yet; nothing in this section is final until it has.
+
+**The decision this item was waiting on has been taken - by the user, not by this run**: a detected-implausible anchor stops scheduling entirely (option 2 of the five presented), paired with item 4 so the repair is reachable, because stopping without a repair path strands the user.
+
+### Reconfirmed at the stage start by executing the defect
+
+Per-calendar sweep through the real scheduler at `bb0c0f9`, one corrupt anchor per detected calendar family (the day a pre-F1 build stored for Gregorian 2026-08-06), before any edit:
+
+| family | stored year | scheduled | wrong-day fire dates |
+|---|---|---|---|
+| buddhist (+543) | 2569 | 0 | - |
+| hebrew (+3760) | 5786 | 0 | - |
+| japanese (-2018) | 8 | **4** | 9-3, 9-16, 10-3, 11-3 |
+| chinese (-1983) | 43 | **4** | 9-3, 9-19, 10-3, 11-3 |
+| coptic (-284) | 1742 | **4** | 9-3, 9-16, 10-3, 11-3 |
+| islamic (-578) | 1448 | **4** | 9-3, 9-5, 10-3, 11-3 |
+| persian (-621) | 1405 | **4** | 9-3, 10-3, 10-19, 11-3 |
+| minguo (-1911) | 115 | **4** | 9-3, 10-3, 10-6, 11-3 |
+| indian (-78) | 1948 | **4** | 9-3, 9-16, 10-3, 11-3 |
+
+Healthy control: 4 on the right days (9-3, 10-3, 11-3, 11-4).
+So the round-4 ledger's "Japanese, Minguo, Islamic and Persian" understated the set: **all seven behind-offset families** scheduled four wrong-day reminders, coptic and chinese included.
+
+Two further shapes the sweep measured that no ledger entry had named:
+
+- A corrupt `lastUsedDate` beside a healthy anchor: Buddhist-written planned **3** (check-in suppressed), Indian-written planned **4 with a wrong-day check-in** (9-23) - a partially-wrong plan indistinguishable from a healthy one.
+- **A behind-offset `pauseEndsOn` silently un-paused the subscription**: effective-status derivation read the 1948 resume date as long past, derived `.active`, and planned four rungs identical to a healthy control's. The user paused it; the corruption resumed it.
+
+### What changed
+
+One guard, at the top of the domain planner (`ReminderSchedule.swift`), on the same `implausibleStoredDays(asOf:)` predicate the ledger loop already skips on: any detected-implausible stored day means the subscription plans **nothing**.
+The scheduler is untouched - its own doctrine says decisions belong in the domain, and the ledger half of this rule (skip materialization, record the failure, log the days) has lived there since round 3.
+
+Measured after, same sweep: **0 scheduled / 0 pending for every detected family and every corrupt field, `ledgerFailures` names the subscription, `canClaimCoverage` is false**; the healthy control is untouched at 4.
+
+### Disclosure
+
+- The `SKIPPED reason=implausibleStoredDays days=[...]` log line is emitted by the untouched ledger loop and still names the exact days; `SchedulingLogTests` guards it as before. No log surface changed and no `OSLogStore` reader was added.
+- `docs/next-wave.md` is rewritten where this change falsified it (`22f2a72`): all nine detected families now send nothing, **silence plus the coverage-gap card is the corruption signal**, and Ethiopic - undetectable, so unreachable by this policy - still sends wrong-day reminders with no card. The claim "reminders do arrive - on the wrong days" is gone because it is no longer true.
+- The gap card now appears with zero reminders on every detected calendar, which makes its presence more consistent than before; its COPY is still item 9's business (N3-5) and is not touched here. This change does not make the copy more false: the card's trigger set is unchanged.
+
+### Tests
+
+- `ImplausibleDayPlanningTests` (OttoDomain, host, counted by `verify.sh`): every detected family plans nothing; corrupt `lastUsedDate` silences the whole subscription; the corrupt-resume pause plans nothing; and the boundary cases keep planning - a day exactly 70 years back, and an Ethiopic-written day, because the guard must not reach past the rule it applies.
+- `ImplausibleStoredDayTests` (scheduler level): a behind-offset anchor leaves the notification center empty; the existing Indian test's `scheduledCount == 4` expectation became `== 0` **as the decided policy change, stated in the test comment** - the old comment said "this does NOT stop the wrong-day reminders", and stopping them is what this item is.
+- `RecordUsageTests.repairRestoresScheduling`: the full arc - corrupt day silences, repair writes, next pass schedules again.
+
+### What this deliberately does not do
+
+- It does not repair, reinterpret or cross-check the corrupt day (round 3's reasoning stands; the `createdAt` detector remains declined per item 3 of round 4).
+- It does not reach Ethiopic: undetectable stays undetected, wrong-day reminders and all - the recorded residual (R0-7).
+- It does not decide what the §5.2a effective-status derivation should do with an implausible `pauseEndsOn` outside planning (list rows, detail screens and the §7.2 report still derive from it); that surface is disclosed here and carried as **N5-3**.
+
+## ITEM 4 - N4-16, the lastUsedDate repair is reachable
+
+**RESOLVED pending review**, stage 2 (run jointly with item 2; one range).
+
+### Reconfirmed at the stage start by executing the defect
+
+The only control writing `lastUsedDate` is "I used this today", inside `if subscription.effectiveStatus(asOf:) == .active` in `UsageSectionView` (`PauseFlowView.swift`, the ledger's `:163` now at `:164` after round 4).
+Executed rather than read: the new rendering test, run against the unfixed view on the simulator, captures byte-identical windows for a corrupt-paused and a healthy-paused subscription - the section draws for neither - and `recordUsage` itself (`SubscriptionFlowService`) has **no status gate**, so the unreachability was entirely the view's.
+
+### The affordance decision
+
+The minimal honest one: the existing Usage section, with its existing button and copy, now also appears when the stored `lastUsedDate` is detected-implausible - on **any** status - via an extracted, tested visibility rule (`UsageSectionView.isShown(for:asOf:)`).
+Writing *today* is a correct repair for this field on every status, because the button's semantics ("I used this on this day") are exactly what the field records and today is the one day the user can truthfully assert from the screen.
+`nil` is not corruption and offers no repair; a plausible day off the active state stays hidden - §7.3's rule is otherwise unchanged.
+**Flagged for review rather than decided here**: whether the button deserves repair-specific wording on a non-active subscription ("I used this today" on a cancelled subscription is a semantically odd sentence for a correct action). No new user-facing copy was added; re-wording is new copy and this stage did not grant itself that exception.
+
+### Tests, layered the way this rig can falsify them
+
+- `VisibilityRuleTests` (host, deterministic, counted everywhere): the full status-by-plausibility matrix on the extracted rule, plus the boundary case pinning the rule to `isPlausibleStoredDay` rather than a private threshold.
+- `RecordUsageTests` (host): `recordUsage` writes today over a corrupt day on paused, trial and cancelled, changing nothing else - the model half, pinned so a status gate added there later cannot silently hollow out the view fix.
+- `UsageRepairRenderingTests` (simulator): the corrupt-paused window must render and must differ pixel-for-pixel from the healthy-paused control (the `layer.render` floor, `EmptyStateTests`' method after `drawHierarchy` captured blank), with the label and activation halves asserted through the accessibility tree where a client exists.
+  **Falsified before trusting**: with the view gate reverted to active-only, the pixel assertion fails on byte-identical 34,674-byte windows; restored, it passes.
+- **Cost, stated**: this rig's simulator attaches no accessibility client (the standing condition behind `EmptyStateTests`' 7 known issues), so the label/activation halves record **2 new known issues** here and assert for real only where a client exists. The simulator dimension's expected figure moves from "7 known issues" to "9 known issues"; the deterministic guards above are the ones that bite everywhere.
+
+### What this deliberately does not do
+
+- No new flow, screen, or copy; no UI-test target (still item 5's question).
+- The other unreachable repair the round-4 ledger names - `pauseEndsOn` on an already-paused subscription has no picker (`docs/next-wave.md` row 3's resume-and-re-pause workaround) - is out of this item's scope; it is N4-16's sibling, not N4-16.
+
+---
+
 ## STANDING RULES - carried forward, binding on every stage of this round
 
 - **Review ranges**: every review range's START is the previous range's HEAD, stated by sha in the review; no commit may fall outside every range (the `aa92ca7` lesson, N3-4).
@@ -264,6 +351,7 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R0** `9e73378..d7cbd37` | `1b352f4` (the merge; parents `cd9778c` and `9e73378` - `cd9778c` is main's CI-workflow commit and enters the tree here), `756b8b1`, `d7cbd37` | **no dedicated adversarial review.** The merge's diff against `9e73378` is nine lines of `.github/workflows/ci.yml`, measured at merge time and re-verified by `reviews-5/BASELINE-5.md`; `756b8b1` and `d7cbd37` are docs-only, and the baseline measured the tree they describe. Declared honestly as reviewed-by-measurement only, and flagged for the round's terminal reconciliation |
 | **R1** `d7cbd37..c26b2a7` | `eb4d2ae`, `c26b2a7` | `reviews-5/REVIEW-1.md` - **REJECT** |
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
+| **R3** `c94dbbd..` the stage-2 head | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), and the ledger commit that is the range's HEAD | **review pending** - items 2 and 4 |
 
 ## NEXT ROUND
 
@@ -277,3 +365,6 @@ Round 4's NEXT ROUND section remains the ledger of record for everything this ro
   M1 and M7 reproduce with counts varying by one across runs (`reviews-5/REVIEW-2.md` finding 2); the stable property is each mutant's failing-test set, which reproduced identically on every run of both hosts.
   Whoever quotes the battery should quote the failing-test sets.
 - `reviews-5/REVIEW-2.md` finding 3 - the contention-shape attribution - is corrected in place under the finding-2 remediation entry above, not carried.
+- **N5-3 (P3) - the §5.2a derivation still reads an implausible `pauseEndsOn` outside planning.**
+  Stage 2 measured a behind-offset resume date silently deriving a paused subscription to `.active`; the planner guard stops the phantom reminders, but list rows, detail screens and the §7.2 report still derive status from the corrupt date, so a subscription the user paused can still DISPLAY as active until the date is repaired.
+  Whether the derivation itself should consult plausibility is a §5.2a design question, not a patch.
