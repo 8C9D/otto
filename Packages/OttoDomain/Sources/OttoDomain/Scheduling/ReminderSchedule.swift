@@ -30,6 +30,26 @@ public func reminderSchedule(
     horizonDays: Int
 ) -> [PlannedReminder] {
     guard horizonDays >= 0 else { return [] }
+
+    // N4-2 (round 5, item 2): a subscription carrying any stored day the
+    // plausibility rule rejects plans NOTHING, by decision. Before this guard,
+    // which wrongness a corrupt day produced depended on which calendar wrote
+    // it: an ahead-offset year (Buddhist, Hebrew) pushed every date past the
+    // horizon and planned zero, a behind-offset year (the other seven detected
+    // calendars) was projected forward into rungs on days that are not the
+    // subscription's dates, and a behind-offset `pauseEndsOn` silently derived
+    // a paused subscription back to active. Measured through the real
+    // scheduler before this guard: four wrong-day reminders for every
+    // behind-offset anchor, and four for the corrupt-resume pause. Now every
+    // DETECTED corruption is uniformly silent, the ledger records the failure
+    // (the pass already skips materialization on this same predicate), Today
+    // shows the coverage gap, and silence plus the gap card is the signal.
+    // Ethiopic stays undetectable (see `plausibleStoredDayYearsBehind`) and
+    // keeps its pre-guard behaviour. The plan does not repair or reinterpret
+    // the day - both would be guesses, and a guess is not acceptable on
+    // billing dates.
+    guard subscription.implausibleStoredDays(asOf: today).isEmpty else { return [] }
+
     let window = today...today.adding(days: horizonDays)
 
     // The planner acts on the EFFECTIVE status (spec §5.2a): a trial whose
