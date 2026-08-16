@@ -144,7 +144,10 @@ struct ExportLegacyImportTests {
         // ids, same updatedAt, tie keeps existing.
         let resolved = try resolveImport(
             current: first, incoming: second, strategy: .merge,
-            at: Date(timeIntervalSinceReferenceDate: 900)
+            // After the file's own stamps: an import cannot honestly happen
+            // before the data it imports was written, and a stamp ahead of the
+            // instant is clamped to it (docs/sync-safety.md).
+            at: Date(timeIntervalSinceReferenceDate: 776_400_000)
         )
         #expect(resolved.snapshot == first)
     }

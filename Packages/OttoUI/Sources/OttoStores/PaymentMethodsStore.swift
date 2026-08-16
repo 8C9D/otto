@@ -44,7 +44,7 @@ public final class PaymentMethodsStore {
             let others = try await repository.paymentMethods()
             for var other in others where other.id != method.id && other.isDefault {
                 other.isDefault = false
-                other.updatedAt = method.updatedAt
+                other.updatedAt = monotonicStamp(method.updatedAt, notBefore: other.updatedAt)
                 try await repository.save(other)
             }
         }

@@ -291,7 +291,7 @@ extension Subscription {
             lastUsedDate: lastUsedDate,
             notes: notes,
             createdAt: createdAt,
-            updatedAt: now,
+            updatedAt: monotonicStamp(now, notBefore: updatedAt),
             deletedAt: deletedAt
         )
     }

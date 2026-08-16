@@ -32,7 +32,7 @@ extension Subscription {
             createdAt: now,
             updatedAt: now
         ))
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -54,7 +54,7 @@ extension Subscription {
         var updated = self
         updated.pauseEpisodes[index] = closed
         updated.storedStatus = .active
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -68,7 +68,7 @@ extension Subscription {
         else { return nil }
         var updated = self
         updated.storedStatus = .cancellationPending
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -82,7 +82,7 @@ extension Subscription {
         guard storedStatus != .archived else { return nil }
         var updated = self
         updated.storedStatus = .archived
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -113,7 +113,7 @@ extension Subscription {
         guard storedStatus == .cancellationPending || storedStatus == .cancelled else { return nil }
         var updated = self
         updated.storedStatus = restoredStatus(from: statusAtStart)
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -170,8 +170,8 @@ extension Subscription {
     public func editedTrial(draft: TrialTerm?, droppedAt now: Date) -> TrialTerm? {
         if let draft { return draft }
         guard editsAsTrial, var dropped = trial else { return trial }
-        dropped.deletedAt = now
-        dropped.updatedAt = now
+        dropped.deletedAt = monotonicStamp(now, notBefore: dropped.createdAt)
+        dropped.updatedAt = monotonicStamp(now, notBefore: dropped.updatedAt)
         return dropped
     }
 }

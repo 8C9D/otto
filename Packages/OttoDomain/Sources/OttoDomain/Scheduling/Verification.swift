@@ -98,7 +98,7 @@ extension CancellationEpisode {
         updated.verifiedAt = now
         updated.endedAt = now
         updated.outcome = .verifiedStopped
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -112,7 +112,7 @@ extension CancellationEpisode {
         var updated = self
         updated.endedAt = now
         updated.outcome = .abandoned
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -129,7 +129,7 @@ extension CancellationEpisode {
         var updated = self
         updated.verificationState = .stillCharging
         updated.verifiedAt = now
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -178,7 +178,7 @@ extension CancellationEpisode {
             updated.verificationState = .needsManualReview
         }
         guard updated != self else { return self }
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 
@@ -198,7 +198,7 @@ extension CancellationEpisode {
         updated.nextChargeDateIfNotCancelled = checkDate
         updated.expectedChargeAmountCents = wouldBeChargeAmountCents(on: checkDate, for: subscription)
         updated.verificationState = .pending
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 }

@@ -191,8 +191,8 @@ extension OttoStore: BillingEventRepository {
             if isExpectedCharge(day: day, amountCents: amount, for: subscription, asOf: today) {
                 continue
             }
-            record.deletedAt = instant
-            record.updatedAt = instant
+            record.deletedAt = monotonicStamp(instant, notBefore: record.createdAt)
+            record.updatedAt = monotonicStamp(instant, notBefore: record.updatedAt)
             mutated += 1
             do {
                 invalidated.append(try record.toDomain())

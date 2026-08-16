@@ -55,14 +55,25 @@ struct ImportResolutionTests {
     func selfImportIsNoOp() throws {
         let current = try fullSnapshot()
         let data = try exportData(from: current, exportedAt: Date(timeIntervalSinceReferenceDate: 0))
+        // An import cannot honestly happen before the data it imports was
+        // written: a stamp ahead of the instant is clamped to it
+        // (docs/sync-safety.md), and this fixture is stamped in 2025 while the
+        // suite's `importInstant` is 2001.
+        let importedAt = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
         let resolved = try resolveImport(
-            current: current, incoming: try importedSnapshot(from: data), strategy: .merge, at: importInstant
+            current: current, incoming: try importedSnapshot(from: data), strategy: .merge, at: importedAt
         )
 
         #expect(resolved.snapshot == current)
         #expect(resolved.summary.subscriptions.added == 0)
         #expect(resolved.summary.subscriptions.updated == 0)
+        #expect(resolved.summary.subscriptions.removed == 0)
+        // The tie the no-op rests on: every live record was compared and kept.
+        #expect(resolved.summary.subscriptions.skippedOlder > 0)
+        // Honest stamps need no repair, and the clamps must not invent one.
+        #expect(resolved.summary.timestampOrderRepairs == 0)
+        #expect(resolved.summary.futureStampClamps == 0)
     }
 
     @Test("replace becomes exactly the file, and counts what it removed")

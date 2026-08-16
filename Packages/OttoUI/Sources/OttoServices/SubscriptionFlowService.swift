@@ -66,7 +66,7 @@ public actor SubscriptionFlowService {
             .min { $0.expectedDate < $1.expectedDate }
         guard var event = target, event.acknowledgedAt == nil else { return }
         event.acknowledgedAt = now
-        event.updatedAt = now
+        event.updatedAt = monotonicStamp(now, notBefore: event.updatedAt)
         try await billingEvents.save(event)
     }
 
@@ -98,7 +98,7 @@ public actor SubscriptionFlowService {
         if var event = conversionRows.first(where: { $0.deletedAt == nil }) {
             if event.acknowledgedAt == nil {
                 event.acknowledgedAt = now
-                event.updatedAt = now
+                event.updatedAt = monotonicStamp(now, notBefore: event.updatedAt)
                 try await billingEvents.save(event)
             }
         } else if !conversionRows.contains(where: { $0.state != .upcoming }) {
@@ -150,7 +150,7 @@ public actor SubscriptionFlowService {
               subscription.lastUsedDate != today
         else { return }
         subscription.lastUsedDate = today
-        subscription.updatedAt = now
+        subscription.updatedAt = monotonicStamp(now, notBefore: subscription.updatedAt)
         try await subscriptions.save(subscription)
     }
 

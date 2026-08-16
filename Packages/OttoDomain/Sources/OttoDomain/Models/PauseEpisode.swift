@@ -96,7 +96,7 @@ public struct PauseEpisode: Identifiable, Hashable, Sendable {
             updated.endedOn = today
         }
         updated.outcome = .resumed
-        updated.updatedAt = now
+        updated.updatedAt = monotonicStamp(now, notBefore: updated.updatedAt)
         return updated
     }
 }

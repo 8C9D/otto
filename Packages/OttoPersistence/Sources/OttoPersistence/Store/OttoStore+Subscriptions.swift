@@ -66,17 +66,28 @@ extension OttoStore: SubscriptionRepository {
         }
         // The tombstone cascades to every child, preserving any earlier tombstone's
         // instant. Hard deletes happen nowhere (spec §3.5).
-        setIfLive(&record.deletedAt, instant)
-        if let trial = record.trial { setIfLive(&trial.deletedAt, instant) }
-        for episode in record.cancellationEpisodes ?? [] { setIfLive(&episode.deletedAt, instant) }
-        for episode in record.pauseEpisodes ?? [] { setIfLive(&episode.deletedAt, instant) }
-        for event in record.billingEvents ?? [] { setIfLive(&event.deletedAt, instant) }
-        for change in record.priceChanges ?? [] { setIfLive(&change.deletedAt, instant) }
+        setIfLive(&record.deletedAt, notBefore: record.createdAt, instant)
+        if let trial = record.trial { setIfLive(&trial.deletedAt, notBefore: trial.createdAt, instant) }
+        for episode in record.cancellationEpisodes ?? [] {
+            setIfLive(&episode.deletedAt, notBefore: episode.createdAt, instant)
+        }
+        for episode in record.pauseEpisodes ?? [] {
+            setIfLive(&episode.deletedAt, notBefore: episode.createdAt, instant)
+        }
+        for event in record.billingEvents ?? [] {
+            setIfLive(&event.deletedAt, notBefore: event.createdAt, instant)
+        }
+        for change in record.priceChanges ?? [] {
+            setIfLive(&change.deletedAt, notBefore: change.createdAt, instant)
+        }
         try modelContext.save()
     }
 
-    private func setIfLive(_ deletedAt: inout Date?, _ instant: Date) {
-        if deletedAt == nil { deletedAt = instant }
+    /// A tombstone never predates the record it closes (docs/sync-safety.md):
+    /// a device clock set back behind the row's own creation would otherwise
+    /// write `deletedAt < createdAt`, the shape found in real exported data.
+    private func setIfLive(_ deletedAt: inout Date?, notBefore createdAt: Date?, _ instant: Date) {
+        if deletedAt == nil { deletedAt = monotonicStamp(instant, notBefore: createdAt) }
     }
 
     private func fetchSubscriptions(_ predicate: Predicate<StoredSubscription>?) throws -> [Subscription] {

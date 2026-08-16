@@ -10,6 +10,10 @@ extension OttoStore: ReconciliationRepository {
     /// §4a read repairs - all by pure domain rules, so every device converges
     /// on the same state without coordination. One save at the end; a failure
     /// anywhere leaves the store as it was.
+    ///
+    /// `instant` stamps what the pass writes, and never regressively: a clock
+    /// set back behind a record's own stamps would otherwise make the merge it
+    /// just performed lose the next one (docs/sync-safety.md).
     public func reconcile(at instant: Date) async throws -> ReconciliationSummary {
         var summary = ReconciliationSummary()
         try mergeDuplicateLedgerRows(at: instant, into: &summary)
@@ -45,13 +49,13 @@ extension OttoStore: ReconciliationRepository {
             if let winnerRecord = recordsByID[merged.winner.id],
                (try? winnerRecord.toDomain()) != merged.winner {
                 var stamped = merged.winner
-                stamped.updatedAt = instant
+                stamped.updatedAt = monotonicStamp(instant, notBefore: stamped.updatedAt)
                 winnerRecord.update(from: stamped)
             }
             for loserID in merged.loserIDs {
                 guard let loser = recordsByID[loserID] else { continue }
-                loser.deletedAt = instant
-                loser.updatedAt = instant
+                loser.deletedAt = monotonicStamp(instant, notBefore: loser.createdAt)
+                loser.updatedAt = monotonicStamp(instant, notBefore: loser.updatedAt)
             }
             summary.mergedLedgerGroups += 1
         }
@@ -83,13 +87,13 @@ extension OttoStore: ReconciliationRepository {
             if let winnerRecord = recordsByID[merged.winner.id],
                (try? winnerRecord.toDomain()) != merged.winner {
                 var stamped = merged.winner
-                stamped.updatedAt = instant
+                stamped.updatedAt = monotonicStamp(instant, notBefore: stamped.updatedAt)
                 winnerRecord.update(from: stamped)
             }
             for loserID in merged.loserIDs {
                 guard let loser = recordsByID[loserID] else { continue }
-                loser.deletedAt = instant
-                loser.updatedAt = instant
+                loser.deletedAt = monotonicStamp(instant, notBefore: loser.createdAt)
+                loser.updatedAt = monotonicStamp(instant, notBefore: loser.updatedAt)
             }
             summary.mergedCancellationGroups += 1
         }

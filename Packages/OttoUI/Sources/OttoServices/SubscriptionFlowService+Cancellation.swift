@@ -89,7 +89,7 @@ extension SubscriptionFlowService {
                 existing.evidenceNotes.append(EvidenceNote(
                     id: UUID(), text: evidenceNote, createdAt: now, updatedAt: now
                 ))
-                existing.updatedAt = now
+                existing.updatedAt = monotonicStamp(now, notBefore: existing.updatedAt)
                 try await cancellations.save(existing)
             }
             return (existing, subscription)

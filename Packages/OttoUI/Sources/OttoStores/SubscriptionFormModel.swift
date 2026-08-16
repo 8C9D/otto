@@ -362,7 +362,7 @@ extension SubscriptionFormModel {
             lastUsedDate: original?.lastUsedDate,
             notes: nonEmpty(notes),
             createdAt: original?.createdAt ?? now,
-            updatedAt: now,
+            updatedAt: monotonicStamp(now, notBefore: original?.updatedAt),
             deletedAt: original?.deletedAt
         )
     }

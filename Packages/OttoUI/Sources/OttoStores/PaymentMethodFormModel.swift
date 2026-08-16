@@ -93,7 +93,7 @@ public final class PaymentMethodFormModel {
             expiryYear: expiryYear,
             isDefault: isDefault,
             createdAt: original?.createdAt ?? now,
-            updatedAt: now
+            updatedAt: monotonicStamp(now, notBefore: original?.updatedAt)
         )
     }
 }

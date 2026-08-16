@@ -34,7 +34,8 @@ extension OttoStore: PaymentMethodRepository {
             throw RepositoryError.paymentMethodNotFound(id)
         }
         if record.deletedAt == nil {
-            record.deletedAt = instant
+            // Never before the record's own creation (docs/sync-safety.md).
+            record.deletedAt = monotonicStamp(instant, notBefore: record.createdAt)
         }
         try modelContext.save()
     }

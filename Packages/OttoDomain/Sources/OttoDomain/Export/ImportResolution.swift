@@ -55,6 +55,19 @@ public struct ImportSummary: Hashable, Sendable {
     public var cancellationEpisodes = ImportCounts()
     public var priceChanges = ImportCounts()
 
+    /// Records - either side's, embedded children included - that arrived with
+    /// `updatedAt` or `deletedAt` BEFORE their own `createdAt`, the shape a
+    /// set-back device clock writes (docs/sync-safety.md), raised to
+    /// `createdAt` before anything compared them. Counted rather than silently
+    /// merged on: a merge that decided on repaired stamps must be able to say
+    /// so.
+    public var timestampOrderRepairs = 0
+    /// Records carrying a stamp AHEAD of the import instant, clamped to it. A
+    /// future stamp is sticky under last-write-wins - it beats every honest
+    /// edit until real time catches up - so the import defuses it and counts
+    /// it.
+    public var futureStampClamps = 0
+
     public init() {}
 }
 
@@ -67,9 +80,10 @@ public struct ResolvedImport: Hashable, Sendable {
 
 /// Resolves an imported snapshot against the current database into the exact
 /// state to persist. Every decision is here and testable; the store only
-/// applies the result. `instant` stamps only the audit fields of records the
-/// §4a rival-cancellation merge writes - every choice of which record wins is
-/// a pure function of the record data.
+/// applies the result. `instant` stamps the audit fields of records the §4a
+/// rival-cancellation merge writes, and caps the stamps an import will merge on
+/// (docs/sync-safety.md) - every choice of which record wins is a pure function
+/// of the record data.
 ///
 /// Watermarks: neither the file nor the snapshot carries one (spec §5.3, Wave
 /// 6B-Prep: the watermark lives only in the device store). A merge leaves this
@@ -84,6 +98,16 @@ public func resolveImport(
 ) throws -> ResolvedImport {
     var summary = ImportSummary()
     var resolved = OttoDataSnapshot()
+    // Both sides, before any rule compares them: the merge reads stamps as
+    // causal order and the device clock does not supply one
+    // (docs/sync-safety.md). The order repair is a pure function of the record,
+    // so every device reaches the same answer without coordination; only the
+    // future clamp uses `instant`, because an import IS a write and a
+    // write-time defence may use the write instant.
+    var current = current
+    var incoming = incoming
+    repairStamps(in: &current, notAfter: instant, into: &summary)
+    repairStamps(in: &incoming, notAfter: instant, into: &summary)
 
     switch strategy {
     case .replace:
@@ -122,6 +146,100 @@ public func resolveImport(
     try validate(resolved)
     normalizeSingleDefaultPaymentMethod(in: &resolved)
     return ResolvedImport(snapshot: resolved, summary: summary)
+}
+
+// MARK: - Stamp repair (docs/sync-safety.md)
+
+/// The audit stamps every record carries - the ones the merge rules read as
+/// causal order, and therefore the ones an import repairs before reading them.
+private protocol StampedRecord {
+    var createdAt: Date { get set }
+    var updatedAt: Date { get set }
+    var deletedAt: Date? { get set }
+}
+
+extension Subscription: StampedRecord {}
+extension TrialTerm: StampedRecord {}
+extension PauseEpisode: StampedRecord {}
+extension PaymentMethod: StampedRecord {}
+extension BillingEvent: StampedRecord {}
+extension CancellationEpisode: StampedRecord {}
+extension EvidenceNote: StampedRecord {}
+extension PriceChange: StampedRecord {}
+
+/// Every record on one side, embedded children included: a subscription's trial
+/// and pause episodes and an episode's evidence notes travel inside their
+/// parent but carry stamps of their own, and a future `createdAt` on a pause
+/// episode is a clock value the §4a read repair would promote into a calendar
+/// day.
+private func repairStamps(
+    in snapshot: inout OttoDataSnapshot, notAfter instant: Date, into summary: inout ImportSummary
+) {
+    for index in snapshot.subscriptions.indices {
+        repairStamps(of: &snapshot.subscriptions[index], notAfter: instant, into: &summary)
+        if var trial = snapshot.subscriptions[index].trial {
+            repairStamps(of: &trial, notAfter: instant, into: &summary)
+            snapshot.subscriptions[index].trial = trial
+        }
+        for child in snapshot.subscriptions[index].pauseEpisodes.indices {
+            repairStamps(of: &snapshot.subscriptions[index].pauseEpisodes[child], notAfter: instant, into: &summary)
+        }
+    }
+    for index in snapshot.paymentMethods.indices {
+        repairStamps(of: &snapshot.paymentMethods[index], notAfter: instant, into: &summary)
+    }
+    for index in snapshot.billingEvents.indices {
+        repairStamps(of: &snapshot.billingEvents[index], notAfter: instant, into: &summary)
+    }
+    for index in snapshot.cancellationEpisodes.indices {
+        repairStamps(of: &snapshot.cancellationEpisodes[index], notAfter: instant, into: &summary)
+        for child in snapshot.cancellationEpisodes[index].evidenceNotes.indices {
+            repairStamps(
+                of: &snapshot.cancellationEpisodes[index].evidenceNotes[child], notAfter: instant, into: &summary
+            )
+        }
+    }
+    for index in snapshot.priceChanges.indices {
+        repairStamps(of: &snapshot.priceChanges[index], notAfter: instant, into: &summary)
+    }
+}
+
+/// One record's two repairs, each counting the record once.
+///
+/// Order first: a stamp before its own `createdAt` is raised TO `createdAt`,
+/// never the other way round - `createdAt` is the stamp the ledger merge orders
+/// on, and moving it would rewrite which twin counts as the original. Then the
+/// future clamp, which lowers whatever sits ahead of the import instant; a
+/// future `createdAt` therefore ends up carrying its raised siblings down with
+/// it, and all three land on `instant` together.
+private func repairStamps<Record: StampedRecord>(
+    of record: inout Record, notAfter instant: Date, into summary: inout ImportSummary
+) {
+    var repaired = false
+    if record.updatedAt < record.createdAt {
+        record.updatedAt = record.createdAt
+        repaired = true
+    }
+    if let deleted = record.deletedAt, deleted < record.createdAt {
+        record.deletedAt = record.createdAt
+        repaired = true
+    }
+    if repaired { summary.timestampOrderRepairs += 1 }
+
+    var clamped = false
+    if record.createdAt > instant {
+        record.createdAt = instant
+        clamped = true
+    }
+    if record.updatedAt > instant {
+        record.updatedAt = instant
+        clamped = true
+    }
+    if let deleted = record.deletedAt, deleted > instant {
+        record.deletedAt = instant
+        clamped = true
+    }
+    if clamped { summary.futureStampClamps += 1 }
 }
 
 // MARK: - Record identity
@@ -222,7 +340,7 @@ private func resolveSingleOpenCancellation(
         if let index = snapshot.cancellationEpisodes.firstIndex(where: { $0.id == merged.winner.id }),
            snapshot.cancellationEpisodes[index] != merged.winner {
             var stamped = merged.winner
-            stamped.updatedAt = instant
+            stamped.updatedAt = monotonicStamp(instant, notBefore: stamped.updatedAt)
             snapshot.cancellationEpisodes[index] = stamped
             counts.updated += 1
         }
@@ -231,8 +349,8 @@ private func resolveSingleOpenCancellation(
                 continue
             }
             var stamped = loser
-            stamped.deletedAt = instant
-            stamped.updatedAt = instant
+            stamped.deletedAt = monotonicStamp(instant, notBefore: stamped.createdAt)
+            stamped.updatedAt = monotonicStamp(instant, notBefore: stamped.updatedAt)
             snapshot.cancellationEpisodes[index] = stamped
             counts.removed += 1
         }

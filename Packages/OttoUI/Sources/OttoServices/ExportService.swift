@@ -212,7 +212,9 @@ public actor ExportService {
             +\(summary.subscriptions.updated, privacy: .public) \
             events=\(summary.billingEvents.added, privacy: .public)\
             +\(summary.billingEvents.updated, privacy: .public) \
-            removed=\(summary.subscriptions.removed, privacy: .public)
+            removed=\(summary.subscriptions.removed, privacy: .public) \
+            stampOrderRepairs=\(summary.timestampOrderRepairs, privacy: .public) \
+            futureStampClamps=\(summary.futureStampClamps, privacy: .public)
             """)
         return summary
     }

@@ -90,7 +90,7 @@ extension OttoStore: DataTransferRepository {
             record.update(from: value)
         }
         for absent in methods.absent(from: snapshot.paymentMethods.map(\.id)) {
-            tombstone(&absent.deletedAt, at: instant)
+            tombstone(&absent.deletedAt, notBefore: absent.createdAt, at: instant)
         }
         for value in snapshot.billingEvents {
             let record = events.records[value.id] ?? inserted(StoredBillingEvent())
@@ -98,7 +98,7 @@ extension OttoStore: DataTransferRepository {
             record.update(from: value)
         }
         for absent in events.absent(from: snapshot.billingEvents.map(\.id)) {
-            tombstone(&absent.deletedAt, at: instant)
+            tombstone(&absent.deletedAt, notBefore: absent.createdAt, at: instant)
         }
         for value in snapshot.cancellationEpisodes {
             let record = cancellations.records[value.id] ?? inserted(StoredCancellationEpisode())
@@ -107,7 +107,7 @@ extension OttoStore: DataTransferRepository {
             tombstoneAbsentNotes(of: record, missingFrom: value, at: instant)
         }
         for absent in cancellations.absent(from: snapshot.cancellationEpisodes.map(\.id)) {
-            tombstone(&absent.deletedAt, at: instant)
+            tombstone(&absent.deletedAt, notBefore: absent.createdAt, at: instant)
         }
         for value in snapshot.priceChanges {
             let record = changes.records[value.id] ?? inserted(StoredPriceChange())
@@ -115,7 +115,7 @@ extension OttoStore: DataTransferRepository {
             record.update(from: value)
         }
         for absent in changes.absent(from: snapshot.priceChanges.map(\.id)) {
-            tombstone(&absent.deletedAt, at: instant)
+            tombstone(&absent.deletedAt, notBefore: absent.createdAt, at: instant)
         }
         try commitRestore(markingDirty: markingDirty)
     }
@@ -159,12 +159,20 @@ extension OttoStore: DataTransferRepository {
             tombstoneAbsentChildren(of: record, missingFrom: value, at: instant)
         }
         for absent in subscriptions.absent(from: values.map(\.id)) {
-            tombstone(&absent.deletedAt, at: instant)
-            if let trial = absent.trial { tombstone(&trial.deletedAt, at: instant) }
-            for episode in absent.cancellationEpisodes ?? [] { tombstone(&episode.deletedAt, at: instant) }
-            for episode in absent.pauseEpisodes ?? [] { tombstone(&episode.deletedAt, at: instant) }
-            for event in absent.billingEvents ?? [] { tombstone(&event.deletedAt, at: instant) }
-            for change in absent.priceChanges ?? [] { tombstone(&change.deletedAt, at: instant) }
+            tombstone(&absent.deletedAt, notBefore: absent.createdAt, at: instant)
+            if let trial = absent.trial { tombstone(&trial.deletedAt, notBefore: trial.createdAt, at: instant) }
+            for episode in absent.cancellationEpisodes ?? [] {
+                tombstone(&episode.deletedAt, notBefore: episode.createdAt, at: instant)
+            }
+            for episode in absent.pauseEpisodes ?? [] {
+                tombstone(&episode.deletedAt, notBefore: episode.createdAt, at: instant)
+            }
+            for event in absent.billingEvents ?? [] {
+                tombstone(&event.deletedAt, notBefore: event.createdAt, at: instant)
+            }
+            for change in absent.priceChanges ?? [] {
+                tombstone(&change.deletedAt, notBefore: change.createdAt, at: instant)
+            }
         }
         return parents
     }
@@ -216,12 +224,12 @@ extension OttoStore: DataTransferRepository {
         of record: StoredSubscription, missingFrom value: Subscription, at instant: Date
     ) {
         if value.trial == nil, let trial = record.trial {
-            tombstone(&trial.deletedAt, at: instant)
+            tombstone(&trial.deletedAt, notBefore: trial.createdAt, at: instant)
         }
         let carried = Set(value.pauseEpisodes.map(\.id))
         for episode in record.pauseEpisodes ?? []
         where episode.id.map({ !carried.contains($0) }) ?? true {
-            tombstone(&episode.deletedAt, at: instant)
+            tombstone(&episode.deletedAt, notBefore: episode.createdAt, at: instant)
         }
     }
 
@@ -231,12 +239,15 @@ extension OttoStore: DataTransferRepository {
         let carried = Set(value.evidenceNotes.map(\.id))
         for note in record.evidenceNotes ?? []
         where note.id.map({ !carried.contains($0) }) ?? true {
-            tombstone(&note.deletedAt, at: instant)
+            tombstone(&note.deletedAt, notBefore: note.createdAt, at: instant)
         }
     }
 
-    private func tombstone(_ deletedAt: inout Date?, at instant: Date) {
-        if deletedAt == nil { deletedAt = instant }
+    /// A tombstone never predates the record it closes (docs/sync-safety.md):
+    /// a device clock set back behind the row's own creation would otherwise
+    /// write `deletedAt < createdAt`, the shape found in real exported data.
+    private func tombstone(_ deletedAt: inout Date?, notBefore createdAt: Date?, at instant: Date) {
+        if deletedAt == nil { deletedAt = monotonicStamp(instant, notBefore: createdAt) }
     }
 
     private func inserted<Record: PersistentModel>(_ record: Record) -> Record {

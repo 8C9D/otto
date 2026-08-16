@@ -21,7 +21,7 @@ extension SubscriptionFlowService {
         record.evidenceNotes.append(EvidenceNote(
             id: UUID(), text: trimmed, createdAt: now, updatedAt: now
         ))
-        record.updatedAt = now
+        record.updatedAt = monotonicStamp(now, notBefore: record.updatedAt)
         try await cancellations.save(record)
     }
 
@@ -41,13 +41,19 @@ extension SubscriptionFlowService {
         if let trimmed, !trimmed.isEmpty {
             guard record.evidenceNotes[index].text != trimmed else { return }
             record.evidenceNotes[index].text = trimmed
-            record.evidenceNotes[index].updatedAt = now
+            record.evidenceNotes[index].updatedAt = monotonicStamp(
+                now, notBefore: record.evidenceNotes[index].updatedAt
+            )
         } else {
             guard record.evidenceNotes[index].deletedAt == nil else { return }
-            record.evidenceNotes[index].deletedAt = now
-            record.evidenceNotes[index].updatedAt = now
+            record.evidenceNotes[index].deletedAt = monotonicStamp(
+                now, notBefore: record.evidenceNotes[index].createdAt
+            )
+            record.evidenceNotes[index].updatedAt = monotonicStamp(
+                now, notBefore: record.evidenceNotes[index].updatedAt
+            )
         }
-        record.updatedAt = now
+        record.updatedAt = monotonicStamp(now, notBefore: record.updatedAt)
         try await cancellations.save(record)
     }
 }
