@@ -50,7 +50,7 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 | 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), the site census corrected in place |
 | 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | **RESOLVED** - stage 4; review **PASS**, no findings (`reviews-5/REVIEW-5.md`); the harness is 0 / 0 / 0 for the first time since round 2, and the review confirmed it under two locales the stage never ran |
 | 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | **RESOLVED** - stage 4; review **PASS**, no findings (`reviews-5/REVIEW-5.md`); the approved copy verified verbatim against the decision record |
-| 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | open |
+| 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | **RESOLVED pending review** - stage 5; the R6 range |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded).
 There are no others.
@@ -638,6 +638,92 @@ The dependency, named for whoever picks this up: an `OttoUITests` UI-testing bun
 
 ---
 
+## ITEM 10 - N3-6b, `start()` and the delegate have tests
+
+**RESOLVED pending review**, stage 5 (`86afee0`).
+The last open work-list item: the entry points R4-2 could not reach - `start()` and the two delegate methods - are now driven by tests, and the surface no test in this rig can ever reach is stated below as the residual floor rather than pretended away.
+
+### Reconfirmed at the stage start by executing the defect
+
+At `fcd4079`, before any edit, both deletions applied in one tree: the delegate assignment (`UNUserNotificationCenter.current().delegate = self`) deleted from `start()`, AND the `rescheduleSoon(.notificationDelivered)` call deleted from `willPresent`.
+Measured: the full host suite green (232 of 232) and the full simulator suite green (133 / 73 / 67, 10 known issues, `** TEST SUCCEEDED **`); the file was restored byte-identical (`cmp`) before any fix work.
+That is N3-6b executing: the entire delegate installation and a §6.2 trigger were deletable with every suite green.
+
+### The seam decision, against the recorded rule
+
+The governing rule is `PROD-READINESS-3.md` item 4's, restated at `LiveNotificationClient.swift:15-18`: the seam sits at the SYSTEM boundary, because a seam a fake cannot implement tests nothing and a seam above the logic mocks the logic away.
+Two seams, both boundary-shaped:
+
+- **Delegate installation**: `installDelegate(_:)` is a new requirement on the existing `UserNotificationCentering` protocol - one assignment, `center.delegate = delegate` - forwarded by `LiveNotificationClient.installDelegate`, so `start()` routes through the client seam it already holds instead of touching `UNUserNotificationCenter.current()` inline.
+  No new protocol: the assignment is one more call on the same singleton the client already seams, and the coordinator tests already inject a fake center through `LiveNotificationClient(center:)`.
+- **Task registration**: `BackgroundTaskRegistering`, mirroring `BGTaskScheduler.register(forTaskWithIdentifier:using:launchHandler:)` exactly; the `BGTaskScheduler` conformance is an empty extension.
+  It lives in `BackgroundTaskSeams.swift` beside `BackgroundRefreshTask` - a file-length split when the seam pushed `NotificationCoordinator.swift` past the 400-line cap.
+  The launch handler keeps the framework's `(BGTask) -> Void` shape DELIBERATELY: narrowing it to `any BackgroundRefreshTask` would move the `as? BGAppRefreshTask` downcast out of the launch closure and into the conforming extension - the logic-behind-the-seam shape the rule forbids - so the fake records the identifier and queue, captures the handler, and invokes nothing.
+
+The composition root is untouched: both seams default to the live singletons through defaulted-nil parameters (the `LiveNotificationClient(center:)` precedent), `OttoApp.swift` passes nothing and is byte-identical, and registration still happens synchronously inside `start()` before launch finishes - the `OttoApp.swift:79` comment binds.
+
+**The delegate bodies are extracted onto the facts the responses carry**: `notificationWillPresent()` and `notificationResponseReceived(actionIdentifier:notificationIdentifier:)`, internal, main-actor; the `UNNotificationDefaultActionIdentifier -> ""` mapping lives INSIDE the extracted body, so tests reach it; the two `nonisolated` wrappers are unwrap-and-forward only.
+
+### What the tests assert - first coverage on every one of these claims
+
+`NotificationCoordinatorStartTests` (simulator, in the existing OttoUITests target, `.serialized` because `start()` installs observers on the process-global `NotificationCenter.default` and the trigger tests post to it - two live started coordinators would count each other's posts):
+
+- `start()` registers the three §6.4 categories, installs the coordinator ITSELF as the delegate (identity, not a flag), and registers the refresh task exactly once - under the LITERAL `"com.arthurzhang.otto.refresh"` (what must match Info.plist, so corrupting the constant dies too) and on `.main` (the Gate 1/2 isolation-crash decision, now pinned).
+- The timezone-change and significant-time-change observers each run a pass, with `passes == 0` asserted before the post - the two triggers' first tests ever.
+- `notificationWillPresent()` reschedules and returns `[.banner, .sound, .list]`.
+- A plain tap (the system default-action identifier) maps to `""`, publishes `.openDetail` for the identifier's subscription, and reschedules; a real action identifier reaches the handler unmapped, and a `.none` follow-up is not published.
+
+`LiveNotificationClientTests.installDelegateForwards` (host, counted by `verify.sh`): the client forwards the delegate IDENTITY to the center, so an emptied forward cannot survive.
+
+### Falsified - six mutants, three full simulator-suite runs each
+
+Battery discipline as the prior stages': each mutant applied by a script asserting the target text occurs exactly once, the pristine file restored and byte-compared after each, and the full simulator suite green on the restored file (134 / 73 / 75, 10 known issues, `** TEST SUCCEEDED **`).
+These mutants live in `#if os(iOS)` code, so the three runs per mutant are full SIMULATOR-suite runs - the host suite compiles the coordinator to nothing and can kill none of them, which is the void this item existed to close.
+Failing-test sets are the stable property and issue counts samples (N5-2); the counts below exclude the 10 standing known issues, which appeared unchanged on every run.
+
+| # | exact change | failing tests, identical set all three full simulator runs | issues per run (sample) |
+|---|---|---|---|
+| M1 | `client.installDelegate(self)` deleted from `start()` - the reproduction's delegate deletion at its new spelling | "start() installs the coordinator itself as the notification delegate" | 2 / 2 / 2 |
+| M2 | the registration identifier corrupted (`Self.refreshTaskIdentifier + ".x"`) | "start() registers the refresh task under the permitted identifier, on the main queue" | 1 / 1 / 1 |
+| M3 | the default-action mapping inverted (`==` to `!=` in `notificationResponseReceived`) | "a real action identifier reaches the handler unmapped" | 1 / 1 / 1 |
+| M4 | `rescheduleSoon(.notificationAction)` deleted from `notificationResponseReceived` | "a plain tap maps the default action identifier to \"\", opens the detail, and reschedules", "a real action identifier reaches the handler unmapped" | 2 / 2 / 2 |
+| M5 | `rescheduleSoon(.notificationDelivered)` deleted from `notificationWillPresent` - the reproduction's willPresent deletion, at the line's new home | "willPresent's body reschedules and keeps the banner" | 1 / 1 / 1 |
+| M6 | the timezone observer's body emptied (the `rescheduleSoon(.timeZoneChange)` call dropped) | "a system timezone change runs a pass" | 1 / 1 / 1 |
+
+Both stage-start reproduction deletions now fail: M1 is the delegate deletion verbatim and M5 the willPresent deletion.
+M3 kills the real-action test and NOT the plain-tap test, stated so nobody reads the pair wrong: under the inverted mapping the unmapped default identifier still routes to `.openDetail` (an unknown action is treated as a tap), so inversion is behaviourally invisible on the default side and observable only on the real-action side - which is why the test pair exists.
+
+### What this deliberately does not do - the residual floor
+
+- **The launch closure body stays unreached** (`NotificationCoordinator.swift:88-93` at `86afee0`: the `as? BGAppRefreshTask` downcast, the rejection branch, and the dispatch into `handleBackgroundRefresh`): the captured handler takes the framework's `BGTask`, which has no public initializer, so no test can invoke it - the price of keeping the downcast on the tested side of the seam instead of mocking it away.
+  `handleBackgroundRefresh` itself remains covered through the `BackgroundRefreshTask` seam, as since R4-2.
+- **The two `nonisolated` wrappers stay unreached** (`:327-332` and `:349-357`): `UNNotification` and `UNNotificationResponse` have no public initializers.
+  Each now contains only property reads and one forward.
+- **The observers' trigger TAGS are not pinned**: `.timeZoneChange` and `.significantTimeChange` reach only the trigger-tagged log wrapper, which the seam's three-parameter requirement never shows a spy, and OttoUITests opens no `OSLogStore` query (an eleventh reader is forbidden) - so a mutant swapping the two enum cases changes only a log tag and survives.
+  The same holds for the `registered id=... accepted=` notice line's content.
+- `OttoApp`'s own `coordinator.start()` call remains composition-root code no test executes - the same pre-existing shape as ITEM 9's call-site note, neither widened nor narrowed.
+
+### Cost and surface
+
+- No `OSLogStore` reader added - the count stays ten; no new package, product, target or external dependency; the simulator tests live in the existing OttoUITests target.
+- `UserNotificationCentering` gained one requirement; the two existing fakes implement it mechanically - `StubCenter` one no-op line, `FakeUserNotificationCenter` a recording - and no behavioural assertion in any existing test changed.
+- The nine `NotificationCoordinatorTests` and three `SchedulingGateIntegrationTests` run byte-identical: both new initializer parameters are defaulted, so no constructor call site moved.
+- Production files: `NotificationCoordinator.swift` (seams consumed, bodies extracted), `LiveNotificationClient.swift` (+`installDelegate`), `BackgroundTaskSeams.swift` (new, the split); `OttoApp.swift` unchanged.
+- Host tests 232 to 233 (+`installDelegateForwards`); simulator 133 / 73 / 67 to 134 / 73 / 75 (+1 the new host test compiling for the simulator too, +8 the start suite); known issues stay 10.
+- Lint files 232 to 234: `BackgroundTaskSeams.swift` and `NotificationCoordinatorStartTests.swift`.
+
+### Measured at the stage-5 head (`86afee0` plus this ledger commit) - all five
+
+| measurement | at the R5 head (`ff554cf`) | at the stage-5 head | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 265 / 127 / 232 = 624 | exit 0, **265 / 127 / 233 = 625** | +1 OttoUI host - `installDelegateForwards` |
+| `swiftlint --strict` | clean, 232 files | **clean, 234 files** | +2 files, the split and the new test file |
+| simulator suite | 133 / 73 / 67, 10 known issues, `** TEST SUCCEEDED **` | **134 / 73 / 75, 10 known issues, `** TEST SUCCEEDED **`** | +1 / 0 / +8; no new known issue - every new assertion bites on this rig |
+| non-Gregorian harness | 0 / 0 / 0, 232 tests each | **0 / 0 / 0 - exit 0 under all three locales, 233 tests each** | unchanged, the stage-4 baseline held |
+| flake, twelve full host runs | 12 of 12 (232 tests per run) | **12 of 12** (233 tests per run) | unchanged |
+
+---
+
 ## STANDING RULES - carried forward, binding on every stage of this round
 
 - **Review ranges**: every review range's START is the previous range's HEAD, stated by sha in the review; no commit may fall outside every range (the `aa92ca7` lesson, N3-4).
@@ -662,7 +748,7 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
 | **R4** `cdb509e..7b6df8c` | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), `7b6df8c` (the stage's ledger sections, the range's HEAD) | **PASS-WITH-FINDINGS** at `3c47505` (`reviews-5/REVIEW-4.md`) |
 | **R5** `7b6df8c..ff554cf` | `3c47505` (the review artifact) and `b99d8dc` (the stamping commit, R4's record-only tail), then stage 4: `1f6b2f7` (item 8), `d8ac728` (item 9), `4e23288` (the REVIEW-4 finding-2 strengthening), `ff554cf` (the stage's ledger sections, the range's HEAD) | **PASS** at `07c00b2` (`reviews-5/REVIEW-5.md`), no findings |
-| **R6** `ff554cf..` the stage-5 head | `07c00b2` (the review artifact) and the stamping commit that carries this row (R5's record-only tail), then stage 5: item 10, and the ledger commit that is the range's HEAD | **review pending** |
+| **R6** `ff554cf..` the stage-5 head | `07c00b2` (the review artifact) and `fcd4079` (the stamping commit, R5's record-only tail), then stage 5: `86afee0` (item 10), and the ledger commit that carries this row, which is the range's HEAD | **review pending** |
 
 ## NEXT ROUND
 
