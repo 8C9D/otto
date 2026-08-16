@@ -43,11 +43,11 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 |---|---|---|---|
 | 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED** - stage 1; one REJECT cycle (`reviews-5/REVIEW-1.md`), remediated, re-review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-2.md`) |
 | 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | **RESOLVED** - stage 2; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-3.md`), three P3s: one corrected in place, two carried (N5-4, N5-5) |
-| 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | open |
+| 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | **RESOLVED pending review** - stage 3 |
 | 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | **RESOLVED** - stage 2; reviewed with item 2 (**PASS-WITH-FINDINGS**, `reviews-5/REVIEW-3.md`); the recorded falsification reproduced to the byte, and the flagged wording question's deferral was endorsed |
 | 5 | **N4-1** | The export button's action is verified by nothing | open |
-| 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | open |
-| 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | open |
+| 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | **RESOLVED pending review** - stage 3 |
+| 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED pending review** - stage 3 |
 | 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | open |
 | 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | open |
 | 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | open |
@@ -345,6 +345,136 @@ Writing *today* is a correct repair for this field on every status, because the 
 
 ---
 
+## ITEM 3 - N2-4 reopened, every failed rung is named
+
+**RESOLVED pending review**, stage 3 (run with items 6 and 7; one range, R4).
+
+### Reconfirmed at the stage start by executing the defect
+
+A temporary probe test at `e93dabb`, before any edit: 64 subscriptions through the real `SchedulerFixture`, every add refused, one pass, one read of the process's own `scheduling` category.
+Measured: **64 rungs failed, the single `reconcile failed=[...]` entry pinned at 1037 characters and named 15 of 64**, tail cut mid-identifier (`... 00000000-0<…>]`), each failed-rung token exactly 66 bytes.
+The round-4 numbers (`reviews-4/REVIEW-AA92CA7.md`: ~1037, 15-16 named at the ceiling) reproduce at this stage's start; the probe was deleted after recording.
+
+### What changed
+
+`reconcile` now emits **one `reconcile failed <id>=ErrorType` error entry per failed rung** - the shape `OttoStore.watermarkDay`'s unreadable-row lines and the ledger loop's SKIPPED lines already use - so no per-entry budget can reach a tail at any scale the 64-slot ceiling allows.
+`OttoLog.failures(_:)`, the joined-list renderer, is replaced by `OttoLog.failedRung(_:_:)`, which renders one pair.
+
+**The aggregate entry is dropped, not kept alongside.**
+Recorded reason: a knowingly-truncating list that reads as complete is precisely the defect class this item reopens - the code's own acceptance line says a rung that fails and is then not named is the exact loss RF-3 exists to repair - and keeping a second, lying copy of the record invites the next reader to quote it.
+The diff line's `failedCount=` keeps the total, and identifiers-never-counts (DECISIONS.md) is intact: every name still reaches the log, one entry each.
+
+### Measured after
+
+The same 64-rung shape: **64 of 64 failed rungs named**, each on its own complete 83-character entry, asserted byte-for-byte by the permanent test below on every suite run.
+
+### Tests, and what moved to follow the emission shape
+
+- `everyFailedRungIsNamedAtTheCeiling` replaces `theEmittedReconcileLineCarriesReasons` at the same already-open `OSLogStore` query: 64 subscriptions the test owns (indices 9_100-9_163, used nowhere else in the package), the expected set calibrated from the fake's own `addCalls` (asserted `== 64`, the device ceiling), and for every attempted rung one byte-for-byte entry `reconcile failed <id>=AddRefused` - a prefix or contains match could still be satisfied by a truncated tail.
+- `failuresCarryReasonsPerRung` became `failedRungCarriesItsReason`: the per-rung-reason and type-never-value assertions survive on the new renderer, the joined-and-sorted rendering it also asserted no longer exists, and the changed test's comment says what it followed.
+- `noFailures` (`OttoLog.failures([]) == "-"`) is **deleted with the helper**: the dash was the empty aggregate's rendering, and nothing renders an empty list any more.
+  The behavioural half - a clean pass emits no failure entry and reports `failedCount=0` - is asserted at emission level inside item 6's extension of the skip test, pinned to identifiers that test owns.
+  This is the stage's one test-count change: the OttoUI host suite goes 228 -> 227, and every dimension figure below moves by exactly that one.
+
+### Falsified
+
+Battery discipline as ITEM 1's: each mutant applied by a script asserting the target text occurs exactly once, pristine file restored and byte-compared after each, failing-test set quoted as the stable property and issue counts as samples (N5-2).
+
+| # | exact change | failing tests, identical set all three full host runs | issues per run (sample) |
+|---|---|---|---|
+| M1 | the per-rung loop replaced by the round-2 aggregate - sorted join, one `reconcile failed=[...]` entry | `everyFailedRungIsNamedAtTheCeiling` | 64 / 64 / 64 |
+| M2 | `for failure in failures` capped to `failures.prefix(15)` | `everyFailedRungIsNamedAtTheCeiling` | 49 / 49 / 49 |
+
+### What this deliberately does not do
+
+- It does not change what `reconcile` throws (still the first failure only) or any field of the diff line.
+- It does not touch the emission level or content of any other line; N4-18's territory is untouched.
+
+### Cost and surface
+
+- **No `OSLogStore` reader added - the count stays ten**: the ceiling test inherits its predecessor's read call site (`schedulingLogLines`, the same one query per test).
+- A worst-case failing pass emits 64 short error entries instead of one truncated one; a healthy pass emits nothing new.
+- Host tests 228 -> 227, for the reason recorded above.
+
+## ITEM 6 - N4-10, the diff line has an executable guard
+
+**RESOLVED pending review**, stage 3.
+
+### Reconfirmed at the stage start by executing the defect
+
+At `e93dabb`, before any edit: the §6.2 diff statement (`NotificationScheduler+Reconcile.swift`) deleted by script, the full host suite run - **228 of 228 green** - and the file restored byte-identical (`cmp`).
+The defect is the one `reviews-4/REVIEW-AA92CA7.md` finding 2 measured: `aa92ca7`'s file split narrowed the only predicate reading `reconcile ` to `reconcile failed=[`, and no test had read the diff line since.
+
+### What changed
+
+No production change.
+`theEmittedSkipLineNamesTheDays` - whose window already contains a successful pass - now seeds a healthy subscription of its own (index 6_610, used nowhere else in the package) so the pass ADDS rungs, and asserts in its already-fetched lines: the diff line exists (`#require`), pinned to the owned identifier inside `added=[...]`, and carries `desired=`, `snoozesSpared=`, `removed=[-]` and `failedCount=0`.
+The same block asserts that no per-rung failure entry names the owned identifier - the no-failure half of item 3's emission shape.
+The R4-3 precedent applies verbatim: this query is already open, so the guard costs no new reader.
+
+### Falsified
+
+| # | exact change | failing tests, identical set all three full host runs | issues per run (sample) |
+|---|---|---|---|
+| M3 | the diff `notice` statement deleted - the exact edit that was green at the stage start | `theEmittedSkipLineNamesTheDays` (the diff-line `#require` returns nil) | 1 / 1 / 1 |
+
+### What this deliberately does not do
+
+- It does not pin `pending=`/`desired=` numeric values: those follow planner policy, and this guard's job is that the line exists and its identifier lists are real.
+- It does not restore a broad `hasPrefix("reconcile ")` predicate anywhere: the pin is the line's own prefix plus identifiers the test owns, per the `reviews-4/REVIEW-6.md` lesson about unpinned assertions passing on siblings' lines.
+
+## ITEM 7 - N4-11, the canary is per-test
+
+**RESOLVED pending review**, stage 3.
+
+### Reconfirmed at the stage start by executing the defect
+
+Both shapes at `e93dabb`, before any edit, each file restored byte-identical afterwards:
+
+- `MappingLogPrivacyTests`' `emitCanary()` call deleted: the full OttoPersistence suite is **127 of 127 green** - in a `.serialized` target, because `OSLogStore.position(date:)` reaches ~15 seconds behind `since` and a sibling's identical literal is in the window.
+- `SchedulingLogTests`' first `emitCanary(to:)` call deleted (the reconcile-failure test's): the full OttoUI host suite is **228 of 228 green**.
+
+### What changed
+
+Both `OttoLogProbe`s: `emitCanary` now mints, emits and returns `otto.test.canary.<UUID>`, and `requireDelivered(_:canary:)` proves THE TEST'S OWN canary was delivered.
+All ten `requireDelivered` call sites pass their own token.
+`BoundaryLogTests` strengthens in passing: its one read spans two categories, the shared literal let EITHER category's delivery satisfy the single check, and it now calls `requireDelivered` once per category token, so both must deliver.
+This is the structural fix for the round-4 general form: for the one line class tests themselves emit, the tree can now prove a log line came from a particular test instead of merely making collision unlikely, and the standing rule's per-falsification `--filter` disclosure becomes unnecessary for canaries.
+
+### Falsified - in full-suite runs, no `--filter`
+
+Plain deletion of an emission call is now **inexpressible**: the returned token is what `requireDelivered` takes, so both deletion mutants fail to compile (`cannot find 'canary' in scope`, demonstrated once per host).
+The executable mutant is therefore mint-without-emit - the token exists, the emission is gone - which models the masked deletion exactly:
+
+| # | exact change | suite | failing tests, identical set all three FULL-suite runs | issues per run (sample) |
+|---|---|---|---|---|
+| M4 | the ceiling test's `emitCanary(to:)` replaced by a bare minted literal | full OttoUI host | `everyFailedRungIsNamedAtTheCeiling`, at `requireDelivered` | 1 / 1 / 1 |
+| M5 | `MappingLogPrivacyTests`' `emitCanary()` replaced by a bare minted literal | full OttoPersistence | `theEmittedLineIsRedacted`, at `requireDelivered` | 1 / 1 / 1 |
+
+The stage-start reproductions - the same deletions that ran green before the fix - are the falsification's baseline; both now fail their own test or refuse to compile, with no `--filter` and no suppressed subsystem.
+
+### What this deliberately does not do
+
+- N4-18's territory is untouched, and this item brushes it in one place, stated as the work list requires: the canary emissions keep their existing levels - `notice` in OttoUI, `error` in OttoPersistence - so the notice-versus-error mismatch N4-18 records is exactly as it was, neither fixed nor worsened.
+- The canary still proves delivery for the window, not emission-side correctness of any production line; `requireDelivered`'s failure message still names the environment causes, now alongside the masking the per-test token ends.
+
+### Cost and surface
+
+- No `OSLogStore` reader added, no query added, no test added or removed; the count stays ten and every canary rides the window its test already opens.
+- Ten emission sites and ten `requireDelivered` sites updated in eight files, all test-side; no production code changed.
+
+### Measured at the stage-3 head (`ebd85c9`) - all five
+
+| measurement | at the R3 head (`cdb509e`) | at the stage-3 head | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 265 / 127 / 228 = 620 | exit 0, **265 / 127 / 227 = 619** | -1, the deleted `noFailures` ITEM 3 records |
+| `swiftlint --strict` | clean, 230 files | **clean, 230 files** | unchanged |
+| simulator suite | 133 / 72 / 63, 9 known issues, `** TEST SUCCEEDED **` | **132 / 72 / 63, 9 known issues, `** TEST SUCCEEDED **`** | the same -1, same 9 known issues |
+| non-Gregorian harness | 1 / 1 / 5 | **1 / 1 / 5**, same five citations | unchanged |
+| flake, twelve full host runs | 12 of 12 (228 tests per run) | **12 of 12** (227 tests per run) | unchanged |
+
+---
+
 ## STANDING RULES - carried forward, binding on every stage of this round
 
 - **Review ranges**: every review range's START is the previous range's HEAD, stated by sha in the review; no commit may fall outside every range (the `aa92ca7` lesson, N3-4).
@@ -367,7 +497,7 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R1** `d7cbd37..c26b2a7` | `eb4d2ae`, `c26b2a7` | `reviews-5/REVIEW-1.md` - **REJECT** |
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
 | **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
-| **R4** `cdb509e..` the stage-3 head | `773672c` (the review artifact) and the finding-routing commit (R3's record-only tail), then stage 3 | **review pending** |
+| **R4** `cdb509e..` the stage-3 head | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), and the commit adding this stage's ledger sections, which is the range's HEAD | **review pending** |
 
 ## NEXT ROUND
 
