@@ -48,8 +48,8 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 | 5 | **N4-1** | The export button's action is verified by nothing | **DEFERRED** - the user's decision, the UI-test-target dependency named in ITEM 5 below |
 | 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`) |
 | 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), the site census corrected in place |
-| 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | open |
-| 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | open |
+| 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | **RESOLVED pending review - stage 4**; the harness is 0 / 0 / 0 for the first time since round 2 |
+| 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | **RESOLVED pending review - stage 4**; the user's approved copy, verbatim |
 | 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | open |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded).
@@ -350,7 +350,8 @@ Writing *today* is a correct repair for this field on every status, because the 
 
 **RESOLVED**, stage 3 (run with items 6 and 7; one range, R4).
 The R4 range (`cdb509e..7b6df8c`) was reviewed at `3c47505`: **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), two P3 findings.
-Finding 2 is this item's edge: `failedCount=` on the diff line - the field this section's aggregate-drop rationale cites as keeping the total - is executable-guarded only at zero, so hardcoding it survives the suite; the one-line strengthening inside the ceiling test's open window lands in R5 and is recorded there.
+Finding 2 was this item's edge: `failedCount=` on the diff line - the field this section's aggregate-drop rationale cites as keeping the total - was executable-guarded only at zero, so hardcoding it survived the suite.
+**The strengthening landed in R5 (stage 4, `4e23288`), reproduced and falsified by execution**: before the edit, `failedCount=\(failures.count)` hardcoded to `failedCount=\(0)` ran the full host suite green (227 of 227); the pin now lives inside `everyFailedRungIsNamedAtTheCeiling`'s already-open window - the ceiling pass is the one place the real count is forced to 64 - as a same-line `desired=64` + `failedCount=64` match, at no new `OSLogStore` reader; the same mutant now fails exactly that test on all three full host runs (1 / 1 / 1 issues).
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -482,6 +483,148 @@ The stage-start reproductions - the same deletions that ran green before the fix
 
 ---
 
+## ITEM 8 - N2-1, the formatters honor the requested locale
+
+**RESOLVED pending review**, stage 4 (`1f6b2f7`).
+
+**The decision this item was waiting on has been taken - by the user, not by this run, 2026-08-15**: formatters fully HONOR THE REQUESTED LOCALE - calendar and numbering system included - with the locale threaded through `cycleText`/`subscriptionCountText` (default `.current`), and NOT the pin-to-Gregorian option.
+A Buddhist device must still render Buddhist years through `.current`; only an explicitly passed locale is honored completely.
+Call sites and device rendering are unchanged: every new parameter defaults to `.current`.
+
+### Reconfirmed at the stage start by executing the defect
+
+The harness at the stage start, before any edit: **1 / 1 / 5**, the same five citations as every baseline since round 2, with the rendered wrongness on record:
+
+- `th_TH@calendar=buddhist` - `DisplayFormattingTests.swift:49`: "Aug 15, 2569 BE".
+- `ja_JP@calendar=japanese` - `:49`: "Aug 15, Reiwa 8".
+- `ar_SA@calendar=islamic-umalqura` - `:49` "Rab. I 2, 1448 AH"; `:59` "Every ٤٥ days"; `:68` "١ subscription"; `:69` "٣ subscriptions"; `NotificationReconciliationTests.swift:170` "FoodApp charges $15.99 on Rab. I 12." against a pinned en_CA fixture.
+
+The cause in both classes is the process locale leaking through an explicit request: `Date.FormatStyle` renders through the process calendar and a `.locale()` call does not override it, and `String(localized:)`/`AttributedString(localized:)` format interpolated numbers through the process numbering system.
+
+### What changed
+
+- `DisplayFormatting.swift`: `displayText` and `spokenText` build their `Date.FormatStyle` with `locale:` AND `calendar: locale.calendar` - the RENDERING calendar is the requested locale's.
+  The `calendar:` PARAMETER on both stays the day-to-`Date` CONVERSION calendar, a different axis; the two are documented against each other at the seam.
+  `cycleText` and `subscriptionCountText` gained `locale: Locale = .current`, threaded into `String(localized:locale:)` and `AttributedString(localized:locale:)`, so interpolated counts format through the requested locale and the Wave-10 inflection still resolves (the no-markup-residue loop keeps the `.current` default on purpose and stays green).
+- `NotificationContent.swift`: `displayDate` and `verificationBody` pass `calendar: locale.calendar` into their styles - the `:170` cause; the notification body's date now renders through the locale the scheduler passes.
+- Tests: `:59`/`:68`/`:69` now request en_CA explicitly - their expected strings are untouched, and the harness is where they prove the fix; `:49` is untouched entirely, the fix alone makes it pass.
+  `requestedLocaleIsHonoredCompletely` is new, and is the half a Gregorian host CAN falsify: an explicit Buddhist locale renders 2569 and an explicit ar_SA locale renders "Every ٤٥ days" / "٣ subscriptions" on every host - before it, reverting the fix was invisible to `verify.sh` and CI, the blind spot `.swiftlint.yml`'s F1 paragraph records for the conversion axis.
+- `CalendarEraTests.swift`: the header's "does not exit 0" paragraph is rewritten as the executed fact it now falsifies, and the two instant-comparison tests build their expected side with the same locale-honoring style; their assertions stay in instant-comparison form because what that file pins is the conversion.
+
+### The sweep, recorded either way
+
+- Currency: `currencyText`, `monthlyEquivalentText` and `NotificationContent.money` go through `.currency(...).locale(locale)`, and number format styles already follow the passed locale's numbering - measured, not assumed: the en_CA-pinned `currency` test passed under ar_SA at every baseline including this stage's start, while the `String(localized:)` interpolations beside it failed.
+- `spokenText`'s sentence templates (`String(localized:)` without a locale): every interpolated value is a pre-rendered string, so there is no numbering leak; table selection follows the process locale and only the base English table exists.
+  Deliberately not threaded - it is outside the decision sentence.
+- View-level `.formatted(date:...)` calls (`CancellationSectionView`, `InsightsView.monthText`) take no locale parameter at all: no requested-locale axis exists there, and they render through the device, which the decision keeps.
+
+### Measured after
+
+The harness: **0 / 0 / 0 - exit 0 under all three locales, for the first time since the file's baseline was recorded at `7a3cf54`** (228 tests per locale at the item-8 commit; the terminal figure below includes item 9's additions).
+Nothing other than the five citations changed state under the harness.
+
+### Falsified - the battery discipline of items 1 and 3
+
+Each mutant applied by a script asserting the target text occurs exactly once, pristine file restored and byte-compared after each, the failing-test set quoted as the stable property and issue counts as samples (N5-2); the suite ran green on the restored files (232 of 232).
+
+| # | exact change | verdict, identical all three runs | issues per run (sample) |
+|---|---|---|---|
+| M1 | `displayText`'s style rebuilt as `Date.FormatStyle(date: style).locale(locale)` - the pre-fix form | `requestedLocaleIsHonoredCompletely` fails, full host suite | 1 / 1 / 1 |
+| M2 | `cycleText`'s day-interval branch drops `locale: locale` | `requestedLocaleIsHonoredCompletely` fails, full host suite | 1 / 1 / 1 |
+| M3 | `subscriptionCountText` drops `locale: locale` | `requestedLocaleIsHonoredCompletely` fails, full host suite | 1 / 1 / 1 |
+| M4 | `NotificationContent.displayDate` drops `calendar: locale.calendar` | `changedContentReplacesInPlace` (`NotificationReconciliationTests.swift:170`) fails under the ar_SA harness, exit 1, three helper runs | 1 / 1 / 1 |
+
+M1-M3 are the Gregorian-host falsifications this item never had; M4 is the harness's own.
+
+### What this deliberately does not do
+
+- No pin-to-Gregorian anywhere: `.current` device rendering is untouched on every surface - the user's explicit instruction.
+- It does not thread a locale into `spokenText`'s sentence-template lookups (no numeric interpolation, base English table only) or into view-level device rendering.
+- It does not touch the F1 conversion seam: `CalendarDay.conversionCalendar` defaults and the `device_calendar_outside_conversion_seam` lint rule are exactly as they were.
+
+### Cost and surface
+
+- No `OSLogStore` reader added - the count stays ten; no new package, product, target or dependency.
+- Host tests +1 (`requestedLocaleIsHonoredCompletely`); the five citations keep their assertions, three of them now requesting en_CA explicitly at the call.
+- Two production files touched (`DisplayFormatting.swift`, `NotificationContent.swift`); no call site anywhere passes anything new.
+
+## ITEM 9 - N3-5, the gap card tells deliberate silencing from failure
+
+**RESOLVED pending review**, stage 4 (`d8ac728`).
+
+**The copy is the user's, approved 2026-08-15, and ships verbatim**: the corrupt-date headline is `"\(subscriptionCountText(N)) with unusable dates"`; the corrupt-date detail is "Their stored dates aren't real calendar days, so Otto has stopped their reminders on purpose. Nothing was deleted. Open each subscription and fix its dates - reminders resume automatically once every date is fixed."; the existing transient copy stays for genuine failures; a mixed pass shows the corruption sentence too, as the actionable half.
+The surrounding copy is number-invariant by design - the inflection engine does not conjugate verbs.
+
+**Owned here, not part of the decision sentence** (ITEM 2's correction discipline):
+
+- The outcome carries IDENTIFIERS - `ScheduleOutcome.implausibleDayFailures: [UUID]`, a subset of `ledgerFailures` - and the card renders a COUNT.
+  Identifiers-not-counts is a LOG rule (DECISIONS.md), and the SKIPPED log lines already name the ids; the card's own doc comment has said "a count and nothing else" since R4-1, and identifiers at the outcome keep the subset relationship checkable and the ids available to any future surface.
+- The mixed composition: the transient headline with the TOTAL count (none of the N was updated), the transient detail verbatim, then the corruption sentences minus the duplicated "Nothing was deleted." - every rendered sentence is from the approved set, and the corrupt-only detail carries the approved paragraph whole.
+- Disclosed: in the mixed rendering, "Their stored dates" follows a headline that counts all failures, so the pronoun sweeps the transient failures in; a composition artifact of the approved sentences, visible only on a pass that has both failure kinds at once.
+
+### Reconfirmed at the stage start by executing the defect
+
+A temporary probe (test-shaped, deleted after recording): a real `NotificationScheduler` pass over one subscription whose anchor is 2569-08-06 - the deliberate-silencing case, `ledgerFailures.count=1`, `scheduledCount=0` - fed to the real card:
+
+```
+headline: 1 subscription couldn't be updated
+detail:   Otto couldn't refresh their reminders on its last check, so some may be missing.
+          Nothing was deleted, and it will try again.
+```
+
+Both sentences false: Otto refreshed fine and silenced on purpose, and it will "try again" forever without effect until the user repairs the dates - so waiting, which the copy recommends, is exactly wrong, on a card that is itself the corruption signal (`docs/next-wave.md`).
+
+### What changed
+
+- `ScheduleOutcome.implausibleDayFailures`, populated by the ledger loop's implausible-day branch (`NotificationScheduler.reconcileLedger` returns both lists); the scheduler's behaviour is otherwise untouched and the log surface is unchanged.
+- `CoverageGapCard` gained `implausibleCount` (default 0) and the four-branch copy matrix: whole-pass-failed and transient-only wordings byte-identical to before, corrupt-only and mixed per the approved copy.
+  `headline`/`detail` stay non-private and host-testable - the R4-1 reasoning, now covering four wordings instead of two.
+  The card moved to `CoverageGapCard.swift` when the matrix pushed `TodayView.swift` past SwiftLint's 400-line file_length - the `TodaySectionPlan.swift` seam, drawn again.
+- The section-plan trigger set is unchanged: the same passes show the card as before (ITEM 2's disclosure anticipated exactly this split); only the words branch.
+- `docs/next-wave.md`'s quoted card headline is updated where this change falsified it.
+- Tests: the card's copy suite moved to `CoverageGapCardTests.swift` (the same file-length cap, on the test side) and grew corrupt-only, mixed and whole-pass-unchanged tests; `ImplausibleStoredDayTests` pins the subset at the scheduler (including `transientFailureIsNotMarkedImplausible`, a mixed pass through the real scheduler over a new `failMaterialize` knob on the fake ledger); `DynamicTypeTests` grows the two new wordings.
+
+### UI verification
+
+`CoverageGapRenderingTests` (simulator, `EmptyStateTests`' method via ITEM 4's): the corrupt-only card must draw and must differ pixel-for-pixel from the transient card it replaced, with the strings asserted through the accessibility tree where a client exists.
+**Pre-declared cost, ITEM 4's condition**: this rig's simulator attaches no accessibility client, so the string half records **1 new known issue** and asserts for real only where a client exists; the simulator dimension's expected figure moves from 9 to 10 known issues.
+
+### Falsified - including the two the work order names
+
+| # | exact change | verdict, identical all three runs | issues per run (sample) |
+|---|---|---|---|
+| M5 | the headline's corrupt-only condition `implausibleCount == failureCount` swapped to `!=` - corrupt copy for transient failures | `aPartialFailureNamesTheCount`, `aCorruptOnlyPassGetsTheCorruptionCopy`, `aMixedPassCarriesBothHalves` fail, full host suite | 7 / 7 / 7 |
+| M6 | the detail's corrupt-only condition swapped to `!=` | the same three tests | 8 / 8 / 8 |
+| M7 | the mixed-pass corruption sentence deleted (`guard implausibleCount > 0 else { return transient }` replaced by `return transient`) | `aMixedPassCarriesBothHalves` | 1 / 1 / 1 |
+| M9 | the ledger loop never populates the subset (`implausibleDayFailures.append` deleted) | `coverageIsNotClaimed`, `transientFailureIsNotMarkedImplausible` | 2 / 2 / 2 |
+
+And the rendering guard, ITEM 4's shape: with the whole wording rule reverted (M10, three targets, applied together), the pixel assertion fails on **byte-identical 107,396-byte captures** - the corrupt card renders the transient card exactly - and on the restored file the suite passes with the one pre-declared known issue, `** TEST SUCCEEDED **`.
+
+### What this deliberately does not do
+
+- The `TodayView` call-site plumbing (outcome counts into the card's initializer) sits in a view body no test can reach - the same pre-existing shape as `failureCount` at the same call site since R4-1, neither widened nor narrowed here.
+- No deep link from the card to the affected subscriptions, and no vendor names: the card stays a count by its own doctrine.
+- N5-3, N5-4 and N5-5 - the display surfaces that read corrupt days raw, and the snooze carve-out - are untouched.
+
+### Cost and surface
+
+- No `OSLogStore` reader added - the count stays ten; no new package, product, target or dependency.
+- `ScheduleOutcome` gains one field with a defaulted initializer parameter; every existing construction compiles unchanged.
+- Host tests +4 (three copy tests net of the move, `transientFailureIsNotMarkedImplausible`); simulator additionally runs the rendering test and the two new Dynamic Type wordings.
+- Lint files 230 -> 232: `CoverageGapCard.swift` and `CoverageGapCardTests.swift`, both file-length splits.
+
+### Measured at the stage-4 head (`4e23288` plus this ledger commit) - all five
+
+| measurement | at the stage-3 head (`ebd85c9`) | at the stage-4 head | verdict |
+|---|---|---|---|
+| `scripts/verify.sh` | exit 0, 265 / 127 / 227 = 619 | exit 0, **265 / 127 / 232 = 624** | +5 OttoUI host - the stage's tests, net of the file moves |
+| `swiftlint --strict` | clean, 230 files | **clean, 232 files** | +2 files, the two file-length splits |
+| simulator suite | 132 / 72 / 63, 9 known issues, `** TEST SUCCEEDED **` | **133 / 73 / 67, 10 known issues, `** TEST SUCCEEDED **`** | +1 / +1 / +4; the 1 new known issue is exactly the rendering label half ITEM 9's cost paragraph pre-declared |
+| non-Gregorian harness | 1 / 1 / 5 | **0 / 0 / 0 - exit 0 under all three locales, 232 tests each** | the five citations, closed by item 8; the first 0 / 0 / 0 since the harness existed |
+| flake, twelve full host runs | 12 of 12 (227 tests per run) | **12 of 12** (232 tests per run) | unchanged |
+
+---
+
 ## ITEM 5 - N4-1, the export button's closure
 
 **DEFERRED**, by the user's decision, taken this round on 2026-08-15, with the dependency named.
@@ -516,7 +659,7 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
 | **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
 | **R4** `cdb509e..7b6df8c` | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), `7b6df8c` (the stage's ledger sections, the range's HEAD) | **PASS-WITH-FINDINGS** at `3c47505` (`reviews-5/REVIEW-4.md`) |
-| **R5** `7b6df8c..` the stage-4 head | `3c47505` (the review artifact) and the stamping commit that carries this row (R4's record-only tail), then stage 4: items 8 and 9 under the user's decisions, the REVIEW-4 finding-2 strengthening, and the ledger commit that is the range's HEAD | **review pending** |
+| **R5** `7b6df8c..` the stage-4 head | `3c47505` (the review artifact) and `b99d8dc` (the stamping commit, R4's record-only tail), then stage 4: `1f6b2f7` (item 8), `d8ac728` (item 9), `4e23288` (the REVIEW-4 finding-2 strengthening), and the ledger commit carrying these sections, which is the range's HEAD | **review pending** |
 
 ## NEXT ROUND
 
