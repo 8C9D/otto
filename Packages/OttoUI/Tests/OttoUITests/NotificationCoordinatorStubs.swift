@@ -68,6 +68,7 @@ struct StubNotificationClient: NotificationClient {
 
 struct StubCenter: UserNotificationCentering {
     func setNotificationCategories(_ categories: Set<UNNotificationCategory>) {}
+    func installDelegate(_ delegate: (any UNUserNotificationCenterDelegate)?) {}
     func authorizationStatus() async -> UNAuthorizationStatus { .authorized }
     func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool { true }
     func pendingNotificationRequests() async -> [UNNotificationRequest] { [] }

@@ -25,6 +25,7 @@ final class FakeUserNotificationCenter: UserNotificationCentering, @unchecked Se
     private var _requestedOptions: [UNAuthorizationOptions] = []
     private var _addRefused = false
     private var _delivered: [String] = []
+    private var _installedDelegates: [(any UNUserNotificationCenterDelegate)?] = []
 
     var pending: [UNNotificationRequest] { lock.withLock { _pending } }
     var categories: Set<UNNotificationCategory> { lock.withLock { _categories } }
@@ -38,8 +39,14 @@ final class FakeUserNotificationCenter: UserNotificationCentering, @unchecked Se
         lock.withLock { _addRefused = true }
     }
 
+    var installedDelegates: [(any UNUserNotificationCenterDelegate)?] { lock.withLock { _installedDelegates } }
+
     func setNotificationCategories(_ categories: Set<UNNotificationCategory>) {
         lock.withLock { _categories = categories }
+    }
+
+    func installDelegate(_ delegate: (any UNUserNotificationCenterDelegate)?) {
+        lock.withLock { _installedDelegates.append(delegate) }
     }
 
     func authorizationStatus() async -> UNAuthorizationStatus {
@@ -78,6 +85,9 @@ final class FakeUserNotificationCenter: UserNotificationCentering, @unchecked Se
         lock.withLock { _pending.removeAll { doomed.contains($0.identifier) } }
     }
 }
+
+/// The identity `installDelegateForwards` asserts; nothing calls its methods.
+final class RecordedDelegate: NSObject, UNUserNotificationCenterDelegate {}
 
 @Suite("LiveNotificationClient translation (Wave 10)")
 struct LiveNotificationClientTests {
@@ -262,6 +272,20 @@ struct LiveNotificationClientTests {
             NotificationAction.stillUsing.rawValue,
             NotificationAction.notUsing.rawValue
         ])
+    }
+
+    /// N3-6b: `installDelegate` is what `NotificationCoordinator.start()` now
+    /// calls in place of the inline `UNUserNotificationCenter.current()`
+    /// assignment. The host half of the guard is that the client forwards THE
+    /// delegate it was handed; the coordinator half - that start() installs the
+    /// coordinator itself - is simulator-hosted in
+    /// `NotificationCoordinatorStartTests`.
+    @Test("⛔ installDelegate forwards the delegate to the center")
+    func installDelegateForwards() throws {
+        let delegate = RecordedDelegate()
+        client.installDelegate(delegate)
+        #expect(center.installedDelegates.count == 1)
+        #expect(try #require(center.installedDelegates.first) === delegate)
     }
 
     // `.ephemeral` (also mapped to .authorized) cannot be constructed on the

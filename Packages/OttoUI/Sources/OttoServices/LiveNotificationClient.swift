@@ -18,6 +18,12 @@ import UserNotifications
 /// seam a fake cannot implement tests nothing.
 public protocol UserNotificationCentering: Sendable {
     func setNotificationCategories(_ categories: Set<UNNotificationCategory>)
+    /// One assignment, `center.delegate = delegate`, behind the same boundary
+    /// as everything else here. It was inline in `NotificationCoordinator.start()`
+    /// - `UNUserNotificationCenter.current()` needs an app bundle - so no test
+    /// could assert the delegate was ever installed, and deleting the
+    /// assignment left every suite green (round 5, item 10: N3-6b).
+    func installDelegate(_ delegate: (any UNUserNotificationCenterDelegate)?)
     func authorizationStatus() async -> UNAuthorizationStatus
     func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
     func pendingNotificationRequests() async -> [UNNotificationRequest]
@@ -35,6 +41,10 @@ extension UNNotificationRequest: @retroactive @unchecked Sendable {}
 extension UNNotificationCategory: @retroactive @unchecked Sendable {}
 
 extension UNUserNotificationCenter: UserNotificationCentering {
+    public func installDelegate(_ delegate: (any UNUserNotificationCenterDelegate)?) {
+        self.delegate = delegate
+    }
+
     public func authorizationStatus() async -> UNAuthorizationStatus {
         await notificationSettings().authorizationStatus
     }
@@ -121,6 +131,14 @@ public final class LiveNotificationClient: NotificationClient {
             intentIdentifiers: []
         )
         center.setNotificationCategories([reminder, verification, usage])
+    }
+
+    /// Installs the §6.4 response delegate. A forward and nothing else, like
+    /// the rest of this class: the coordinator calls this from `start()`, and
+    /// the recording fake behind the seam is what lets a test assert the
+    /// delegate was installed at all (N3-6b).
+    public func installDelegate(_ delegate: (any UNUserNotificationCenterDelegate)?) {
+        center.installDelegate(delegate)
     }
 
     public func permission() async -> NotificationPermission {

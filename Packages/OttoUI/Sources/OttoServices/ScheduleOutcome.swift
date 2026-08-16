@@ -19,6 +19,16 @@ public struct ScheduleOutcome: Hashable, Sendable {
     /// continued without them rather than aborting, but the failure is not
     /// swallowed.
     public let ledgerFailures: [UUID]
+    /// The subset of `ledgerFailures` skipped because a stored day is
+    /// detected-implausible (R0-7 / N2-2): Otto silenced these ON PURPOSE and
+    /// they stay silent until the user repairs the dates, which is a different
+    /// fact from a transient failure that the next pass may clear. The gap
+    /// card's copy branches on it (round 5, item 9 / N3-5) - describing a
+    /// deliberate silencing as "it will try again" told the user to wait for
+    /// a repair only they can make. Identifiers rather than a count, matching
+    /// `ledgerFailures`: the card renders a count, but the subset relationship
+    /// is only checkable on identifiers.
+    public let implausibleDayFailures: [UUID]
 
     /// Whether `coveredThrough` may be STATED to the user.
     ///
@@ -36,13 +46,15 @@ public struct ScheduleOutcome: Hashable, Sendable {
         scheduledCount: Int,
         truncatedAfter: CalendarDay?,
         coveredThrough: CalendarDay,
-        ledgerFailures: [UUID] = []
+        ledgerFailures: [UUID] = [],
+        implausibleDayFailures: [UUID] = []
     ) {
         self.permission = permission
         self.scheduledCount = scheduledCount
         self.truncatedAfter = truncatedAfter
         self.coveredThrough = coveredThrough
         self.ledgerFailures = ledgerFailures
+        self.implausibleDayFailures = implausibleDayFailures
     }
 }
 

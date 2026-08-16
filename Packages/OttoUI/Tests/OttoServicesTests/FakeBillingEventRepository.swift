@@ -9,10 +9,20 @@ import OttoRepositories
 /// dragging SwiftData into this target. Call counters let scheduler tests assert
 /// upkeep happens at scheduling time (spec §5.3).
 actor FakeBillingEventRepository: BillingEventRepository {
+    struct MaterializeRefused: Error {}
+
     private var stored: [UUID: BillingEvent] = [:]
     private var watermarks: [UUID: CalendarDay] = [:]
     private(set) var invalidateCalls: [UUID] = []
     private(set) var materializeCalls: [UUID] = []
+    private var materializeFailures: Set<UUID> = []
+
+    /// Primes `materializeEvents` to throw for one subscription - the ledger
+    /// loop's TRANSIENT failure shape, distinct from the implausible-day skip
+    /// that never reaches materialization (round 5, item 9's mixed pass).
+    func failMaterialize(forSubscription id: UUID) {
+        materializeFailures.insert(id)
+    }
 
     func seed(_ events: [BillingEvent]) {
         for event in events { stored[event.id] = event }
@@ -63,6 +73,7 @@ actor FakeBillingEventRepository: BillingEventRepository {
         at instant: Date
     ) async throws -> [BillingEvent] {
         materializeCalls.append(subscription.id)
+        if materializeFailures.contains(subscription.id) { throw MaterializeRefused() }
         guard subscription.deletedAt == nil, horizonDays >= 0, maxReminderLeadDays >= 0 else {
             return []
         }

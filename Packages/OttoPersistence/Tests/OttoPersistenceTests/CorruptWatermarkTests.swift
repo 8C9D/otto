@@ -42,7 +42,7 @@ extension SerializedPersistenceTests {
             let absentID = try fixtureUUID(2)
 
             let since = Date()
-            OttoLogProbe.emitCanary()
+            let canary = OttoLogProbe.emitCanary()
             // Absent first: it must stay silent, or the log stops meaning
             // anything - every scheduling pass reads a watermark.
             _ = try await store.materializationWatermark(forSubscription: absentID)
@@ -55,7 +55,7 @@ extension SerializedPersistenceTests {
             #expect(read == nil)
 
             let lines = try OttoLogProbe.persistenceLines(since: since)
-            try OttoLogProbe.requireDelivered(lines)
+            try OttoLogProbe.requireDelivered(lines, canary: canary)
             let mine = corruptID.uuidString.lowercased()
             let line = try #require(
                 lines.last { $0.contains("watermark unreadable") && $0.lowercased().contains(mine) },

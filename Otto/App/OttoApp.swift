@@ -37,10 +37,14 @@ struct OttoApp: App {
         // Fire times are read from settings on every pass, so the Wave 8
         // notification-time setting reaches background passes too.
         let fireTimes: @Sendable () -> FireTimePolicy = { SettingsStore.fireTimePolicy() }
-        let scheduler = NotificationScheduler(
+        // N4-7: one gate, wrapped ONCE, handed to every consumer below - the
+        // store, the coordinator and the action handler all reschedule through
+        // the same instance, which is what serialises their passes. A second
+        // wrap, or handing anyone the bare scheduler, reopens the overlap.
+        let scheduler = CoalescingReminderScheduler(base: NotificationScheduler(
             subscriptions: store, cancellations: store, billingEvents: store, client: client,
             fireTimes: fireTimes
-        )
+        ))
         let notifications = NotificationStatusStore(
             scheduler: scheduler, client: client, dates: dates
         )

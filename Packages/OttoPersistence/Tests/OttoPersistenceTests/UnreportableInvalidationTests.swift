@@ -148,13 +148,13 @@ extension SerializedPersistenceTests {
             try await store.save(edited)
 
             let since = Date()
-            OttoLogProbe.emitCanary()
+            let canary = OttoLogProbe.emitCanary()
             _ = try await store.invalidateOutdatedUpcomingEvents(
                 for: edited, asOf: today, at: editInstant
             )
 
             let lines = try OttoLogProbe.persistenceLines(since: since)
-            try OttoLogProbe.requireDelivered(lines)
+            try OttoLogProbe.requireDelivered(lines, canary: canary)
             let mine = edited.id.uuidString.lowercased()
             let named = lines.filter {
                 $0.contains("Invalidation tombstoned an unreportable row")

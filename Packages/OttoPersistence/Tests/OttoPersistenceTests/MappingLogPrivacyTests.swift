@@ -80,7 +80,7 @@ extension SerializedPersistenceTests {
             //
             // No new query and no new reader: the canary rides in the window
             // this test already opens.
-            OttoLogProbe.emitCanary()
+            let canary = OttoLogProbe.emitCanary()
             // Reads through `mapSkippingFailures`, which logs and skips.
             #expect(try await store.subscriptions().isEmpty)
 
@@ -95,7 +95,7 @@ extension SerializedPersistenceTests {
             let window = try OttoLogProbe.persistenceLines(since: since)
             // BEFORE any assertion about content: an empty window is a fact
             // about this machine, not about Otto's code.
-            try OttoLogProbe.requireDelivered(window)
+            try OttoLogProbe.requireDelivered(window, canary: canary)
             let skipped = window.filter { $0.contains("Skipping unmappable record") }
 
             // The discriminating assertion: OUR line, from the record this test

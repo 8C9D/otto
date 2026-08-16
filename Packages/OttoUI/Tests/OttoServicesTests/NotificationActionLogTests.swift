@@ -46,7 +46,7 @@ struct NotificationActionLogTests {
         await fixture.client.refuseAdds(after: 0)
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.actions)
+        let canary = OttoLogProbe.emitCanary(to: OttoLog.actions)
         await #expect(throws: FakeNotificationClient.AddRefused.self) {
             _ = try await fixture.handler.handle(
                 actionIdentifier: NotificationAction.remindLater.rawValue,
@@ -56,7 +56,7 @@ struct NotificationActionLogTests {
         }
 
         let lines = try Self.actionLogLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        try OttoLogProbe.requireDelivered(lines, canary: canary)
         let line = try #require(
             lines.last { $0.contains(identifier) },
             "the handler recorded nothing for an action that threw"
@@ -81,7 +81,7 @@ struct NotificationActionLogTests {
         )
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.actions)
+        let canary = OttoLogProbe.emitCanary(to: OttoLog.actions)
         _ = try await fixture.handler.handle(
             actionIdentifier: NotificationAction.remindLater.rawValue,
             notificationIdentifier: identifier,
@@ -89,7 +89,7 @@ struct NotificationActionLogTests {
         )
 
         let lines = try Self.actionLogLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        try OttoLogProbe.requireDelivered(lines, canary: canary)
         let line = try #require(
             lines.last { $0.contains(identifier) },
             "the handler recorded nothing for an action that succeeded"
@@ -141,7 +141,7 @@ struct NotificationActionLogTests {
         )
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.actions)
+        let canary = OttoLogProbe.emitCanary(to: OttoLog.actions)
         for identifier in [workingIdentifier, orphanIdentifier] {
             _ = try await fixture.handler.handle(
                 actionIdentifier: NotificationAction.remindLater.rawValue,
@@ -151,7 +151,7 @@ struct NotificationActionLogTests {
         }
 
         let lines = try Self.actionLogLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        try OttoLogProbe.requireDelivered(lines, canary: canary)
         let worked = try #require(lines.last { $0.contains(workingIdentifier) })
         let didNothing = try #require(lines.last { $0.contains(orphanIdentifier) })
 
@@ -170,7 +170,7 @@ struct NotificationActionLogTests {
         _ = try await seedTrial(fixture.subscriptions)
 
         let since = Date()
-        OttoLogProbe.emitCanary(to: OttoLog.actions)
+        let canary = OttoLogProbe.emitCanary(to: OttoLog.actions)
         _ = try await fixture.handler.handle(
             actionIdentifier: NotificationAction.remindLater.rawValue,
             notificationIdentifier: "not-an-otto-identifier",
@@ -178,7 +178,7 @@ struct NotificationActionLogTests {
         )
 
         let lines = try Self.actionLogLines(since: since)
-        try OttoLogProbe.requireDelivered(lines)
+        try OttoLogProbe.requireDelivered(lines, canary: canary)
         let line = try #require(lines.last { $0.contains("not-an-otto-identifier") })
         // Adding `effect=` to this line would have introduced a NEW false claim
         // if this branch reported `notApplicable`: nothing was routed at all.

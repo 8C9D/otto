@@ -58,7 +58,7 @@ let package = Package(
         // is inside `#if os(iOS)` and compiles to nothing under host
         // `swift test`, so its tests can only live in this simulator-hosted
         // target, and they need `@testable import OttoServices` to reach it.
-        .testTarget(name: "OttoUITests", dependencies: ["OttoUI", "OttoServices"])
+        .testTarget(name: "OttoUITests", dependencies: ["OttoUI", "OttoServices", "OttoStores"])
     ],
     swiftLanguageModes: [.v6]
 )

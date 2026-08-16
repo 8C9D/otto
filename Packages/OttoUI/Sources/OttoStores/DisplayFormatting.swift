@@ -5,6 +5,15 @@ import OttoDomain
 // user-facing strings. Everything goes through Foundation's locale-aware
 // formatters; nothing is ever assembled by string interpolation (Wave 3
 // constraint), so VoiceOver reads real currencies and real dates.
+//
+// Every formatter here honors the REQUESTED locale completely - calendar and
+// numbering system included (round 5, item 8 / N2-1). `Date.FormatStyle`
+// renders through `Calendar.autoupdatingCurrent` unless told otherwise, and a
+// `.locale()` call does not override that, so an explicit en_CA request on a
+// Buddhist device read "Aug 15, 2569 BE" - the process's calendar wearing the
+// requested locale's month names. The default stays `.current`, so device
+// rendering is unchanged: a Buddhist device still renders Buddhist years
+// unless a caller explicitly asks for something else.
 
 /// Integer cents as localized currency, e.g. 1099 + "CAD" → "$10.99".
 public func currencyText(cents: Int, currencyCode: String, locale: Locale = .current) -> String {
@@ -41,6 +50,13 @@ extension CalendarDay {
     }
 
     /// The day as localized text, e.g. "Aug 15, 2026" in en-CA.
+    ///
+    /// Two calendars, two axes, kept distinct: `calendar` is the day-to-`Date`
+    /// CONVERSION calendar (the stored numbers are Gregorian, so it defaults to
+    /// the proleptic-Gregorian conversion calendar and must not wander), while
+    /// the RENDERING calendar belongs to `locale` - the style below adopts
+    /// `locale.calendar`, so an explicit en_CA request reads Gregorian on every
+    /// device and `.current` still reads the device's own calendar.
     public func displayText(
         style: Date.FormatStyle.DateStyle = .abbreviated,
         calendar: Calendar = CalendarDay.conversionCalendar,
@@ -51,7 +67,7 @@ extension CalendarDay {
             // numeric fallback keeps even an impossible failure legible.
             return "\(year)-\(month)-\(day)"
         }
-        return date.formatted(Date.FormatStyle(date: style).locale(locale))
+        return date.formatted(Date.FormatStyle(date: style, locale: locale, calendar: locale.calendar))
     }
 }
 
@@ -64,8 +80,11 @@ extension DisputeSummary {
         timeZone: TimeZone = .current,
         locale: Locale = .current
     ) -> String {
+        // `calendar` (the parameter) converts the charge DAY below; the
+        // rendering calendar is the requested locale's, same rule as
+        // `displayText`.
         let cancelled = markedCancelledAt.formatted(
-            Date.FormatStyle(date: .abbreviated, timeZone: timeZone).locale(locale)
+            Date.FormatStyle(date: .abbreviated, locale: locale, calendar: locale.calendar, timeZone: timeZone)
         )
         let charge = chargeDate.displayText(calendar: calendar, locale: locale)
         let amount = currencyText(cents: chargeAmountCents, currencyCode: currencyCode, locale: locale)
@@ -75,7 +94,7 @@ extension DisputeSummary {
         ]
         for note in evidenceNotes {
             let noted = note.createdAt.formatted(
-                Date.FormatStyle(date: .abbreviated, timeZone: timeZone).locale(locale)
+                Date.FormatStyle(date: .abbreviated, locale: locale, calendar: locale.calendar, timeZone: timeZone)
             )
             lines.append(String(localized: "Cancellation evidence (\(noted)): \(note.text)."))
         }
@@ -92,22 +111,33 @@ extension DisputeSummary {
 /// localized initializer runs the grammar engine, and a test asserts the
 /// rendered string carries no markup residue. Nouns only: the engine does not
 /// conjugate English verbs, so surrounding copy must stay number-invariant.
-public func subscriptionCountText(_ count: Int) -> String {
-    String(AttributedString(localized: "^[\(count) subscription](inflect: true)").characters)
+///
+/// The locale governs the interpolated count's numerals as well as the
+/// inflection (round 5, item 8): the default `.current` renders "١
+/// subscription" on an ar_SA device, and an explicit en_CA request renders
+/// "1 subscription" there too.
+public func subscriptionCountText(_ count: Int, locale: Locale = .current) -> String {
+    String(
+        AttributedString(
+            localized: "^[\(count) subscription](inflect: true)", locale: locale
+        ).characters
+    )
 }
 
 /// The friendly cadence name for a cycle, e.g. "Monthly" or "Every 45 days".
-public func cycleText(_ cycle: BillingCycle) -> String {
+/// The locale formats the interpolated interval (round 5, item 8): numerals
+/// follow the requested locale, not the process's.
+public func cycleText(_ cycle: BillingCycle, locale: Locale = .current) -> String {
     switch (cycle.unit, cycle.interval) {
-    case (.week, 1): String(localized: "Weekly")
-    case (.week, 2): String(localized: "Biweekly")
-    case (.month, 1): String(localized: "Monthly")
-    case (.month, 3): String(localized: "Quarterly")
-    case (.month, 6): String(localized: "Semiannual")
-    case (.year, 1): String(localized: "Annual")
-    case (.day, let interval): String(localized: "Every \(interval) days")
-    case (.week, let interval): String(localized: "Every \(interval) weeks")
-    case (.month, let interval): String(localized: "Every \(interval) months")
-    case (.year, let interval): String(localized: "Every \(interval) years")
+    case (.week, 1): String(localized: "Weekly", locale: locale)
+    case (.week, 2): String(localized: "Biweekly", locale: locale)
+    case (.month, 1): String(localized: "Monthly", locale: locale)
+    case (.month, 3): String(localized: "Quarterly", locale: locale)
+    case (.month, 6): String(localized: "Semiannual", locale: locale)
+    case (.year, 1): String(localized: "Annual", locale: locale)
+    case (.day, let interval): String(localized: "Every \(interval) days", locale: locale)
+    case (.week, let interval): String(localized: "Every \(interval) weeks", locale: locale)
+    case (.month, let interval): String(localized: "Every \(interval) months", locale: locale)
+    case (.year, let interval): String(localized: "Every \(interval) years", locale: locale)
     }
 }

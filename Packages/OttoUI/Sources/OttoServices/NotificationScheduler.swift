@@ -93,7 +93,7 @@ public actor NotificationScheduler: ReminderScheduling {
         }
 
         let live = try await subscriptions.subscriptions()
-        let ledgerFailures = await reconcileLedger(for: live, today: today, now: now)
+        let ledger = await reconcileLedger(for: live, today: today, now: now)
 
         // Cancellation checkpoints (Gate 2, Aug 2026). A `BGAppRefreshTask`
         // expiration cancels this task, and before these existed the pass ran
@@ -143,7 +143,8 @@ public actor NotificationScheduler: ReminderScheduling {
             scheduledCount: specs.count,
             truncatedAfter: truncatedAfter,
             coveredThrough: min(truncatedAfter ?? horizonEnd, horizonEnd),
-            ledgerFailures: ledgerFailures
+            ledgerFailures: ledger.failures,
+            implausibleDayFailures: ledger.implausibleDayFailures
         )
     }
 
@@ -201,9 +202,13 @@ public actor NotificationScheduler: ReminderScheduling {
         for live: [Subscription],
         today: CalendarDay,
         now: Date
-    ) async -> [UUID] {
+    ) async -> (failures: [UUID], implausibleDayFailures: [UUID]) {
         let maxLead = live.map(\.reminderLeadDays).max() ?? 0
         var failures: [UUID] = []
+        // The implausible-day subset separately (round 5, item 9): a deliberate
+        // silencing and a transient failure are different facts on Today's gap
+        // card, and a single list could not tell them apart downstream.
+        var implausibleDayFailures: [UUID] = []
         for subscription in live {
             // Per subscription, not mid-subscription: each iteration saves its
             // rows before advancing its watermark, so a boundary here is the
@@ -234,6 +239,7 @@ public actor NotificationScheduler: ReminderScheduling {
             let implausible = subscription.implausibleStoredDays(asOf: today)
             if !implausible.isEmpty {
                 failures.append(subscription.id)
+                implausibleDayFailures.append(subscription.id)
                 OttoLog.scheduling.error("""
                     ledger \(subscription.id.uuidString, privacy: .public) \
                     SKIPPED reason=implausibleStoredDays \
@@ -266,7 +272,7 @@ public actor NotificationScheduler: ReminderScheduling {
                 failed=\(failures.last == subscription.id, privacy: .public)
                 """)
         }
-        return failures
+        return (failures, implausibleDayFailures)
     }
 
     /// Translates budgeted reminders into request specs. A rung whose fire
