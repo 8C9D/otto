@@ -776,3 +776,71 @@ Round 4's NEXT ROUND section remains the ledger of record for everything this ro
   The `lastUsedDate` sibling of N5-3's `pauseEndsOn` display surface; pre-existing, mitigated by item 4 making the repair reachable.
 - **N5-6 (P3) - `scheduleNextBackgroundRefresh` still calls `BGTaskScheduler.shared.submit` bare.**
   `reviews-5/REVIEW-6.md` recorded it as a non-finding: outside item 10's entry points and pre-existing, its success branch is unreachable in this rig; the `BackgroundTaskRegistering` seam item 10 added is the natural home if a later round wants it testable.
+
+---
+
+## TERMINATION
+
+Every one of the ten work-list items reached a terminal state, each reconfirmed by **executing** the defect before it was touched, and every code range adversarially reviewed:
+
+| # | id | terminal state |
+|---|---|---|
+| 1 | N4-7 + N4-3 | **RESOLVED** - one REJECT cycle, remediated, re-review PASS-WITH-FINDINGS |
+| 2 | N4-2 | **RESOLVED** - the user's option-2 decision, the per-field extension owned as the stage's inference |
+| 3 | N2-4 (reopened) | **RESOLVED** - truncation made structurally inexpressible; the false round-2 closure stands corrected by per-rung entries |
+| 4 | N4-16 | **RESOLVED** - the repair reachable on every status; the wording decision taken (keep the single label) |
+| 5 | N4-1 | **DEFERRED** - the user's decision; the UI-test-target dependency named |
+| 6 | N4-10 | **RESOLVED** - the diff line guarded inside an already-open query |
+| 7 | N4-11 | **RESOLVED** - per-test canary tokens end the masking class |
+| 8 | N2-1 | **RESOLVED** - the harness is 0 / 0 / 0 for the first time since round 2 |
+| 9 | N3-5 | **RESOLVED** - the approved split copy, verified verbatim |
+| 10 | N3-6b | **RESOLVED** - `start()` and the delegate bodies tested; the framework floor stated |
+
+**No range was rejected twice and nothing was reverted.**
+The round's one REJECT is `reviews-5/REVIEW-1.md` on R1 (stage 1), remediated in `124ec44..83f9717` and passed by the re-review `reviews-5/REVIEW-2.md`; every later range passed on its first review.
+
+### The terminal five-dimension verification, at `f67c68f`
+
+| measurement | baseline (`1b352f4`) | terminal (`f67c68f`) |
+|---|---|---|
+| `scripts/verify.sh` | exit 0, 261 / 127 / 209 = 597 | **exit 0, 265 / 127 / 233 = 625** |
+| `swiftlint --strict` | clean, 225 files | **clean, 234 files** |
+| simulator suite | 119 / 72 / 53, 7 known issues, `** TEST SUCCEEDED **` | **134 / 73 / 75, 10 known issues, `** TEST SUCCEEDED **`** |
+| non-Gregorian harness | 1 / 1 / 5, the five citations | **0 / 0 / 0 - exit 0 under all three locales** |
+| flake, twelve full host runs | 12 of 12 (597-test trees) | **12 of 12** (233 OttoUI tests per run) |
+
+The 10 known issues decompose exactly: 7 pre-existing (`EmptyStateTests`, the no-accessibility-client rig condition), 2 pre-declared by ITEM 4 (`UsageRepairReachabilityTests` label/activation halves), 1 pre-declared by ITEM 9 (`CoverageGapCardTests.swift:226`).
+The `OSLogStore` reader count is **ten** at both ends, re-enumerated by reviewers at R4, R5 and R6.
+
+### Every review finding, reconciled
+
+| review | verdict | findings -> disposition |
+|---|---|---|
+| `REVIEW-1` (R1) | REJECT | 1 (P2) fixed at `124ec44`, pinned by a permanent test M7 kills; 2 (P2) fixed at `83f9717`, membership asserted instead of an order; 3 (P3) answered by the seven-mutant battery; 4 (P3) answered by the latest-joiner-arguments test; 5 (P3) answered by the staged-release spy; 6 (P3) answered by the REVIEW RANGES section |
+| `REVIEW-2` (R2 re-review) | PASS-WITH-FINDINGS | 1 (P3) carried as **N5-1**; 2 (P3) carried as **N5-2**; 3 (P3) corrected in place in ITEM 1 |
+| `REVIEW-3` (R3) | PASS-WITH-FINDINGS | 1 (P3) disclosed in ITEM 2 and `docs/next-wave.md`, the behaviour question carried as **N5-4**; 2 (P3) corrected in place in ITEM 2; 3 (P3) carried as **N5-5** |
+| `REVIEW-4` (R4) | PASS-WITH-FINDINGS | 1 (P3) the census corrected in place in ITEM 7; 2 (P3) fixed at `4e23288`, verified by REVIEW-5's own mutants |
+| `REVIEW-5` (R5) | PASS | no findings |
+| `REVIEW-6` (R6) | PASS | no findings; two recorded non-findings, one carried as **N5-6** |
+
+Fourteen findings across six reviews: four fixed by commit, four corrected in place, five carried (N5-1, N5-2, N5-4, N5-5, plus REVIEW-1's six absorbed into the remediation), one carried from a non-finding (N5-6); nothing is unaccounted for.
+
+### The decisions the user took this round
+
+1. Item 2: a detected-implausible anchor stops scheduling entirely (option 2 of five), paired with item 4's reachable repair.
+2. Item 5: defer rather than add a UI-test target.
+3. Item 8: honor the requested locale completely, never pin display to Gregorian.
+4. Item 9: the split gap-card copy, shipped verbatim.
+5. Item 4's follow-up: keep "I used this today" as the single label on every status.
+
+### The honest caveats
+
+- **R0 and R7 have no dedicated adversarial review.** R0 (the merge and the two opening docs commits) is reviewed-by-measurement only, declared at the time; R7 is this round's record-only tail - the stamping and termination commits carry no code, and this sentence is their disclosure.
+- **CI is dead** (billing/spending limit): every dimension above ran on the one host, `verify.sh`'s clean clone included, and the CI-runner `OSLogStore` delivery question stays **CANNOT ASSESS** until billing is restored. Nothing in this round is pushed.
+- **Ethiopic remains undetectable**: wrong-day reminders persist there with no card and no log line, disclosed in `docs/next-wave.md`; the round-5 silencing cannot reach what the detector cannot see.
+- **Item 10's floor is framework, not tests**: the `BGTask` launch-closure body and the two `nonisolated` delegate wrappers stay OS-only - `UNNotification`, `UNNotificationResponse` and `BGTask` have no public initializers, and the seams stop exactly at that boundary rather than pretending past it.
+- **The flake batches are the stages' own**: each stage ran its twelve; reviewers replicated three to five runs and said so. Twelve-of-twelve is a claim about the stage head it was run at, nothing more.
+- **The snooze carve-out** (N5-4) means "sent nothing at all" has one bounded exception in the upgrade window, disclosed to the user in `docs/next-wave.md`.
+
+Round 4's NEXT ROUND section remains the ledger of record for everything this round's list did not name; this round adds N5-1 through N5-6 above.
+The round terminates here.
