@@ -138,6 +138,23 @@ struct SchedulingLogTests {
                 "failed rung \(identifier) has no complete entry of its own"
             )
         }
+
+        // ⛔ `reviews-5/REVIEW-4.md` finding 2: `failedCount=` on the §6.2 diff
+        // line was executable-guarded only at ZERO (the skip test's clean
+        // pass), so hardcoding `failedCount=\(0)` at the emission site
+        // survived the whole host suite - re-measured before this edit: 227 of
+        // 227 green. This pass forces the real count to the device ceiling, so
+        // the pin lives here, in this test's already-open window at no new
+        // `OSLogStore` reader. Pinned to `desired=64` on the same line: no
+        // sibling pass in a shared window schedules 64 rungs and fails them
+        // all, so a truthful line from another test cannot satisfy this.
+        #expect(
+            lines.contains {
+                $0.hasPrefix("reconcile pending=") && $0.contains("desired=64 ")
+                    && $0.contains("failedCount=64")
+            },
+            "the diff line does not carry the real failedCount at the ceiling"
+        )
     }
 
     /// R0-7 / N2-2's line, read back the same way and for the same reason.
