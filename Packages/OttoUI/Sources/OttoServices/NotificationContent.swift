@@ -97,8 +97,13 @@ enum NotificationContent {
                 localized: "You cancelled \(name). A charge was due today - check your statement. Did it stop?"
             )
         }
+        // The requested locale's calendar too, not only its month names
+        // (round 5, item 8): without `calendar:` the style renders through the
+        // process calendar, so an islamic-calendar host moved the month under
+        // a pinned en_CA locale.
         let cancelled = cancelledAt.formatted(
-            Date.FormatStyle(locale: locale, timeZone: timeZone).month(.abbreviated).day()
+            Date.FormatStyle(locale: locale, calendar: locale.calendar, timeZone: timeZone)
+                .month(.abbreviated).day()
         )
         return String(
             localized: "You cancelled \(name) on \(cancelled). A charge was due today - check your statement. Did it stop?"
@@ -144,6 +149,12 @@ enum NotificationContent {
     /// Carries the locale for the same reason `money` does: `.month(.abbreviated)`
     /// is "Aug" in English and something else everywhere ambient locale can
     /// wander to.
+    ///
+    /// Two calendars on purpose (round 5, item 8): `gregorian` CONVERTS the
+    /// stored day's Gregorian numbers into the instant they denote, and the
+    /// style RENDERS that instant in the requested locale's own calendar -
+    /// without `calendar:` the style read the process calendar, so a pinned
+    /// en_CA body said "Rab. I 12" on an islamic-calendar host.
     private static func displayDate(_ day: CalendarDay, _ locale: Locale = .autoupdatingCurrent) -> String {
         var components = DateComponents()
         components.year = day.year
@@ -153,7 +164,8 @@ enum NotificationContent {
         gregorian.timeZone = TimeZone(identifier: "UTC") ?? .current
         guard let date = gregorian.date(from: components) else { return day.description }
         return date.formatted(
-            Date.FormatStyle(locale: locale, timeZone: gregorian.timeZone).month(.abbreviated).day()
+            Date.FormatStyle(locale: locale, calendar: locale.calendar, timeZone: gregorian.timeZone)
+                .month(.abbreviated).day()
         )
     }
 }

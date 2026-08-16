@@ -56,7 +56,12 @@ struct DisplayFormattingTests {
         #expect(cycleText(.annual) == "Annual")
         #expect(cycleText(.biweekly) == "Biweekly")
         let every45 = try #require(BillingCycle(unit: .day, interval: 45))
-        #expect(cycleText(every45) == "Every 45 days")
+        // The requested locale, not the process's: with the default `.current`
+        // this line rendered "Every ٤٥ days" under an ar_SA host and was one
+        // of the five non-Gregorian-harness citations from round 2 to round 5
+        // (N2-1). The interpolated interval now formats through the locale the
+        // caller asks for, so the expectation holds on every host.
+        #expect(cycleText(every45, locale: enCA) == "Every 45 days")
     }
 
     @Test("⛔ the count phrase RESOLVES its inflection - no morphology markup reaches the screen (Wave 10)")
@@ -65,12 +70,40 @@ struct DisplayFormattingTests {
         // "^[3 subscription](inflect: true) bill to this card" because
         // Text(String(localized:)) performs no inflection; nothing in the
         // suite read a RENDERED string, so it shipped. These are rendered.
-        #expect(subscriptionCountText(1) == "1 subscription")
-        #expect(subscriptionCountText(3) == "3 subscriptions")
+        // The two equality lines pass en_CA explicitly: with the default
+        // `.current` they rendered "١ subscription" / "٣ subscriptions" under
+        // an ar_SA host - two of the five harness citations (N2-1). The
+        // markup-residue loop keeps the default on purpose: the inflection
+        // must resolve through `.current` too.
+        #expect(subscriptionCountText(1, locale: enCA) == "1 subscription")
+        #expect(subscriptionCountText(3, locale: enCA) == "3 subscriptions")
         for count in 0...4 {
             let rendered = subscriptionCountText(count)
             #expect(!rendered.contains("^["))
             #expect(!rendered.contains("inflect"))
         }
+    }
+
+    /// Round 5, item 8 (N2-1): the half a Gregorian host CAN falsify. The five
+    /// harness citations only ever failed on a non-Gregorian host, so a revert
+    /// of the fix would be invisible to `verify.sh` and CI without these: an
+    /// explicitly requested locale is honored completely - calendar and
+    /// numbering system included - on every host.
+    @Test("⛔ an explicitly requested locale is honored completely, calendar and numerals included")
+    func requestedLocaleIsHonoredCompletely() throws {
+        let day = try #require(CalendarDay(year: 2026, month: 8, day: 15))
+        // Buddhist calendar requested explicitly: the year renders era-numbered
+        // (2569) whatever calendar this host runs.
+        let buddhist = Locale(identifier: "en_CA@calendar=buddhist")
+        #expect(day.displayText(locale: buddhist).contains("2569"))
+        // And the same day under en_CA stays Gregorian - the assertion at the
+        // top of this file, restated beside its inverse.
+        #expect(day.displayText(locale: enCA).contains("2026"))
+        // Arabic-Indic numerals requested explicitly: the numbering system
+        // follows the locale in interpolated counts too.
+        let arSA = Locale(identifier: "ar_SA@calendar=islamic-umalqura")
+        let every45 = try #require(BillingCycle(unit: .day, interval: 45))
+        #expect(cycleText(every45, locale: arSA) == "Every ٤٥ days")
+        #expect(subscriptionCountText(3, locale: arSA) == "٣ subscriptions")
     }
 }

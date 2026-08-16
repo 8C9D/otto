@@ -22,23 +22,22 @@ import OttoDomain
 /// Recorded here so that nobody reads a green CI run as evidence about F1: CI
 /// runners are Gregorian, and on a Gregorian host this file guards nothing.
 ///
-/// **That command does not exit 0, and did not before F1 either.** The
-/// non-Gregorian host has its own baseline of PRE-EXISTING failures, measured
-/// at `7a3cf54` and unchanged by F1. Read the named tests, not the exit code:
-///
-///  - `th_TH@calendar=buddhist`, `ja_JP@calendar=japanese` — 1 issue,
-///    `DisplayFormattingTests.swift:49`. That one IS calendar-caused:
-///    `Date.FormatStyle` renders through the process calendar and a `.locale()`
-///    call does not override it, so the day reads "Aug 15, 2569 BE" or
-///    "Aug 15, Reiwa 8".
-///  - `ar_SA@calendar=islamic-umalqura` — 5 issues: `:49` above, plus
-///    `NotificationReconciliationTests.swift:170` (same calendar cause, but its
-///    body carries no year, so only a calendar that disagrees on the MONTH
-///    moves it), plus `DisplayFormattingTests.swift:59,68,69`. Those last three
-///    are **not about the calendar at all**: they are Arabic-Indic numerals
-///    from the locale's numbering system ("Every ٤٥ days", "١ subscription"),
-///    reached through `String(localized:)` and `AttributedString(localized:)`,
-///    which never touch a date.
+/// **That command exits 0 under all three harness locales as of round 5,
+/// item 8 (N2-1).** From `7a3cf54` to round 5's stage 3 it did not: the
+/// non-Gregorian hosts carried five PRE-EXISTING failures
+/// (`DisplayFormattingTests.swift` :49/:59/:68/:69 and
+/// `NotificationReconciliationTests.swift:170` - 1 issue under Buddhist and
+/// Japanese, 5 under ar_SA), because `Date.FormatStyle` rendered through the
+/// process calendar (a `.locale()` call does not override it, so an explicit
+/// en_CA read "Aug 15, 2569 BE" on a Buddhist host) and interpolated counts
+/// took the process numbering system ("Every ٤٥ days", "١ subscription"
+/// through `String(localized:)`/`AttributedString(localized:)`). The
+/// formatters now honor the REQUESTED locale completely - calendar and
+/// numbering included - while the `.current` default keeps device rendering
+/// unchanged. The explicit-locale half is guarded on every host by
+/// `DisplayFormattingTests.requestedLocaleIsHonoredCompletely`; the
+/// day-CONVERSION assertions in this file still cannot fail on a Gregorian
+/// host, which is what the paragraph above records.
 @Suite("Calendar era: day conversions never resolve in the device calendar (F1)")
 struct CalendarEraTests {
 
@@ -79,15 +78,18 @@ struct CalendarEraTests {
         let instant = try #require(gregorian.date(from: day.dateComponents))
         let enCA = Locale(identifier: "en_CA")
 
-        // NOT `== "Aug 15, 2026"`. `Date.FormatStyle` renders through
-        // `Calendar.autoupdatingCurrent`, which a `.locale()` call does not
-        // override, so on a Buddhist device this correctly reads "Aug 15, 2569
-        // BE" - the right instant, written the way the rest of that phone
-        // writes it. What must hold on every device is that the instant being
-        // rendered is the one the stored day denotes.
+        // Since round 5, item 8 the style adopts the REQUESTED locale's
+        // calendar, so `displayText(locale: enCA)` reads "Aug 15, 2026" on a
+        // Buddhist device too (a Buddhist device still renders Buddhist years
+        // through the `.current` default). The assertion stays in
+        // instant-comparison form because what this file pins is the
+        // CONVERSION: the instant being rendered is the one the stored day
+        // denotes, whatever the rendering calendar.
         #expect(
             day.displayText(locale: enCA)
-                == instant.formatted(Date.FormatStyle(date: .abbreviated).locale(enCA))
+                == instant.formatted(
+                    Date.FormatStyle(date: .abbreviated, locale: enCA, calendar: enCA.calendar)
+                )
         )
     }
 
@@ -101,7 +103,11 @@ struct CalendarEraTests {
         gregorian.timeZone = .current
         let instant = try #require(gregorian.date(from: chargeDay.dateComponents))
         let enCA = Locale(identifier: "en_CA")
-        let rendered = instant.formatted(Date.FormatStyle(date: .abbreviated).locale(enCA))
+        // The requested locale's calendar, matching the round-5 item-8 rule
+        // `spokenText` itself now follows.
+        let rendered = instant.formatted(
+            Date.FormatStyle(date: .abbreviated, locale: enCA, calendar: enCA.calendar)
+        )
 
         let summary = DisputeSummary(
             subscriptionName: "Gate Test",
