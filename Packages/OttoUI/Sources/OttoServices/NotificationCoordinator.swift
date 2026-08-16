@@ -5,21 +5,9 @@ import OttoDomain
 import UIKit
 import UserNotifications
 
-/// The two calls the background-refresh handler makes on its task.
-///
-/// `BGAppRefreshTask` has no public initializer, so without this seam the whole
-/// background path - the pass, the completion latch, the expiration race, and
-/// whether the outcome is published at all - is reachable only from the OS.
-/// That is R4-2: the coordinator is inside `#if os(iOS)` and compiles to
-/// nothing under host `swift test`, and even on a simulator there was nothing a
-/// test could hand it. The seam is at the system boundary, not above the
-/// handler, so a fake cannot mock away the logic under test.
-public protocol BackgroundRefreshTask: AnyObject {
-    var expirationHandler: (() -> Void)? { get set }
-    func setTaskCompleted(success: Bool)
-}
-
-extension BGAppRefreshTask: BackgroundRefreshTask {}
+// `BackgroundRefreshTask` and `BackgroundTaskRegistering` - the two seams over
+// the `BGTaskScheduler` boundary this class consumes - live in
+// `BackgroundTaskSeams.swift` (a file_length split, round 5 item 10).
 
 /// The app-side wiring for spec §6.2's reschedule triggers. The app target
 /// creates one of these at launch and keeps it alive; everything else - what to
@@ -39,6 +27,10 @@ public final class NotificationCoordinator: NSObject {
     private let scheduler: any ReminderScheduling
     private let handler: NotificationActionHandler
     private let client: LiveNotificationClient
+    /// The app target passes nothing and gets `BGTaskScheduler.shared`; tests
+    /// inject a recording fake, so `start()`'s registration is assertable
+    /// (N3-6b, the `LiveNotificationClient(center:)` pattern).
+    private let taskRegistrar: any BackgroundTaskRegistering
     private let now: @Sendable () -> Date
     private let today: @Sendable () -> CalendarDay
     private let timeZone: @Sendable () -> TimeZone
@@ -57,6 +49,7 @@ public final class NotificationCoordinator: NSObject {
         scheduler: any ReminderScheduling,
         handler: NotificationActionHandler,
         client: LiveNotificationClient,
+        taskRegistrar: (any BackgroundTaskRegistering)? = nil,
         now: @escaping @Sendable () -> Date,
         today: @escaping @Sendable () -> CalendarDay,
         timeZone: @escaping @Sendable () -> TimeZone
@@ -64,6 +57,7 @@ public final class NotificationCoordinator: NSObject {
         self.scheduler = scheduler
         self.handler = handler
         self.client = client
+        self.taskRegistrar = taskRegistrar ?? BGTaskScheduler.shared
         self.now = now
         self.today = today
         self.timeZone = timeZone
@@ -74,7 +68,10 @@ public final class NotificationCoordinator: NSObject {
     /// registrations to happen before the app finishes launching.
     public func start() {
         client.registerCategories()
-        UNUserNotificationCenter.current().delegate = self
+        // Through the client's seam, not `UNUserNotificationCenter.current()`
+        // inline: the assignment used to be invisible to every test, and
+        // deleting it left both suites green (N3-6b's reproduction).
+        client.installDelegate(self)
 
         // `using: .main`, NOT nil. The SDK is explicit that nil means "a
         // default BACKGROUND queue", and this launch handler is formed inside
@@ -86,7 +83,7 @@ public final class NotificationCoordinator: NSObject {
         // handler body, so the task never reached `setTaskCompleted` on any
         // path. The handler only starts the work here; the async pass runs in
         // its own Task, so the main queue is not held.
-        let registered = BGTaskScheduler.shared.register(
+        let registered = taskRegistrar.register(
             forTaskWithIdentifier: Self.refreshTaskIdentifier, using: .main
         ) { [weak self] task in
             guard let self, let refreshTask = task as? BGAppRefreshTask else {
@@ -322,29 +319,53 @@ private final class CompletionLatch: @unchecked Sendable {
 
 extension NotificationCoordinator: UNUserNotificationCenterDelegate {
 
-    /// Foreground delivery: show the banner anyway - a reminder the user paid
-    /// for by opening the app is still a reminder - and treat delivery as the
-    /// §6.2 reschedule trigger it is. Nonisolated because the system calls the
-    /// delegate off the main actor and its parameters are not Sendable; nothing
-    /// from them is needed here.
+    /// Foreground delivery. Nonisolated because the system calls the delegate
+    /// off the main actor and its parameters are not Sendable; nothing from
+    /// them is needed, so the wrapper is one hop into the body below. The
+    /// wrapper itself stays OS-only: `UNNotification` has no public
+    /// initializer, which is N3-6b's residual floor.
     public nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await MainActor.run { _ = self.rescheduleSoon(.notificationDelivered) }
+        await notificationWillPresent()
+    }
+
+    /// `willPresent`'s whole body: show the banner anyway - a reminder the user
+    /// paid for by opening the app is still a reminder - and treat delivery as
+    /// the §6.2 reschedule trigger it is. Internal so the simulator tests drive
+    /// it (N3-6b); deleting the reschedule here left every suite green while it
+    /// lived in the wrapper.
+    func notificationWillPresent() -> UNNotificationPresentationOptions {
+        rescheduleSoon(.notificationDelivered)
         return [.banner, .sound, .list]
     }
 
-    /// A tap or an action button. The Sendable facts (two strings) are extracted
-    /// before any hop; the handler does the state work on its own actor, and the
-    /// follow-up plus the reschedule land back on the main actor.
+    /// A tap or an action button. The Sendable facts (two strings) are
+    /// extracted before the hop; everything else, the default-action mapping
+    /// included, lives in the body below, where tests reach it.
+    /// `UNNotificationResponse` has no public initializer, so this wrapper is
+    /// the residual floor's other half.
     public nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let actionIdentifier = response.actionIdentifier == UNNotificationDefaultActionIdentifier
-            ? "" : response.actionIdentifier
-        let notificationIdentifier = response.notification.request.identifier
+        await notificationResponseReceived(
+            actionIdentifier: response.actionIdentifier,
+            notificationIdentifier: response.notification.request.identifier
+        )
+    }
+
+    /// `didReceive`'s whole body, on the two facts the response carries. The
+    /// system default-action identifier maps to "" - the handler's spelling
+    /// for a plain tap; the handler does the state work on its own actor, and
+    /// the follow-up plus the reschedule run back here on the main actor.
+    func notificationResponseReceived(
+        actionIdentifier rawActionIdentifier: String,
+        notificationIdentifier: String
+    ) async {
+        let actionIdentifier = rawActionIdentifier == UNNotificationDefaultActionIdentifier
+            ? "" : rawActionIdentifier
         let followUp = try? await handler.handle(
             actionIdentifier: actionIdentifier,
             notificationIdentifier: notificationIdentifier,
@@ -352,12 +373,10 @@ extension NotificationCoordinator: UNUserNotificationCenterDelegate {
             today: today(),
             timeZone: timeZone()
         )
-        await MainActor.run {
-            if let followUp, followUp != .none {
-                self.onFollowUp?(followUp)
-            }
-            self.rescheduleSoon(.notificationAction)
+        if let followUp, followUp != .none {
+            onFollowUp?(followUp)
         }
+        rescheduleSoon(.notificationAction)
     }
 }
 #endif
