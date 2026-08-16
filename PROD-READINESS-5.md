@@ -43,11 +43,11 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 |---|---|---|---|
 | 1 | **N4-7 + N4-3** | The reschedule coalescing gate is in the wrong class, and the background pass is outside it | **RESOLVED** - stage 1; one REJECT cycle (`reviews-5/REVIEW-1.md`), remediated, re-review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-2.md`) |
 | 2 | **N4-2** | Negative-offset corrupt calendars still schedule reminders on wrong days, and no round has decided whether they should | **RESOLVED** - stage 2; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-3.md`), three P3s: one corrected in place, two carried (N5-4, N5-5) |
-| 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | **RESOLVED pending review** - stage 3 |
+| 3 | **N2-4** (reopened) | The reconcile failure list still truncates at the per-entry budget; round 2's closure was false | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), two P3s: the census corrected in place, the `failedCount=` guard strengthened in R5 |
 | 4 | **N4-16** | `lastUsedDate` has no repair on a paused, trial or cancelled subscription | **RESOLVED** - stage 2; reviewed with item 2 (**PASS-WITH-FINDINGS**, `reviews-5/REVIEW-3.md`); the recorded falsification reproduced to the byte, and the flagged wording question's deferral was endorsed |
-| 5 | **N4-1** | The export button's action is verified by nothing | open |
-| 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | **RESOLVED pending review** - stage 3 |
-| 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED pending review** - stage 3 |
+| 5 | **N4-1** | The export button's action is verified by nothing | **DEFERRED** - the user's decision, the UI-test-target dependency named in ITEM 5 below |
+| 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`) |
+| 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), the site census corrected in place |
 | 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | open |
 | 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | open |
 | 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | open |
@@ -319,6 +319,7 @@ The minimal honest one: the existing Usage section, with its existing button and
 Writing *today* is a correct repair for this field on every status, because the button's semantics ("I used this on this day") are exactly what the field records and today is the one day the user can truthfully assert from the screen.
 `nil` is not corruption and offers no repair; a plausible day off the active state stays hidden - §7.3's rule is otherwise unchanged.
 **Flagged for review rather than decided here**: whether the button deserves repair-specific wording on a non-active subscription ("I used this today" on a cancelled subscription is a semantically odd sentence for a correct action). No new user-facing copy was added; re-wording is new copy and this stage did not grant itself that exception.
+**Decided since**: asked directly after the R3 review endorsed the deferral, the user kept "I used this today" as the single label on every status; no re-wording ships.
 
 ### Tests, layered the way this rig can falsify them
 
@@ -347,7 +348,9 @@ Writing *today* is a correct repair for this field on every status, because the 
 
 ## ITEM 3 - N2-4 reopened, every failed rung is named
 
-**RESOLVED pending review**, stage 3 (run with items 6 and 7; one range, R4).
+**RESOLVED**, stage 3 (run with items 6 and 7; one range, R4).
+The R4 range (`cdb509e..7b6df8c`) was reviewed at `3c47505`: **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), two P3 findings.
+Finding 2 is this item's edge: `failedCount=` on the diff line - the field this section's aggregate-drop rationale cites as keeping the total - is executable-guarded only at zero, so hardcoding it survives the suite; the one-line strengthening inside the ceiling test's open window lands in R5 and is recorded there.
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -398,7 +401,8 @@ Battery discipline as ITEM 1's: each mutant applied by a script asserting the ta
 
 ## ITEM 6 - N4-10, the diff line has an executable guard
 
-**RESOLVED pending review**, stage 3.
+**RESOLVED**, stage 3; reviewed in R4 - **PASS-WITH-FINDINGS**, `reviews-5/REVIEW-4.md`.
+The review's own field-level mutants confirmed the guard catches a deleted `removed=[...]` as well as wholesale deletion; the `failedCount=` zero-only gap is REVIEW-4 finding 2, routed through ITEM 3's note above.
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -425,7 +429,10 @@ The R4-3 precedent applies verbatim: this query is already open, so the guard co
 
 ## ITEM 7 - N4-11, the canary is per-test
 
-**RESOLVED pending review**, stage 3.
+**RESOLVED**, stage 3; reviewed in R4 - **PASS-WITH-FINDINGS**, `reviews-5/REVIEW-4.md`.
+**Correction after `reviews-5/REVIEW-4.md` finding 1** - this section originally counted "ten" emission and `requireDelivered` sites; measured by enumeration there are ELEVEN emission sites at both ends of the range (`BoundaryLogTests` emits twice into one window) and eleven `requireDelivered` sites at the head (ten at the range start; that file's one check became two).
+The "ten" that is true is the `OSLogStore` reader count, which this section had let stand in for the site census - the same off-by-one population class `reviews-4/REVIEW-AA92CA7.md` findings 3 and 6 record.
+The two sentences below are corrected in place and name this correction.
 
 ### Reconfirmed at the stage start by executing the defect
 
@@ -437,7 +444,7 @@ Both shapes at `e93dabb`, before any edit, each file restored byte-identical aft
 ### What changed
 
 Both `OttoLogProbe`s: `emitCanary` now mints, emits and returns `otto.test.canary.<UUID>`, and `requireDelivered(_:canary:)` proves THE TEST'S OWN canary was delivered.
-All ten `requireDelivered` call sites pass their own token.
+All eleven `requireDelivered` call sites at this head pass their own token (corrected from "ten" per the note above).
 `BoundaryLogTests` strengthens in passing: its one read spans two categories, the shared literal let EITHER category's delivery satisfy the single check, and it now calls `requireDelivered` once per category token, so both must deliver.
 This is the structural fix for the round-4 general form: for the one line class tests themselves emit, the tree can now prove a log line came from a particular test instead of merely making collision unlikely, and the standing rule's per-falsification `--filter` disclosure becomes unnecessary for canaries.
 
@@ -461,7 +468,7 @@ The stage-start reproductions - the same deletions that ran green before the fix
 ### Cost and surface
 
 - No `OSLogStore` reader added, no query added, no test added or removed; the count stays ten and every canary rides the window its test already opens.
-- Ten emission sites and ten `requireDelivered` sites updated in eight files, all test-side; no production code changed.
+- Eleven emission sites and eleven `requireDelivered` sites at the head (ten `requireDelivered` at the range start) updated in eight files, all test-side; no production code changed (corrected from "ten" per the note above).
 
 ### Measured at the stage-3 head (`ebd85c9`) - all five
 
@@ -472,6 +479,17 @@ The stage-start reproductions - the same deletions that ran green before the fix
 | simulator suite | 133 / 72 / 63, 9 known issues, `** TEST SUCCEEDED **` | **132 / 72 / 63, 9 known issues, `** TEST SUCCEEDED **`** | the same -1, same 9 known issues |
 | non-Gregorian harness | 1 / 1 / 5 | **1 / 1 / 5**, same five citations | unchanged |
 | flake, twelve full host runs | 12 of 12 (228 tests per run) | **12 of 12** (227 tests per run) | unchanged |
+
+---
+
+## ITEM 5 - N4-1, the export button's closure
+
+**DEFERRED**, by the user's decision, taken this round on 2026-08-15, with the dependency named.
+
+The defect is real and unchanged: deleting the sole call from the Settings export button's tap to `AppModel.requestExport(_:)` leaves the whole simulator suite green.
+Round 4 moved the export state machine onto the model, where eight tests reach it, so the untested surface is one closure with no logic in it - and that closure is unreachable by any test this project can run.
+Closing it requires a UI-test target driving the real Settings screen; rounds 4 and 5 were not permitted to add one by default, and asked directly this round, the user chose deferral over adding it.
+The dependency, named for whoever picks this up: an `OttoUITests` UI-testing bundle target (a new target, new scheme membership, a slower suite), and nothing smaller closes the gap.
 
 ---
 
@@ -497,7 +515,8 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R1** `d7cbd37..c26b2a7` | `eb4d2ae`, `c26b2a7` | `reviews-5/REVIEW-1.md` - **REJECT** |
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
 | **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
-| **R4** `cdb509e..` the stage-3 head | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), and the commit adding this stage's ledger sections, which is the range's HEAD | **review pending** |
+| **R4** `cdb509e..7b6df8c` | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), `7b6df8c` (the stage's ledger sections, the range's HEAD) | **PASS-WITH-FINDINGS** at `3c47505` (`reviews-5/REVIEW-4.md`) |
+| **R5** `7b6df8c..` the stage-4 head | `3c47505` (the review artifact) and the stamping commit that carries this row (R4's record-only tail), then stage 4: items 8 and 9 under the user's decisions, the REVIEW-4 finding-2 strengthening, and the ledger commit that is the range's HEAD | **review pending** |
 
 ## NEXT ROUND
 
