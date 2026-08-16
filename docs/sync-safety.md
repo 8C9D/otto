@@ -91,13 +91,30 @@ CloudKit mirroring resolves field-level conflicts by last-writer-wins, and the a
 **Both assume the clock only moves forward.** A record stamped in the future wins every conflict until the world catches up; a record stamped in the past can never win one, so a genuine later edit is silently discarded.
 Note also that §8 prerequisite 4 already documents "last-writer-wins still applies field-by-field" as its residual risk - **this finding is that risk's input being untrustworthy**, which is a level below where the audit had been looking.
 
-**Not fixed here, and deliberately so** - the fix is a design decision for 6B, not a patch. The options:
+The fix was a design decision for 6B, not a patch. The options, as they stood:
 
 1. **Reject the premise**: order by something monotonic per device - a Lamport/hybrid-logical clock or a per-record version counter - and keep wall-clock stamps for display only. Correct, and the largest change.
 2. **Clamp on write**: never let a record's `updatedAt` go backwards, and never let `createdAt` exceed the write instant. Cheap, local, and does not help across devices whose clocks disagree.
 3. **Detect and refuse**: treat `deletedAt < createdAt` (and any backwards `updatedAt`) as a §4a read-repair shape - surface it rather than merging on it. Cheapest, and at minimum makes the condition visible instead of silent.
 
-**Whatever 6B chooses, the standing rule is that a device clock the user can set is not a monotonic source, and no merge rule may assume it is.**
+### Decided 2026-08-16: options 2 and 3 combined; option 1 rejected
+
+Full record in `DECISIONS.md` ("Sync safety - the monotonicity decision").
+What now exists:
+
+- **Write clamps** (`monotonicStamp(_:notBefore:)`, `RecordStamps.swift`): every mutation stamp is `max(now, current updatedAt)`, every tombstone stamp is floored at the record's `createdAt` - domain transitions, the store's delete cascades and restore path, the reconciliation pass, and the service-layer stamping sites.
+  The observed shape (`deletedAt < createdAt`) can no longer be written by this device, whatever the clock does.
+- **Order repair at import** (`resolveImport`): before any rule compares them, every record on BOTH sides - embedded children included - has `updatedAt`/`deletedAt` raised to its own `createdAt`.
+  Pure function of record data, so every device converges; `createdAt` is never moved, because the ledger merge orders on it.
+  Counted in `ImportSummary.timestampOrderRepairs` and logged on the `import end` line.
+- **Future-stamp defusal at import**: any stamp ahead of the import instant is clamped to it, both sides, both strategies, so a future stamp cannot stay sticky and win merges until real time catches up.
+  Counted in `ImportSummary.futureStampClamps`, same log line.
+
+Option 1 was rejected because CloudKit's own field-level conflict resolution cannot be fed a logical clock - it would be the largest change with partial coverage - and is held in reserve if two-device damage is ever observed.
+**Accepted residual**: honest cross-device clock skew still orders last-writer-wins wrongly; that is §8 prerequisite 4's documented residual, and the snapshot / kill switch / restore floor is the mitigation.
+Q1's earliest-`createdAt` caveat also stands: a `createdAt` written under a dishonest clock has no local reference to repair against, so the ledger-twin winner can still be the wrong twin - the clamps bound the damage (no regressive or future stamps survive a write or an import) without claiming to restore causal order.
+
+**The standing rule holds: a device clock the user can set is not a monotonic source, and no merge rule may assume it is.**
 
 ## The four §8 prerequisites, and what each does NOT protect against
 

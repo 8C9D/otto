@@ -3,6 +3,37 @@
 Rulings made during implementation, with rationale and the alternatives they displaced.
 Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records the calls a wave made where the spec left room.
 
+## Sync safety - the monotonicity decision (2026-08-16, user-approved)
+
+The clock-monotonicity defect (`docs/sync-safety.md`, "Wall-clock timestamps are a merge input") was the last blocker before 6B.
+Of the three recorded options the user approved **2 and 3 combined** - clamp on write, detect-and-repair at merge input - plus a future-stamp clamp at import; **option 1 (logical clocks / version counters) was rejected**.
+
+### Why option 1 lost
+
+CloudKit's field-level conflict resolution is SwiftData's, not ours: it cannot be fed a Lamport or hybrid-logical clock, so the largest option would rebuild ordering for the app-level decision sites while the deepest instance of the monotonicity assumption stayed untouched.
+Held in reserve: if two-device damage is ever observed in practice, this decision reopens.
+
+### What was built
+
+- `monotonicStamp(_:notBefore:)` (`OttoDomain/Models/RecordStamps.swift`): every mutation stamp is `max(now, current updatedAt)`; every tombstone stamp is floored at the record's own `createdAt`.
+  Applied at every stamping site found by exhaustive grep: domain transitions and verification folds, pause-episode resume, the rival-cancellation merge, the store's delete cascades, restore tombstoning, the reconciliation pass, and the service/store-model stamping sites (evidence notes, flow services, form models, the default-card unmark, which copied another record's stamp and could regress).
+- `resolveImport` repairs stamps on BOTH sides, both strategies, before any comparison: `updatedAt`/`deletedAt` below `createdAt` are raised to it (`createdAt` is never moved - the ledger merge orders on it), then any stamp ahead of the import instant is clamped to it.
+  Embedded children (trial, pause episodes, evidence notes) are repaired too, because a future `createdAt` on a pause episode is exactly what `SubscriptionReadRepair` would promote into a calendar day.
+  Counted in two new `ImportSummary` fields - `timestampOrderRepairs`, `futureStampClamps` - and logged on `ExportService`'s `import end` line; no UI change.
+
+### The calls inside the call
+
+1. **Symmetric clamping** (current database side too, not just the file's): a locally stored future stamp is just as sticky as an imported one, and the write-time clamp is a `max` that can never lower it - the import is the only pass that can defuse stored future stamps. Deterministic given (snapshots, instant).
+2. **Two existing test fixtures were corrected, disclosed here**: `selfImportIsNoOp` and the legacy round-trip test passed import instants that PRECEDED their own fixture data by ~25 years - a shape an honest import cannot produce and the new clamp rightly rejects. The instants were moved after the fixture stamps; every assertion was preserved, and `selfImportIsNoOp` gained four more (`removed == 0`, `skippedOlder > 0`, both new counts zero). No assertion was removed or weakened.
+3. **The incident is a permanent test**: `ImportStampRepairTests` carries the real Gate Test instants (`createdAt` 2026-08-10T14:11:05Z, `deletedAt` 2026-08-08T17:32:09Z) so the repair is pinned to the data that motivated it.
+
+### Accepted residuals, stated
+
+- Honest cross-device clock skew still orders last-writer-wins wrongly (§8 prerequisite 4's documented residual; snapshot / kill switch / restore are the floor).
+- A dishonest `createdAt` has no local reference to repair against, so §5.3's earliest-`createdAt` ledger merge can still crown the wrong twin; the clamps bound the damage without claiming to restore causal order.
+
+Verified: OttoDomain 275 (was 265), OttoPersistence 130 (was 127), OttoUI 233 tests all passing; `swiftlint --strict` clean over 238 files.
+
 ## Gate 3 — delete-and-reinstall
 
 ### The import summary is correct, and was re-derived rather than screenshotted
