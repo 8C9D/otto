@@ -50,7 +50,7 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 | 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), the site census corrected in place |
 | 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | **RESOLVED** - stage 4; review **PASS**, no findings (`reviews-5/REVIEW-5.md`); the harness is 0 / 0 / 0 for the first time since round 2, and the review confirmed it under two locales the stage never ran |
 | 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | **RESOLVED** - stage 4; review **PASS**, no findings (`reviews-5/REVIEW-5.md`); the approved copy verified verbatim against the decision record |
-| 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | **RESOLVED pending review** - stage 5; the R6 range |
+| 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | **RESOLVED** - stage 5; review **PASS**, no findings (`reviews-5/REVIEW-6.md`) |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded).
 There are no others.
@@ -640,7 +640,9 @@ The dependency, named for whoever picks this up: an `OttoUITests` UI-testing bun
 
 ## ITEM 10 - N3-6b, `start()` and the delegate have tests
 
-**RESOLVED pending review**, stage 5 (`86afee0`).
+**RESOLVED**, stage 5 (`86afee0`); reviewed in R6 - **PASS**, no findings (`reviews-5/REVIEW-6.md` at `19fb953`).
+The review reproduced both sides of the reproduction (the two deletions green at `fcd4079`, dead at exactly the named tests at `ce124f5`), re-ran three battery mutants to identical kill sets including the proof that the timezone test drives the real `NSSystemTimeZoneDidChange` observer, and confirmed `OttoApp.swift` at a zero-line diff with registration still synchronous.
+Two non-findings it recorded: the floor's `:88-93` span is one line short of the dispatch at `:94` it correctly names, and `scheduleNextBackgroundRefresh`'s bare `BGTaskScheduler.shared.submit` - outside this item's entry points, pre-existing - is carried as **N5-6**.
 The last open work-list item: the entry points R4-2 could not reach - `start()` and the two delegate methods - are now driven by tests, and the surface no test in this rig can ever reach is stated below as the residual floor rather than pretended away.
 
 ### Reconfirmed at the stage start by executing the defect
@@ -748,7 +750,8 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
 | **R4** `cdb509e..7b6df8c` | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), `7b6df8c` (the stage's ledger sections, the range's HEAD) | **PASS-WITH-FINDINGS** at `3c47505` (`reviews-5/REVIEW-4.md`) |
 | **R5** `7b6df8c..ff554cf` | `3c47505` (the review artifact) and `b99d8dc` (the stamping commit, R4's record-only tail), then stage 4: `1f6b2f7` (item 8), `d8ac728` (item 9), `4e23288` (the REVIEW-4 finding-2 strengthening), `ff554cf` (the stage's ledger sections, the range's HEAD) | **PASS** at `07c00b2` (`reviews-5/REVIEW-5.md`), no findings |
-| **R6** `ff554cf..` the stage-5 head | `07c00b2` (the review artifact) and `fcd4079` (the stamping commit, R5's record-only tail), then stage 5: `86afee0` (item 10), and the ledger commit that carries this row, which is the range's HEAD | **review pending** |
+| **R6** `ff554cf..ce124f5` | `07c00b2` (the review artifact) and `fcd4079` (the stamping commit, R5's record-only tail), then stage 5: `86afee0` (item 10), `ce124f5` (the stage's ledger section, the range's HEAD) | **PASS** at `19fb953` (`reviews-5/REVIEW-6.md`), no findings |
+| **R7** `ce124f5..` the terminal head | `19fb953` (the review artifact), the item-10 stamping commit, and the TERMINATION commit that is the round's final HEAD | **record-only tail** - stamping and termination records carry no code; declared here so no commit falls outside every range, and flagged with R0 in the terminal reconciliation |
 
 ## NEXT ROUND
 
@@ -771,3 +774,5 @@ Round 4's NEXT ROUND section remains the ledger of record for everything this ro
 - **N5-5 (P3) - the §7.2 zombie report reads a corrupt `lastUsedDate` raw.**
   `reviews-5/REVIEW-3.md` finding 3, executed: a behind-offset day puts a subscription IN the report (~78 years unused) and an ahead-offset day keeps a genuinely unused one OUT, both wrong until the item-4 button is tapped.
   The `lastUsedDate` sibling of N5-3's `pauseEndsOn` display surface; pre-existing, mitigated by item 4 making the repair reachable.
+- **N5-6 (P3) - `scheduleNextBackgroundRefresh` still calls `BGTaskScheduler.shared.submit` bare.**
+  `reviews-5/REVIEW-6.md` recorded it as a non-finding: outside item 10's entry points and pre-existing, its success branch is unreachable in this rig; the `BackgroundTaskRegistering` seam item 10 added is the natural home if a later round wants it testable.
