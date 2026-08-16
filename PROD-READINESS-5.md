@@ -48,8 +48,8 @@ Item 1 leads because N4-7 is the highest-value code fix on the carried list, and
 | 5 | **N4-1** | The export button's action is verified by nothing | **DEFERRED** - the user's decision, the UI-test-target dependency named in ITEM 5 below |
 | 6 | **N4-10** | The §6.2 reconcile diff line has no executable guard | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`) |
 | 7 | **N4-11** | A sibling's canary masks a deleted canary wherever tests share a log window | **RESOLVED** - stage 3; review **PASS-WITH-FINDINGS** (`reviews-5/REVIEW-4.md`), the site census corrected in place |
-| 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | **RESOLVED pending review - stage 4**; the harness is 0 / 0 / 0 for the first time since round 2 |
-| 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | **RESOLVED pending review - stage 4**; the user's approved copy, verbatim |
+| 8 | **N2-1** | Five locale-sensitive test citations fail under non-Gregorian hosts | **RESOLVED** - stage 4; review **PASS**, no findings (`reviews-5/REVIEW-5.md`); the harness is 0 / 0 / 0 for the first time since round 2, and the review confirmed it under two locales the stage never ran |
+| 9 | **N3-5** | The gap card's copy is false for the implausible-days case, now including Indian/Saka | **RESOLVED** - stage 4; review **PASS**, no findings (`reviews-5/REVIEW-5.md`); the approved copy verified verbatim against the decision record |
 | 10 | **N3-6b** | `NotificationCoordinator.start()` and the delegate have no test | open |
 
 Terminal states are **RESOLVED** (with artifact evidence), **DEFERRED** (with reason), or **REJECTED TWICE** (reverted, objection recorded).
@@ -485,7 +485,8 @@ The stage-start reproductions - the same deletions that ran green before the fix
 
 ## ITEM 8 - N2-1, the formatters honor the requested locale
 
-**RESOLVED pending review**, stage 4 (`1f6b2f7`).
+**RESOLVED**, stage 4 (`1f6b2f7`); reviewed in R5 - **PASS**, no findings (`reviews-5/REVIEW-5.md` at `07c00b2`).
+The review reproduced the pre-fix 1/1/5 at `7b6df8c`, measured 0 issues under `he_IL@calendar=hebrew` and `fa_IR@calendar=persian` in addition to the three declared locales, and probed that `.current` defaults still render the process calendar and numerals - the decision's no-user-visible-change half, held.
 
 **The decision this item was waiting on has been taken - by the user, not by this run, 2026-08-15**: formatters fully HONOR THE REQUESTED LOCALE - calendar and numbering system included - with the locale threaded through `cycleText`/`subscriptionCountText` (default `.current`), and NOT the pin-to-Gregorian option.
 A Buddhist device must still render Buddhist years through `.current`; only an explicitly passed locale is honored completely.
@@ -550,7 +551,8 @@ M1-M3 are the Gregorian-host falsifications this item never had; M4 is the harne
 
 ## ITEM 9 - N3-5, the gap card tells deliberate silencing from failure
 
-**RESOLVED pending review**, stage 4 (`d8ac728`).
+**RESOLVED**, stage 4 (`d8ac728`); reviewed in R5 - **PASS**, no findings (`reviews-5/REVIEW-5.md` at `07c00b2`).
+The review retyped the approved sentences from the decision record rather than the source and matched all four branches verbatim, executed the mixed-pass subset membership, and reproduced the pixel falsification to the byte.
 
 **The copy is the user's, approved 2026-08-15, and ships verbatim**: the corrupt-date headline is `"\(subscriptionCountText(N)) with unusable dates"`; the corrupt-date detail is "Their stored dates aren't real calendar days, so Otto has stopped their reminders on purpose. Nothing was deleted. Open each subscription and fix its dates - reminders resume automatically once every date is fixed."; the existing transient copy stays for genuine failures; a mixed pass shows the corruption sentence too, as the actionable half.
 The surrounding copy is number-invariant by design - the inflection engine does not conjugate verbs.
@@ -659,7 +661,8 @@ This section exists because `reviews-5/REVIEW-1.md` finding 6 found the round's 
 | **R2** `c26b2a7..` the remediation head | `3173ba4` (the review artifact itself), `124ec44`, `83f9717`, and the commit adding this section, which is the range's HEAD (`c94dbbd`) | **PASS-WITH-FINDINGS** at `fedb636` (`reviews-5/REVIEW-2.md`); the re-review artifact and the terminal-stamping commit after it are record-only and carry no code |
 | **R3** `c94dbbd..cdb509e` | `fedb636` and `bb0c0f9` (R2's record-only tail, inside a stated range per REVIEW-1 finding 6), then stage 2: `fa9b3f4` (item 2), `617e7c6` (file split), `13082eb` (item 4), `22f2a72` (user doc), `bc2256c` (the ledger record), `cdb509e` (the five-dimension stamp, the range's HEAD) | **PASS-WITH-FINDINGS** at `773672c` (`reviews-5/REVIEW-3.md`) |
 | **R4** `cdb509e..7b6df8c` | `773672c` (the review artifact) and `e93dabb` (the finding-routing commit, R3's record-only tail), then stage 3: `bba63cb` (item 3), `2f74aa8` (item 6), `ebd85c9` (item 7), `7b6df8c` (the stage's ledger sections, the range's HEAD) | **PASS-WITH-FINDINGS** at `3c47505` (`reviews-5/REVIEW-4.md`) |
-| **R5** `7b6df8c..` the stage-4 head | `3c47505` (the review artifact) and `b99d8dc` (the stamping commit, R4's record-only tail), then stage 4: `1f6b2f7` (item 8), `d8ac728` (item 9), `4e23288` (the REVIEW-4 finding-2 strengthening), and the ledger commit carrying these sections, which is the range's HEAD | **review pending** |
+| **R5** `7b6df8c..ff554cf` | `3c47505` (the review artifact) and `b99d8dc` (the stamping commit, R4's record-only tail), then stage 4: `1f6b2f7` (item 8), `d8ac728` (item 9), `4e23288` (the REVIEW-4 finding-2 strengthening), `ff554cf` (the stage's ledger sections, the range's HEAD) | **PASS** at `07c00b2` (`reviews-5/REVIEW-5.md`), no findings |
+| **R6** `ff554cf..` the stage-5 head | `07c00b2` (the review artifact) and the stamping commit that carries this row (R5's record-only tail), then stage 5: item 10, and the ledger commit that is the range's HEAD | **review pending** |
 
 ## NEXT ROUND
 
