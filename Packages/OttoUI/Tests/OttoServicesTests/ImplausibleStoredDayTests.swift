@@ -44,6 +44,10 @@ struct ImplausibleStoredDayTests {
         // What changed: the pass says so.
         #expect(outcome.ledgerFailures == [corrupt.id])
         #expect(outcome.canClaimCoverage == false)
+        // And says it was DELIBERATE (round 5, item 9): the implausible-day
+        // subset is what lets the gap card stop describing this silencing as
+        // a transient failure.
+        #expect(outcome.implausibleDayFailures == [corrupt.id])
     }
 
     @Test("a healthy subscription is completely untouched by the check")
@@ -62,8 +66,34 @@ struct ImplausibleStoredDayTests {
         #expect(outcome.scheduledCount == 4)
         #expect(await client.pendingRequests().count == 4)
         #expect(outcome.ledgerFailures.isEmpty)
+        #expect(outcome.implausibleDayFailures.isEmpty)
         #expect(outcome.canClaimCoverage)
         #expect(outcome.coveredThrough == today.adding(days: 90))
+    }
+
+    /// Round 5, item 9: the two failure kinds stay distinguishable through the
+    /// outcome. A transient materialization failure and a deliberate
+    /// implausible-day silencing in ONE pass - the mixed shape the gap card's
+    /// third wording exists for - must land as two `ledgerFailures` with
+    /// exactly one of them in `implausibleDayFailures`, or the card upstream
+    /// cannot tell "wait, it will retry" apart from "repair the dates".
+    @Test("⛔ a transient ledger failure is never reported as an implausible-day silencing")
+    func transientFailureIsNotMarkedImplausible() async throws {
+        let fixture = SchedulerFixture()
+        let (scheduler, subscriptions, events) = (fixture.scheduler, fixture.subscriptions, fixture.billingEvents)
+        let today = try day(2026, 8, 11)
+        let corrupt = try makeSubscription(index: 1, cycleStartDay: try eraNumberedAnchor())
+        let transient = try makeSubscription(index: 2, name: "Transient", cycleStartDay: try day(2026, 8, 6))
+        try await subscriptions.seed([corrupt, transient])
+        await events.failMaterialize(forSubscription: transient.id)
+
+        let outcome = try await scheduler.reschedule(
+            now: try fixtureNow(), today: today, timeZone: torontoZone
+        )
+
+        #expect(Set(outcome.ledgerFailures) == Set([corrupt.id, transient.id]))
+        #expect(outcome.implausibleDayFailures == [corrupt.id])
+        #expect(outcome.canClaimCoverage == false)
     }
 
     /// ⛔ N3-1. Indian/Saka was the second of the two calendars round 3 recorded

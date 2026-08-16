@@ -133,6 +133,9 @@ struct DynamicTypeTests {
     func coverageGapCard() {
         assertGrows(CoverageGapCard(failureCount: 3))
         assertGrows(CoverageGapCard(failureCount: 0))
+        // Item 9's other wordings grow too: corrupt-only and mixed.
+        assertGrows(CoverageGapCard(failureCount: 3, implausibleCount: 3))
+        assertGrows(CoverageGapCard(failureCount: 3, implausibleCount: 1))
     }
 
     @Test("the payment-method row grows to the largest accessibility size")

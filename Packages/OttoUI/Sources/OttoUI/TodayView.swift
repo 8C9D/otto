@@ -130,7 +130,10 @@ struct TodayView: View {
 
     private var coverageGapSection: some View {
         Section {
-            CoverageGapCard(failureCount: model.notifications?.outcome?.ledgerFailures.count ?? 0)
+            CoverageGapCard(
+                failureCount: model.notifications?.outcome?.ledgerFailures.count ?? 0,
+                implausibleCount: model.notifications?.outcome?.implausibleDayFailures.count ?? 0
+            )
         }
     }
 
@@ -227,64 +230,6 @@ struct TodayView: View {
         case .authorized:
             EmptyView()
         }
-    }
-}
-
-/// One Today card: what it is, why it is here, and when.
-/// The coverage sentence's counterpart, in the aggregate-card shape
-/// `unreadableRecordsSection` established: say that reminders could not be
-/// updated, and how many subscriptions it touched.
-///
-/// A count and nothing else. Naming the vendors would put subscription content
-/// on a screen readable at a glance, and the user does not need it to know
-/// something is wrong - `ledgerFailures` carries only UUIDs anyway.
-///
-/// Its own `View` rather than a method on `TodayView`, following `TodayEntryRow`:
-/// a private `@ViewBuilder` that reads `model` cannot be rendered by a test, and
-/// this card is new copy that has to be seen to be believed.
-struct CoverageGapCard: View {
-    /// Zero when the whole pass failed, so there is no per-subscription count to
-    /// give - a different sentence, because "0 subscriptions couldn't be
-    /// updated" is not what happened.
-    let failureCount: Int
-
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(headline)
-                    .font(.headline)
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        } icon: {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    /// Not private, for the same reason `InsightsView.monthText` is not: the
-    /// choice BETWEEN the two wordings needs no accessibility tree to assert,
-    /// and while it was private both could be swapped - rendering "0
-    /// subscriptions couldn't be updated" for a whole failed pass - with every
-    /// test on both the host and the simulator green.
-    var headline: String {
-        failureCount > 0
-            ? String(localized: "\(subscriptionCountText(failureCount)) couldn't be updated")
-            : String(localized: "Reminders couldn't be updated")
-    }
-
-    var detail: String {
-        failureCount > 0
-            ? String(localized: """
-              Otto couldn't refresh their reminders on its last check, so some may be missing. \
-              Nothing was deleted, and it will try again.
-              """)
-            : String(localized: """
-              Otto's last check didn't finish, so some reminders may be missing. \
-              Nothing was deleted, and it will try again.
-              """)
     }
 }
 

@@ -170,48 +170,9 @@ struct TodaySectionPlanTests {
     }
 }
 
-/// R4-1's copy. Asserting the RENDERED string needs an accessibility tree this
-/// host does not vend, but choosing between the two wordings does not - and
-/// while that choice was private both could be swapped, so a whole failed pass
-/// rendered "0 subscriptions couldn't be updated", with every test green.
-@Suite("The coverage-gap card says the right one of its two things")
-struct CoverageGapCardTests {
-
-    @Test("⛔ a whole failed pass never claims a count, least of all zero")
-    func aWholePassFailureHasNoCount() {
-        let card = CoverageGapCard(failureCount: 0)
-        #expect(card.headline == "Reminders couldn't be updated")
-        // The sentence this branch exists to prevent. `subscriptionCountText(0)`
-        // rather than "0", so the assertion holds in a locale whose numbering
-        // system does not use ASCII digits.
-        #expect(!card.headline.contains(subscriptionCountText(0)))
-        #expect(card.detail.contains("didn't finish"))
-    }
-
-    @Test("a partial failure names how many subscriptions, inflected, and no more than that")
-    func aPartialFailureNamesTheCount() {
-        // Compared against `subscriptionCountText`, not against a literal
-        // "1 subscription": under a locale with its own numbering system that
-        // phrase is "١ subscription", and pinning the ASCII form made this suite
-        // fail on a host the run itself created as an evidence surface. The
-        // branch is still pinned - swap the wordings and the count phrase is
-        // absent from the headline entirely.
-        // Exact equality, with the count phrase interpolated rather than
-        // spelled out: that pins the WHOLE string and still holds in a locale
-        // whose numbering system is not ASCII. `contains` alone would accept
-        // "1 subscription subscriptions couldn't be updated".
-        let one = CoverageGapCard(failureCount: 1)
-        #expect(one.headline == "\(subscriptionCountText(1)) couldn't be updated")
-        let three = CoverageGapCard(failureCount: 3)
-        #expect(three.headline == "\(subscriptionCountText(3)) couldn't be updated")
-        // The count is actually used, rather than a fixed phrase that happens
-        // to contain one of them.
-        #expect(one.headline != three.headline)
-        // Wave 10 defect I: the inflection must be RESOLVED, not left as markup.
-        #expect(!three.headline.contains("^["))
-        #expect(three.detail.contains("their reminders"))
-    }
-}
+// `CoverageGapCardTests` - the card's copy suite - moved to
+// CoverageGapCardTests.swift when item 9's copy matrix pushed this file past
+// SwiftLint's 400-line file_length; the rendering suite lives there too.
 
 private struct SchedulerFailed: Error {}
 

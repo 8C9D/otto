@@ -10,7 +10,7 @@ Carry-over candidates for a later wave: simulator-hosted `NotificationCoordinato
 
 Otto stores billing dates as plain year/month/day numbers. A build before F1 resolved those numbers through the *device's* calendar, so a phone set to Buddhist, Japanese, Islamic, Persian, Coptic, Minguo, Chinese, Hebrew or Indian wrote an era-numbered year into billing data - 2569 rather than 2026 on a Buddhist device, 1948 rather than 2026 on an Indian one. F1 stopped new writes from going wrong. **It repaired nothing already stored, and no automatic repair is possible**: which calendar wrote a given day was never recorded, and guessing it would rewrite dates that are correct. `PROD-READINESS-3.md` ITEM 1 has the full reasoning.
 
-**How to tell.** The subscription list and detail screens show the wrong dates in plain sight - "Aug 6, 2569". Today shows the coverage-gap card ("N subscriptions couldn't be updated"), and the unified log carries one line per affected subscription naming exactly which days are wrong:
+**How to tell.** The subscription list and detail screens show the wrong dates in plain sight - "Aug 6, 2569". Today shows the coverage-gap card, which since round 5 says what actually happened ("N subscriptions with unusable dates" - Otto stopped their reminders on purpose, and fixing the dates is what brings them back), and the unified log carries one line per affected subscription naming exactly which days are wrong:
 
 ```
 log show --predicate 'subsystem == "com.arthurzhang.otto" AND category == "scheduling"' --last 1h
