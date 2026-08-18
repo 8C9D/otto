@@ -14,7 +14,7 @@ Since the merge, `f6c63f7` implemented the sync-safety monotonicity decision and
 That numbering is not the spec's: §8 gates 6B on the four manual procedures in `docs/manual-verification.md`, and its run log records procedures 1, 2 and 4 as PASS with no row for procedure 3, the hands-on add-a-subscription pass that the spec's Wave 3 row still calls unsigned-off.
 The next wave is 6B, CloudKit activation, per `docs/next-wave.md`; the clock-monotonicity defect no longer blocks it.
 The closing table in `docs/cloudkit-readiness.md` is a Wave 6A report-only audit, not a live TODO: rows 1, 2, 3 and 5 were built by 6B-Prep and 6B-Prep-2 (absence is no longer deletion, `SyncActivationService` carries snapshot plus kill switch plus purge, `OttoStore.reconcile(at:)` converges, `CloudKitCompatibilityTests` asserts the migration chain).
-What is genuinely open before 6B is the §9a defect where an import into an empty database runs `.merge` and skips watermark reconstruction; the zone purge's cloud half and the kill-switch refusal test are day-one-of-6B work by design, not preconditions.
+The only thing genuinely open before 6B is manual procedure 3, the hands-on add-a-subscription pass that has no row in `docs/manual-verification.md`'s run log; the §9a defect where an import into an empty database runs `.merge` and skips watermark reconstruction was fixed at `b15b0a6` (2026-08-10) and refined at `d00c086` (2026-08-11), and the zone purge's cloud half and the kill-switch refusal test are day-one-of-6B work by design, not preconditions.
 `main` is three commits ahead of `origin/main`, which is `git@github.com:8C9D/otto.git` and private (spec §10, decision 6).
 
 ## Build and test

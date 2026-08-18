@@ -58,6 +58,8 @@ Observed live in the Gate 3 run: the device restored with three correct subscrip
 
 Recommended fix (not applied here - recorded for the wave that owns it): run an empty-database import as `.replace`. The record outcome is identical by construction, and it is the only branch that reconstructs. Better still, decouple the watermark policy from the merge strategy, since they answer different questions and only one of them is the user's to decide.
 
+**Clarification added 2026-08-18, in the doc reconciliation.** The passage above is the Gate 3 write-up as it was recorded on 2026-08-08, and it was true then; "not applied here" means not applied inside that run's range. The recommendation it prefers was taken two days later: the decoupling landed at `b15b0a6` (2026-08-10, "Reconstruct watermarks when an import lands in an empty database") and was refined at `d00c086` (2026-08-11, "Key the watermark policy on live subscriptions, and guard all three reads"), which keyed the policy on `hasNoLiveSubscriptions` rather than `isEmpty` because a database whose subscriptions are all tombstoned is not empty - `completeSnapshot()` carries tombstones by design - yet carries no watermarks either. So the defect stopped being open on 2026-08-10; what stayed stale until this reconciliation was the documentation of it, here and in §9a, `docs/next-wave.md` and `CLAUDE.md`. No new decision is recorded: the decision was made in those two commits.
+
 ### ⚠ The restored device does not match the verified export, and the code is not the reason
 
 The device container holds 4 subscriptions / 7 billing events / 0 cancellation episodes; the verified export carries 5 / 12 / 1.

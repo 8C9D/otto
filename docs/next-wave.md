@@ -71,7 +71,7 @@ Full evidence in the `docs/manual-verification.md` run log (2026-08-16 row).
 | Notifications re-scheduled | ✅ 2026-08-16: `permission=authorized scheduled=7 coveredThrough=2026-11-14 ledgerFailures=0`; all 7 identifiers (each carrying its trigger date) captured via reconcile read-back and content-compare - see the run log for why LLDB cannot dump the pending set on this host |
 
 The verified export (`<backup-dir>/Otto-Export-VERIFIED-pre-gate3-2026-08-08T2213Z.json`, sha256 `b578cde5…`, 9,264 bytes) and the two raw container backups in `<backup-dir>/otto-container-backup-*` remain on disk; read copies, never the originals (`sqlite3` truncates a WAL on open).
-The Replace path was chosen by hand because the empty-database `.merge` default that skips watermark reconstruction (§9a) is still unfixed - that defect stands, see below.
+The Replace path was chosen by hand because procedure 4's step 6 in `docs/manual-verification.md` says to, and that step's stated reason - the empty-database `.merge` default skips watermark reconstruction (§9a) - was already false on the day: the defect was fixed at `b15b0a6` (2026-08-10) and refined at `d00c086` (2026-08-11), while the warning text has stood unchanged since it was written on 2026-08-08. Which build was on the phone is unrecorded, and answering Replace by hand reconstructs watermarks on a fixed and an unfixed build alike, so the run's own evidence cannot settle it either way - see defect 1 below.
 New P3 observation carried to the next round: a settings `stateChange` runs the full scheduling pass twice concurrently (duplicated pass/ledger/reconcile lines), idempotent but doubled.
 
 ## The honest boundary to state when reporting it
@@ -84,7 +84,8 @@ Also state plainly: **the uninstall clears the notification permission, so remin
 
 Both are recorded in §9a with full analysis.
 
-1. **An empty-database import silently skips watermark reconstruction** (above). NOT fixed. One-word fix available; the better fix decouples the watermark policy from the merge strategy.
+1. **An empty-database import silently skips watermark reconstruction** (above). **Fixed 2026-08-10** (`b15b0a6`), **refined 2026-08-11** (`d00c086`): the better fix was the one taken - the watermark policy is decoupled from the merge strategy, so an import into a database with **no live subscriptions** reconstructs from the imported ledger whatever the strategy says. Keyed on live subscriptions rather than emptiness because an all-tombstoned database is not empty - a complete snapshot carries tombstones by design - but has no watermarks either.
+   **6B is not blocked by this.**
 2. **Merge rules order on wall-clock timestamps, and the device clock is not monotonic** - found in real exported data, where two records carry a `deletedAt` PRECEDING their `createdAt`, written under the advanced clock of manual procedure 1. Full analysis and three fix options in `docs/sync-safety.md`.
    **DECIDED and implemented 2026-08-16** (`DECISIONS.md`, "Sync safety - the monotonicity decision"): options 2+3 combined - write-time clamps at every stamping site, deterministic order-repair of `updatedAt`/`deletedAt` before any import comparison, and future stamps clamped to the import instant so they cannot stay sticky under last-writer-wins.
    Option 1 (logical clocks) was rejected: CloudKit's own field-level conflict resolution cannot be fed one, so it would be the largest change with partial coverage; held in reserve if two-device damage appears.
