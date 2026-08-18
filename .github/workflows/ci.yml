@@ -1,10 +1,15 @@
 name: CI
 
-# UNVERIFIED RUNNER LABEL: this workflow has never executed - the repo has no
-# GitHub remote yet (Wave 5.5). `macos-26` is pinned to match the local Xcode 26
-# toolchain; if GitHub's actual label differs (check
-# https://github.com/actions/runner-images), it appears once per job below and
-# nowhere else. Everything else in this file has been exercised locally.
+# RUNNER LABEL VERIFIED: Gate 1 (2026-08-08) added the remote
+# (git@github.com:8C9D/otto.git, private) and ran this workflow for the first
+# time - `main` went green on all 7 jobs. `macos-26` was correct and unchanged;
+# the label was never the risk. What the first run found were two
+# host-environment test defects `verify.sh` cannot see, because it clones into
+# the same locale on the same hardware. See `DECISIONS.md`, "Gate 1".
+#
+# CI IS NOT RUNNING AT PRESENT: GitHub Actions is dead on a billing/spending
+# limit - runs fail in seconds without starting (`.claude/commands/round5.md`) -
+# so every recent measurement comes from the one local host.
 
 # Every job here runs on a macOS runner at the 10x rate, so branch pushes do
 # not trigger CI: main and pull requests only. August 2026's entire Actions
