@@ -1,6 +1,21 @@
 # Otto
 
 Otto is an iOS subscription and free-trial tracker (SwiftUI, SwiftData, CloudKit private-database sync, no server) that reminds before a renewal or trial conversion and verifies that a cancellation actually stopped the charges.
+It never acts for the user: no cancelling, no vendor logins, no payment methods.
+Swift 6 with strict concurrency, iOS 26 deployment target, three local SPM packages plus a thin app target.
+
+## Current state
+
+Otto runs on the owner's iPhone with three real subscriptions; CloudKit is still OFF and every store is local.
+The single sync decision point is `OttoContainerFactory.mainStoreSyncMode`, whose `MainStoreSyncMode` enum has one case (`.off`); 6B replaces that one line, and until it does the kill-switch refusal cannot fire and cannot be tested.
+Prod-readiness round 5 merged into `main` at `4a8613f` (2026-08-16): all ten frozen items terminal, nine RESOLVED and one DEFERRED, with the full reconciliation in `PROD-READINESS-5.md`'s TERMINATION section.
+Since the merge, `f6c63f7` implemented the sync-safety monotonicity decision and `c937361` recorded Gate 3 met on its second run.
+`DECISIONS.md` numbers three gates and all three are met: Gate 1 (GitHub remote and first CI run), Gate 2 (`BGAppRefreshTask` observed executing on device), Gate 3 (delete-and-reinstall, 2026-08-16).
+That numbering is not the spec's: §8 gates 6B on the four manual procedures in `docs/manual-verification.md`, and its run log records procedures 1, 2 and 4 as PASS with no row for procedure 3, the hands-on add-a-subscription pass that the spec's Wave 3 row still calls unsigned-off.
+The next wave is 6B, CloudKit activation, per `docs/next-wave.md`; the clock-monotonicity defect no longer blocks it.
+The closing table in `docs/cloudkit-readiness.md` is a Wave 6A report-only audit, not a live TODO: rows 1, 2, 3 and 5 were built by 6B-Prep and 6B-Prep-2 (absence is no longer deletion, `SyncActivationService` carries snapshot plus kill switch plus purge, `OttoStore.reconcile(at:)` converges, `CloudKitCompatibilityTests` asserts the migration chain).
+What is genuinely open before 6B is the §9a defect where an import into an empty database runs `.merge` and skips watermark reconstruction; the zone purge's cloud half and the kill-switch refusal test are day-one-of-6B work by design, not preconditions.
+`main` is three commits ahead of `origin/main`, which is `git@github.com:8C9D/otto.git` and private (spec §10, decision 6).
 
 ## Build and test
 
@@ -30,15 +45,18 @@ That UDID is the local iPhone 16 Pro simulator, and the run ends `** TEST SUCCEE
 
 `scripts/verify.sh` is the gate before reporting any wave complete: it clones the committed HEAD into a temp dir, ignoring the working tree, then runs `xcodegen generate`, every package's test suite, the app build, and `swiftlint --strict`, and prints the real per-package test counts.
 Report the numbers `verify.sh` prints, never the numbers a working-tree run prints.
+Last run at `a309dec`, re-run 2026-08-18: exit 0, OttoDomain 275, OttoPersistence 130, OttoUI 233, total 638, `swiftlint --strict` clean; the simulator-only Dynamic Type suite is not in that total.
 The non-Gregorian harness (a test bundle launched directly under `-AppleLocale th_TH@calendar=buddhist` and two other locales) is documented in the header comment of `Packages/OttoUI/Tests/OttoStoresTests/CalendarEraTests.swift`.
 
 ## Key files
 
-- `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo; its status line reads v2.5, main schema frozen at V3.
+- `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo, with the main synced schema frozen at V3; its top status line is itself stale (it still reads v2.5 with 481 tests) while the newest Update log entry is v2.6, so read that log for the current version and the wave table in §8 for what is done.
+  Two more stale spots in it: §8's wave table still names 6B-Prep-4 as next when `docs/next-wave.md` names 6B, and §9a's known-issues table still lists the clock-monotonicity defect as Open after `DECISIONS.md` and `docs/sync-safety.md` recorded it decided and implemented on 2026-08-16.
 - `DECISIONS.md` records the calls a wave made where the spec left room.
 - `PROD-READINESS.md` through `PROD-READINESS-5.md` are the prod-readiness ledgers, with the matching baselines and adversarial reviews in `reviews/` through `reviews-5/`.
 - `.claude/commands/round5.md` describes how a prod-readiness round is run.
-- `docs/next-wave.md` names the next wave, `docs/cloudkit-readiness.md` holds the manual checks gating wave 6B, `docs/manual-verification.md` holds the device gate procedures, and `docs/sync-safety.md` analyses the clock-monotonicity defect that blocks 6B.
+- `docs/next-wave.md` names the next wave and carries the user-facing note on repairing a non-Gregorian device's corrupted dates.
+- `docs/cloudkit-readiness.md` is the Wave 6A audit of what breaks under sync and ends with the pre-6B work list; `docs/manual-verification.md` holds the four device-gate procedures and the dated run log; `docs/sync-safety.md` covers the §4a sync mechanisms plus, in its "Wall-clock timestamps are a merge input" section, the clock-monotonicity defect and the fix now implemented.
 - `docs/implementation-notes/wave-*.md` are the per-wave notes.
 
 ## Conventions
@@ -51,10 +69,9 @@ In the domain, money is integer cents, billing dates are `CalendarDay` values an
 
 Updating `docs/next-wave.md` is part of landing a wave, and `verify.sh` fails if that file is missing or empty.
 
-CI, not `verify.sh`, is the real gate, because `verify.sh` reruns the same locale on the same hardware and cannot see a host-environment dependency; note that `.claude/commands/round5.md` records GitHub Actions as dead on a billing limit.
+CI, not `verify.sh`, is the real gate, because `verify.sh` reruns the same locale on the same hardware and cannot see a host-environment dependency; note that `.claude/commands/round5.md` records GitHub Actions as dead on a billing limit, so every recent measurement comes from the one host.
+The header comment in `.github/workflows/ci.yml` is stale: it claims the workflow has never run and the repo has no remote, both of which Gate 1 ended.
 
 In a prod-readiness round the work list is frozen at opening, every item must reach RESOLVED, DEFERRED, or REJECTED TWICE, every commit sits inside a declared review range, and new P3 findings go to NEXT ROUND with their measurements instead of being fixed.
 
-Standing rules from those rounds: never weaken or skip a test, do not add an eleventh `OSLogStore` reader, no new dependency, package, or target without an explicit user decision, and stochastic claims need repeated runs rather than one sample.
-
-Commit messages are one short sentence with no AI attribution.
+Standing rules from those rounds: do not add an eleventh `OSLogStore` reader, no new dependency, package, or target without an explicit user decision, and stochastic claims need repeated runs rather than one sample.
