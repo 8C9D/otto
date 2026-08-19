@@ -50,8 +50,7 @@ The non-Gregorian harness (a test bundle launched directly under `-AppleLocale t
 
 ## Key files
 
-- `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo, with the main synced schema frozen at V3; its top status line is itself stale (it still reads v2.5 with 481 tests) while the newest Update log entry is v2.6, so read that log for the current version and the wave table in §8 for what is done.
-  Two more stale spots in it: §8's wave table still names 6B-Prep-4 as next when `docs/next-wave.md` names 6B, and §9a's known-issues table still lists the clock-monotonicity defect as Open after `DECISIONS.md` and `docs/sync-safety.md` recorded it decided and implemented on 2026-08-16.
+- `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo, with the main synced schema frozen at V3; `e869f99` reconciled its once-stale spots, so its top status line (v2.6, 638 tests), the wave table in §8, and the §9a known-issues table are all current — read §8 for what is done.
 - `DECISIONS.md` records the calls a wave made where the spec left room.
 - `PROD-READINESS.md` through `PROD-READINESS-5.md` are the prod-readiness ledgers, with the matching baselines and adversarial reviews in `reviews/` through `reviews-5/`.
 - `.claude/commands/round5.md` describes how a prod-readiness round is run.
