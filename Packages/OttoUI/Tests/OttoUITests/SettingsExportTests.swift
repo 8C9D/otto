@@ -122,11 +122,19 @@ struct SettingsExportTests {
                     scheduler: IdleScheduler(), client: client, dates: .fixed(today: today)
                 )
                 : nil,
-            settings: SettingsStore(
-                userDefaults: UserDefaults(suiteName: suite) ?? .standard
-            ),
+            settings: SettingsStore(userDefaults: freshDefaults(suite)),
             dates: .fixed(today: today)
         )
+    }
+
+    /// The suite persists in the simulator container between RUNS, so a fixed
+    /// name must be wiped or a prior run's writes leak in - a leftover stored
+    /// time turned the reminder-time test's pick into an unchanged re-pick,
+    /// which correctly notifies nobody (`0787150`) and so withdraws nothing.
+    private func freshDefaults(_ suite: String) -> UserDefaults {
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
     }
 
     /// Puts the screen in a real window and lets its `.task` modifiers run.
