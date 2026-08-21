@@ -13,9 +13,11 @@ What was built: the picker's pair of writes runs with the per-property notificat
 
 Rejected: relying on `CoalescingReminderScheduler` to absorb the duplicate - it serialises the two passes but runs both (the second joins as a follow-up), so the work and the log lines stay doubled; the gate is for genuinely concurrent callers, not for one caller notifying twice. Rejected: notifying only from `setNotificationTime` - that silently breaks the documented contract that assigning `notificationHour` directly is a reschedule trigger.
 
+What the simulator suite then caught, and the host suite structurally could not: `SettingsExportTests`' reminder-time withdrawal test (UIKit-hosted, invisible to `swift test` on a mac) failed against the fix - and the failure was the test's, not the fix's. Its `UserDefaults(suiteName:)` fixtures use fixed names and never wipe them, the suite persists in the simulator container between runs, so the test's own previous run had already stored the 7:30 it picks - an unchanged re-pick, which now rightly notifies nobody. It had passed all along only because the over-firing `didSet` withdrew the export on a non-change: a test passing for the wrong reason, the Gate 1 `contains("$15.99")` class. Both fixture helpers now wipe the suite first (`removePersistentDomain`, the pattern `SyncActivationServiceTests` already used); the product behaviour - an unchanged time reschedules nothing and therefore withdraws nothing - is correct and deliberate.
+
 Deliberately NOT taken as licence to drain the round ledger: N5-1 through N5-6 stay parked - each needs either a design decision no round has taken or adversarial-review-grade measurement, and none blocks 6B.
 
-Verified: OttoUI 235 (was 233, +2 pins), OttoDomain 275, OttoPersistence 130 - `scripts/verify.sh` numbers in the commit that records this entry.
+Verified: OttoUI 235 (was 233, +2 pins), OttoDomain 275, OttoPersistence 130 - `scripts/verify.sh` numbers recorded in `CLAUDE.md` - and the simulator-hosted suite `** TEST SUCCEEDED **` with its expected known issues after the fixture repair.
 
 ## Sync safety - the monotonicity decision (2026-08-16, user-approved)
 

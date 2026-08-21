@@ -45,12 +45,12 @@ That UDID is the local iPhone 16 Pro simulator, and the run ends `** TEST SUCCEE
 
 `scripts/verify.sh` is the gate before reporting any wave complete: it clones the committed HEAD into a temp dir, ignoring the working tree, then runs `xcodegen generate`, every package's test suite, the app build, and `swiftlint --strict`, and prints the real per-package test counts.
 Report the numbers `verify.sh` prints, never the numbers a working-tree run prints.
-Last run at `a309dec`, re-run 2026-08-18: exit 0, OttoDomain 275, OttoPersistence 130, OttoUI 233, total 638, `swiftlint --strict` clean; the simulator-only Dynamic Type suite is not in that total.
+Last run at `791b20b`, 2026-08-21: exit 0, OttoDomain 275, OttoPersistence 130, OttoUI 235, total 640, `swiftlint --strict` clean; the simulator-only Dynamic Type suite is not in that total.
 The non-Gregorian harness (a test bundle launched directly under `-AppleLocale th_TH@calendar=buddhist` and two other locales) is documented in the header comment of `Packages/OttoUI/Tests/OttoStoresTests/CalendarEraTests.swift`.
 
 ## Key files
 
-- `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo, with the main synced schema frozen at V3; `e869f99` reconciled its once-stale spots, so its top status line (v2.6, 638 tests), the wave table in §8, and the §9a known-issues table are all current — read §8 for what is done.
+- `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo, with the main synced schema frozen at V3; `e869f99` reconciled its once-stale spots, so its top status line (v2.6, 640 tests), the wave table in §8, and the §9a known-issues table are all current — read §8 for what is done.
 - `DECISIONS.md` records the calls a wave made where the spec left room.
 - `PROD-READINESS.md` through `PROD-READINESS-5.md` are the prod-readiness ledgers, with the matching baselines and adversarial reviews in `reviews/` through `reviews-5/`.
 - `.claude/commands/round5.md` describes how a prod-readiness round is run.
