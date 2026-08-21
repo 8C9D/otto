@@ -3,6 +3,20 @@
 Rulings made during implementation, with rationale and the alternatives they displaced.
 Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records the calls a wave made where the spec left room.
 
+## One picked time, one pass (2026-08-20)
+
+Gate 3's carried P3 - one settings notification-time change running the full scheduling pass twice, duplicated pass/ledger/reconcile lines in the device log - was fixed at `0787150` rather than held for round 6, because the mechanism reproduced host-side exactly and the fix is local to `SettingsStore`.
+
+The mechanism, executed before it was touched: `setNotificationTime(from:)` assigns `notificationHour` then `notificationMinute`; Swift's `didSet` fires on a same-value assignment too, and each `didSet` spawned its own `Task { reschedule() }` - so the Gate 3 run's 9:00→9:05 pick (hour unchanged, minute changed) fired two concurrent passes. The new tests observed 2 fires per pick against the old code.
+
+What was built: the picker's pair of writes runs with the per-property notification suppressed and the change judged over the pair, so one picked time notifies **at most once** and an unchanged re-pick notifies nobody. Direct hour/minute assignments (the public API the existing test pins) still notify, now guarded on the value actually changing.
+
+Rejected: relying on `CoalescingReminderScheduler` to absorb the duplicate - it serialises the two passes but runs both (the second joins as a follow-up), so the work and the log lines stay doubled; the gate is for genuinely concurrent callers, not for one caller notifying twice. Rejected: notifying only from `setNotificationTime` - that silently breaks the documented contract that assigning `notificationHour` directly is a reschedule trigger.
+
+Deliberately NOT taken as licence to drain the round ledger: N5-1 through N5-6 stay parked - each needs either a design decision no round has taken or adversarial-review-grade measurement, and none blocks 6B.
+
+Verified: OttoUI 235 (was 233, +2 pins), OttoDomain 275, OttoPersistence 130 - `scripts/verify.sh` numbers in the commit that records this entry.
+
 ## Sync safety - the monotonicity decision (2026-08-16, user-approved)
 
 The clock-monotonicity defect (`docs/sync-safety.md`, "Wall-clock timestamps are a merge input") was the last blocker before 6B.

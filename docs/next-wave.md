@@ -72,7 +72,7 @@ Full evidence in the `docs/manual-verification.md` run log (2026-08-16 row).
 
 The verified export (`<backup-dir>/Otto-Export-VERIFIED-pre-gate3-2026-08-08T2213Z.json`, sha256 `b578cde5…`, 9,264 bytes) and the two raw container backups in `<backup-dir>/otto-container-backup-*` remain on disk; read copies, never the originals (`sqlite3` truncates a WAL on open).
 The Replace path was chosen by hand because procedure 4's step 6 in `docs/manual-verification.md` says to, and that step's stated reason - the empty-database `.merge` default skips watermark reconstruction (§9a) - was already false on the day: the defect was fixed at `b15b0a6` (2026-08-10) and refined at `d00c086` (2026-08-11), while the warning text has stood unchanged since it was written on 2026-08-08. Which build was on the phone is unrecorded, and answering Replace by hand reconstructs watermarks on a fixed and an unfixed build alike, so the run's own evidence cannot settle it either way - see defect 1 below.
-New P3 observation carried to the next round: a settings `stateChange` runs the full scheduling pass twice concurrently (duplicated pass/ledger/reconcile lines), idempotent but doubled.
+The run's P3 observation - a settings `stateChange` ran the full scheduling pass twice concurrently (duplicated pass/ledger/reconcile lines), idempotent but doubled - was **fixed 2026-08-20** (`0787150`): the picker's hour-then-minute writes each fired the reschedule hook, `didSet` firing on same-value assignments included; one picked time now notifies at most once. See `DECISIONS.md`, "One picked time, one pass".
 
 ## The honest boundary to state when reporting it
 
