@@ -112,6 +112,58 @@ struct SettingsStoreTests {
         for _ in 0 ..< 10 where reschedules == 0 { await Task.yield() }
         #expect(reschedules == 1)
     }
+
+    /// Gate 3 (2026-08-16) observed one settings change running the full
+    /// scheduling pass twice - duplicated pass/ledger/reconcile lines in the
+    /// device log. The mechanism: the picker writes hour then minute, `didSet`
+    /// fires on a same-value assignment too, and each fire spawned its own
+    /// pass. One picked time must mean one pass, whichever components moved.
+    @Test("⛔ one picked time fires the reschedule hook exactly once")
+    func pickerChangeFiresOnce() async throws {
+        let store = SettingsStore(userDefaults: try makeDefaults())
+        var reschedules = 0
+        store.onReminderTimeChange = { reschedules += 1 }
+
+        // 9:00 -> 9:05, the Gate 3 shape: the hour assignment repeats the
+        // stored value and only the minute changes.
+        store.setNotificationTime(from: try pickedTime(hour: 9, minute: 5))
+        await settle(untilAtLeast: 1, of: { reschedules })
+        #expect(reschedules == 1)
+
+        // 9:05 -> 8:55: both components change; still one picked time.
+        store.setNotificationTime(from: try pickedTime(hour: 8, minute: 55))
+        await settle(untilAtLeast: 2, of: { reschedules })
+        #expect(reschedules == 2)
+    }
+
+    @Test("re-picking the stored time fires no reschedule")
+    func unchangedPickFiresNothing() async throws {
+        let store = SettingsStore(userDefaults: try makeDefaults())
+        var reschedules = 0
+        store.onReminderTimeChange = { reschedules += 1 }
+
+        store.setNotificationTime(from: store.notificationTimeOfDay)
+        await settle(untilAtLeast: 1, of: { reschedules })
+        #expect(reschedules == 0)
+    }
+
+    /// The store's own reference instant (year 2000, Gregorian - see
+    /// `notificationTimeReferenceInstantIsGregorian`) at the given clock face.
+    private func pickedTime(hour: Int, minute: Int) throws -> Date {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .autoupdatingCurrent
+        return try #require(gregorian.date(
+            from: DateComponents(year: 2000, month: 1, day: 1, hour: hour, minute: minute)
+        ))
+    }
+
+    /// Yields until the counter reaches `target`, then keeps yielding so a
+    /// straggler duplicate Task has every chance to land before the assert -
+    /// counting "exactly once" is only evidence if a second fire had room.
+    private func settle(untilAtLeast target: Int, of counter: () -> Int) async {
+        for _ in 0 ..< 50 where counter() < target { await Task.yield() }
+        for _ in 0 ..< 50 { await Task.yield() }
+    }
 }
 
 @MainActor

@@ -55,13 +55,13 @@ public final class SettingsStore {
     public var notificationHour: Int {
         didSet {
             userDefaults.set(notificationHour, forKey: Key.notificationHour)
-            noteReminderTimeChanged()
+            if notificationHour != oldValue { noteReminderTimeChanged() }
         }
     }
     public var notificationMinute: Int {
         didSet {
             userDefaults.set(notificationMinute, forKey: Key.notificationMinute)
-            noteReminderTimeChanged()
+            if notificationMinute != oldValue { noteReminderTimeChanged() }
         }
     }
 
@@ -110,10 +110,23 @@ public final class SettingsStore {
     }
 
     /// Stores the hour and minute of a picked instant, ignoring its date.
+    ///
+    /// One picked time notifies AT MOST ONCE, however many components moved.
+    /// Gate 3 (2026-08-16) watched a 9:00→9:05 pick run the full scheduling
+    /// pass twice: `didSet` fires on a same-value assignment too, so the hour
+    /// write notified alongside the minute's. The two writes here run with the
+    /// per-property notification suppressed and the change judged over the
+    /// pair, so an unchanged re-pick notifies nobody.
     public func setNotificationTime(from picked: Date) {
         let parts = CalendarDay.conversionCalendar.dateComponents([.hour, .minute], from: picked)
-        notificationHour = parts.hour ?? FireTimePolicy.standard.preferredHour
-        notificationMinute = parts.minute ?? FireTimePolicy.standard.preferredMinute
+        let hour = parts.hour ?? FireTimePolicy.standard.preferredHour
+        let minute = parts.minute ?? FireTimePolicy.standard.preferredMinute
+        let changed = hour != notificationHour || minute != notificationMinute
+        suppressReminderTimeNotification = true
+        notificationHour = hour
+        notificationMinute = minute
+        suppressReminderTimeNotification = false
+        if changed { noteReminderTimeChanged() }
     }
 
     /// The defaults the Add form starts new entries from.
@@ -137,8 +150,12 @@ public final class SettingsStore {
         return policy
     }
 
+    /// True only inside `setNotificationTime`, which owns the notification for
+    /// the pair of writes it makes.
+    @ObservationIgnored private var suppressReminderTimeNotification = false
+
     private func noteReminderTimeChanged() {
-        guard let onReminderTimeChange else { return }
+        guard !suppressReminderTimeNotification, let onReminderTimeChange else { return }
         Task { await onReminderTimeChange() }
     }
 
