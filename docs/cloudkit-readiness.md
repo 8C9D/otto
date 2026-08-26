@@ -129,3 +129,7 @@ Until those exist, the honest operational rule for 6B is: **the export file is t
 | 3 | Post-sync reconciliation passes: duplicate `.upcoming` twins; two open pause episodes; two open cancellation episodes | Q3.1, Q4.3, Q4.4 |
 | 4 | Soften the unreadable/needs-review surfaces for sync-plausible transients | Q3.2, Q3.3 |
 | 5 | A tripwire so version-pinned checks fail when the schema version moves | Q1 |
+
+*Status note, 2026-08-26 - recorded here as `CLAUDE.md`'s current-state section was slimmed, because this table reads as a live TODO and is not one.*
+*It is the Wave 6A audit's list as written, and four of its five rows were built afterwards: rows 1, 2, 3 and 5 by **6B-Prep** and **6B-Prep-2** - absence no longer means removal, `SyncActivationService` carries the pre-enable snapshot plus the kill switch plus the zone purge, `OttoStore.reconcile(at:)` converges, and `CloudKitCompatibilityTests` asserts the migration chain.*
+*Row 4 is the one that still stands. The spec's §8 wave table is the authority on what is actually outstanding; this file stays the audit it was.*

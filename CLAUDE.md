@@ -6,16 +6,12 @@ Swift 6 with strict concurrency, iOS 26 deployment target, three local SPM packa
 
 ## Current state
 
+The spec is at **v2.6**, main schema frozen at V3, **640 tests** from `scripts/verify.sh` at `791b20b`.
 Otto runs on the owner's iPhone with three real subscriptions; CloudKit is still OFF and every store is local.
-The single sync decision point is `OttoContainerFactory.mainStoreSyncMode`, whose `MainStoreSyncMode` enum has one case (`.off`); 6B replaces that one line, and until it does the kill-switch refusal cannot fire and cannot be tested.
-Prod-readiness round 5 merged into `main` at `4a8613f` (2026-08-16): all ten frozen items terminal, nine RESOLVED and one DEFERRED, with the full reconciliation in `PROD-READINESS-5.md`'s TERMINATION section.
-Since the merge, `f6c63f7` implemented the sync-safety monotonicity decision and `c937361` recorded Gate 3 met on its second run.
-`DECISIONS.md` numbers three gates and all three are met: Gate 1 (GitHub remote and first CI run), Gate 2 (`BGAppRefreshTask` observed executing on device), Gate 3 (delete-and-reinstall, 2026-08-16).
-That numbering is not the spec's: §8 gates 6B on the four manual procedures in `docs/manual-verification.md`, and its run log records procedures 1, 2 and 4 as PASS with no row for procedure 3, the hands-on add-a-subscription pass that the spec's Wave 3 row still calls unsigned-off.
-The next wave is 6B, CloudKit activation, per `docs/next-wave.md`; the clock-monotonicity defect no longer blocks it.
-The closing table in `docs/cloudkit-readiness.md` is a Wave 6A report-only audit, not a live TODO: rows 1, 2, 3 and 5 were built by 6B-Prep and 6B-Prep-2 (absence is no longer deletion, `SyncActivationService` carries snapshot plus kill switch plus purge, `OttoStore.reconcile(at:)` converges, `CloudKitCompatibilityTests` asserts the migration chain).
-The only thing genuinely open before 6B is manual procedure 3, the hands-on add-a-subscription pass that has no row in `docs/manual-verification.md`'s run log; the §9a defect where an import into an empty database runs `.merge` and skips watermark reconstruction was fixed at `b15b0a6` (2026-08-10) and refined at `d00c086` (2026-08-11), and the zone purge's cloud half and the kill-switch refusal test are day-one-of-6B work by design, not preconditions.
+One wave remains - **6B, CloudKit activation** (`docs/next-wave.md`) - gated on manual procedure 3, the hands-on add-a-subscription pass and the only one of `docs/manual-verification.md`'s four procedures with no row in its run log.
+The single sync decision point is `OttoContainerFactory.mainStoreSyncMode`, whose `MainStoreSyncMode` enum has one case (`.off`); 6B replaces that one line, and until it does the kill-switch refusal is a comparison that cannot be true, so it cannot be tested.
 `origin/main` is `git@github.com:8C9D/otto.git` and private (spec §10, decision 6).
+Where the rest lives: `DECISIONS.md` for what each wave decided, `PROD-READINESS.md` through `PROD-READINESS-5.md` for what each hardening round found and closed, `docs/next-wave.md` for the two gate numberings and what actually gates 6B. This section does not restate them.
 
 ## Build and test
 
@@ -69,7 +65,6 @@ In the domain, money is integer cents, billing dates are `CalendarDay` values an
 Updating `docs/next-wave.md` is part of landing a wave, and `verify.sh` fails if that file is missing or empty.
 
 CI, not `verify.sh`, is the real gate, because `verify.sh` reruns the same locale on the same hardware and cannot see a host-environment dependency; note that `.claude/commands/round5.md` records GitHub Actions as dead on a billing limit, so every recent measurement comes from the one host.
-The header comment in `.github/workflows/ci.yml` is stale: it claims the workflow has never run and the repo has no remote, both of which Gate 1 ended.
 
 In a prod-readiness round the work list is frozen at opening, every item must reach RESOLVED, DEFERRED, or REJECTED TWICE, every commit sits inside a declared review range, and new P3 findings go to NEXT ROUND with their measurements instead of being fixed.
 

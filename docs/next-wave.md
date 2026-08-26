@@ -2,6 +2,12 @@ Next wave: **6B - CloudKit activation**, specified in `docs/Subscription-Tracker
 Wave 10 (Notification Delivery & Check-Date Fixes, from the Aug 2026 device run) landed in between; 6B remains the next planned wave.
 Carry-over candidates for a later wave: simulator-hosted `NotificationCoordinator` tests (see `docs/implementation-notes/wave-10.md`, "Deliberately not done").
 
+**Two gate numberings exist, and they are not the same list.** *(Reconciliation recorded 2026-08-26, migrated out of `CLAUDE.md`'s current-state section.)*
+`DECISIONS.md` numbers **three** gates - Gate 1 (the GitHub remote and the first CI run), Gate 2 (`BGAppRefreshTask` observed executing on device), Gate 3 (delete-and-reinstall, 2026-08-16) - and all three are met.
+The spec's §8 gates 6B on a different list: the **four** manual procedures in `docs/manual-verification.md`.
+That run log records procedures 1, 2 and 4 as PASS and carries **no row for procedure 3**, the hands-on add-a-subscription pass - which the spec's Wave 3 row still calls unsigned-off by the owner.
+So procedure 3 is the one thing genuinely open before 6B. The zone purge's cloud half (§8 prerequisite 3) and the kill-switch refusal test (§8 prerequisite 4a) are day-one-of-6B work by design, not preconditions.
+
 ---
 
 # If a device was set to a non-Gregorian calendar before this build
