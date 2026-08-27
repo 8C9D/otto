@@ -6,7 +6,7 @@ Swift 6 with strict concurrency, iOS 26 deployment target, three local SPM packa
 
 ## Current state
 
-The spec is at **v2.6**, main schema frozen at V3, **640 tests** from `scripts/verify.sh` at `791b20b`.
+The spec is at **v2.6**, main schema frozen at V3, **640 tests** from `scripts/verify.sh` at `bda8c27` (reconstructed; original stamp predated an amend).
 Otto runs on the owner's iPhone with three real subscriptions; CloudKit is still OFF and every store is local.
 One wave remains - **6B, CloudKit activation** (`docs/next-wave.md`) - gated on manual procedure 3, the hands-on add-a-subscription pass and the only one of `docs/manual-verification.md`'s four procedures with no row in its run log.
 The single sync decision point is `OttoContainerFactory.mainStoreSyncMode`, whose `MainStoreSyncMode` enum has one case (`.off`); 6B replaces that one line, and until it does the kill-switch refusal is a comparison that cannot be true, so it cannot be tested.
@@ -41,7 +41,7 @@ That UDID is the local iPhone 16 Pro simulator, and the run ends `** TEST SUCCEE
 
 `scripts/verify.sh` is the gate before reporting any wave complete: it clones the committed HEAD into a temp dir, ignoring the working tree, then runs `xcodegen generate`, every package's test suite, the app build, and `swiftlint --strict`, and prints the real per-package test counts.
 Report the numbers `verify.sh` prints, never the numbers a working-tree run prints.
-Last run at `791b20b`, 2026-08-21: exit 0, OttoDomain 275, OttoPersistence 130, OttoUI 235, total 640, `swiftlint --strict` clean; the simulator-only Dynamic Type suite is not in that total.
+Last run at `bda8c27`, 2026-08-21: exit 0, OttoDomain 275, OttoPersistence 130, OttoUI 235, total 640, `swiftlint --strict` clean; the simulator-only Dynamic Type suite is not in that total.
 The non-Gregorian harness (a test bundle launched directly under `-AppleLocale th_TH@calendar=buddhist` and two other locales) is documented in the header comment of `Packages/OttoUI/Tests/OttoStoresTests/CalendarEraTests.swift`.
 
 ## Key files

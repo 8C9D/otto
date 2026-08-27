@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.6 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** **640 tests** (275 domain + 130 persistence + 235 UI), from `scripts/verify.sh` at HEAD `791b20b`, 2026-08-21; the simulator-only Dynamic Type suite is additional and not in that count. Next: **6B — CloudKit activation** (`docs/next-wave.md`, §8) plus the manual gates.
+**Status:** **v2.6 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** **640 tests** (275 domain + 130 persistence + 235 UI), from `scripts/verify.sh` at HEAD `bda8c27`, 2026-08-21; the simulator-only Dynamic Type suite is additional and not in that count. Next: **6B — CloudKit activation** (`docs/next-wave.md`, §8) plus the manual gates.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
