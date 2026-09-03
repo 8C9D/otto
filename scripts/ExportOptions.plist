@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TestFlight upload options. Bump CURRENT_PROJECT_VERSION in project.yml,
+  run `xcodegen generate`, then:
+
+    xcodebuild archive -project Otto.xcodeproj -scheme Otto \
+      -destination 'generic/platform=iOS' -archivePath /tmp/Otto.xcarchive \
+      -allowProvisioningUpdates
+    xcodebuild -exportArchive -archivePath /tmp/Otto.xcarchive \
+      -exportOptionsPlist scripts/ExportOptions.plist -exportPath /tmp/Otto-export \
+      -allowProvisioningUpdates
+
+  `destination: upload` sends the IPA straight to App Store Connect, where
+  the Internal group's automatic distribution picks it up; nothing is written
+  to -exportPath. -allowProvisioningUpdates uses the Apple Account signed
+  into Xcode for the App Store profile and the managed distribution cert.
+-->
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>destination</key>
+  <string>upload</string>
+  <key>signingStyle</key>
+  <string>automatic</string>
+  <key>teamID</key>
+  <string><team-id></string>
+  <key>uploadSymbols</key>
+  <true/>
+  <key>manageAppVersionAndBuildNumber</key>
+  <false/>
+</dict>
+</plist>
