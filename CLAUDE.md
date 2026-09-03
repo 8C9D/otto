@@ -10,8 +10,8 @@ The spec is at **v2.6**, main schema frozen at V3, **640 tests** from `scripts/v
 Otto runs on the owner's iPhone with three real subscriptions; CloudKit is still OFF and every store is local.
 One wave remains - **6B, CloudKit activation** (`docs/next-wave.md`) - gated on manual procedure 3, the hands-on add-a-subscription pass and the only one of `docs/manual-verification.md`'s four procedures with no row in its run log.
 The single sync decision point is `OttoContainerFactory.mainStoreSyncMode`, whose `MainStoreSyncMode` enum has one case (`.off`); 6B replaces that one line, and until it does the kill-switch refusal is a comparison that cannot be true, so it cannot be tested.
-`origin/main` is `git@github.com:8C9D/otto.git` and private (spec §10, decision 6).
-Where the rest lives: `DECISIONS.md` for what each wave decided, `PROD-READINESS.md` through `PROD-READINESS-5.md` for what each hardening round found and closed, `docs/next-wave.md` for the two gate numberings and what actually gates 6B. This section does not restate them.
+`origin/main` is `git@github.com:8C9D/otto.git`, public since 2026-08-23.
+Where the rest lives: `DECISIONS.md` for what each wave decided, `docs/prod-readiness/` for what each hardening round found and closed, `docs/next-wave.md` for the two gate numberings and what actually gates 6B. This section does not restate them.
 
 ## Build and test
 
@@ -48,7 +48,7 @@ The non-Gregorian harness (a test bundle launched directly under `-AppleLocale t
 
 - `docs/Subscription-Tracker-Spec.md` is the source of truth for the repo, with the main synced schema frozen at V3; `e869f99` reconciled its once-stale spots, so its top status line (v2.6, 640 tests), the wave table in §8, and the §9a known-issues table are all current — read §8 for what is done.
 - `DECISIONS.md` records the calls a wave made where the spec left room.
-- `PROD-READINESS.md` through `PROD-READINESS-5.md` are the prod-readiness ledgers, with the matching baselines and adversarial reviews in `reviews/` through `reviews-5/`.
+- `docs/prod-readiness/` holds the five prod-readiness ledgers (`PROD-READINESS.md` through `PROD-READINESS-5.md`) with the matching baselines and adversarial reviews in `reviews/` through `reviews-5/` beside them.
 - `.claude/commands/round5.md` describes how a prod-readiness round is run.
 - `docs/next-wave.md` names the next wave and carries the user-facing note on repairing a non-Gregorian device's corrupted dates.
 - `docs/cloudkit-readiness.md` is the Wave 6A audit of what breaks under sync and ends with the pre-6B work list; `docs/manual-verification.md` holds the four device-gate procedures and the dated run log; `docs/sync-safety.md` covers the §4a sync mechanisms plus, in its "Wall-clock timestamps are a merge input" section, the clock-monotonicity defect and the fix now implemented.

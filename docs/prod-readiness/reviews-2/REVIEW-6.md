@@ -191,7 +191,7 @@ PaymentMethodStoreTests.swift:7  SubscriptionDetailStoreTests.swift:1
 DynamicTypeTests.swift:2  EmptyStateTests.swift:1
 ```
 
-Ten files, three of them production sources, including `SubscriptionDetailStoreTests.swift:34`'s `label: "Bank ..4821"`. `XXXX` genuinely appeared only in `docs/next-wave.md` and `reviews/BASELINE.md`, so half the claim holds. The de-identification itself is right and I am not asking for it to be reverted; the sentence justifying its severity is wrong, and it was inherited from `reviews-2/REVIEW-5.md` finding 8 without being re-derived — which the run's own standard forbids.
+Ten files, three of them production sources, including `SubscriptionDetailStoreTests.swift:34`'s `label: "Bank ..4821"`. `<last4>` genuinely appeared only in `docs/next-wave.md` and `reviews/BASELINE.md`, so half the claim holds. The de-identification itself is right and I am not asking for it to be reverted; the sentence justifying its severity is wrong, and it was inherited from `reviews-2/REVIEW-5.md` finding 8 without being re-derived — which the run's own standard forbids.
 
 ### 8. P3 — N2-3 disappears from the record with no note
 
