@@ -106,6 +106,9 @@ xcodegen generate
 open Otto.xcodeproj          # run the Otto scheme on a simulator or device
 ```
 
+Device builds need a signing team: copy `Config/Signing.local.xcconfig.example`
+to `Config/Signing.local.xcconfig` and set `DEVELOPMENT_TEAM`.
+
 ### Tests
 
 Each package tests on the Mac host, with no Xcode project and no simulator:

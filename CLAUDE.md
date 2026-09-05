@@ -7,6 +7,7 @@ Swift 6 with strict concurrency, iOS 26 deployment target, three local SPM packa
 ## Build and test
 
 The `.xcodeproj` is generated from `project.yml` by XcodeGen and is gitignored, so run `xcodegen generate` after changing `project.yml` and never hand-edit the project file.
+Device builds and archives need a team: copy `Config/Signing.local.xcconfig.example` to `Config/Signing.local.xcconfig` (gitignored) and set `DEVELOPMENT_TEAM`; simulator builds, `verify.sh` and CI need nothing.
 
 Every package tests on the mac host, no simulator involved:
 

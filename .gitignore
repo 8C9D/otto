@@ -22,6 +22,9 @@ xcuserdata/
 # removed in 3a69893) - it is a build artifact, not a record.
 verify-*-failure.log
 
+# Local signing settings (DEVELOPMENT_TEAM); copy from the .example
+Config/Signing.local.xcconfig
+
 # Per-machine tooling, not project infrastructure.
 .claude/
 .mcp.json

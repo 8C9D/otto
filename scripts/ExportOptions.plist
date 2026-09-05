@@ -15,6 +15,8 @@
   the Internal group's automatic distribution picks it up; nothing is written
   to -exportPath. -allowProvisioningUpdates uses the Apple Account signed
   into Xcode for the App Store profile and the managed distribution cert.
+  The team comes from the archive (Config/Signing.local.xcconfig), so no
+  teamID is listed here.
 -->
 <plist version="1.0">
 <dict>
@@ -24,8 +26,6 @@
   <string>upload</string>
   <key>signingStyle</key>
   <string>automatic</string>
-  <key>teamID</key>
-  <string><team-id></string>
   <key>uploadSymbols</key>
   <true/>
   <key>manageAppVersionAndBuildNumber</key>
