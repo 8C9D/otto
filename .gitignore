@@ -22,9 +22,6 @@ xcuserdata/
 # removed in 3a69893) - it is a build artifact, not a record.
 verify-*-failure.log
 
-# Personal tooling, not project infrastructure: settings.local.json is
-# per-machine permission grants by design, and .mcp.json currently carries
-# only a server nothing in this project's workflow uses. CLAUDE.md and
-# .claude/commands/ ARE committed - they document the project.
-.claude/settings.local.json
+# Per-machine tooling, not project infrastructure.
+.claude/
 .mcp.json

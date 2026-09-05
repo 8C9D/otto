@@ -7,14 +7,9 @@ subscription you cancelled actually stopped charging you.
 Otto never acts on your behalf: it never cancels anything, never logs in to a
 vendor, and never touches a payment method. It reminds, records, and verifies.
 
-About 39,000 lines of Swift 6 across three local Swift packages and a thin app
-target, with 640 host-run tests. It runs on a real phone as its owner's only
-tracker; CloudKit sync is designed in and switched off.
-
-## Screenshots
-
-*Not yet in the repository.* The three worth adding: the Today overview, the
-subscription detail with its cancellation section, and the Insights screen.
+Swift 6 across three local Swift packages and a thin app target, with a
+host-run test suite of 640 cases. CloudKit sync is designed in and switched
+off.
 
 ## Why it exists
 
@@ -152,10 +147,7 @@ Packages/
   OttoUI/           views, stores, services (notifications, export, flows)
 docs/
   Subscription-Tracker-Spec.md   the product and technical spec, source of truth
-  implementation-notes/          per-wave build notes
-  manual-verification.md         device-gate procedures and their run log
   sync-safety.md, cloudkit-readiness.md   what has to hold before sync turns on
-  prod-readiness/                five hardening rounds: ledgers and adversarial reviews
 DECISIONS.md        calls made during implementation where the spec left room
 scripts/            verify.sh, app-icon generator, export options
 ```
