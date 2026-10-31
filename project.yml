@@ -131,8 +131,26 @@ targets:
           - iCloud.com.arthurzhang.otto
         com.apple.developer.usernotifications.time-sensitive: true
 
+  # The real app on a real mirrored store. Named apart from OttoUI's OttoUITests,
+  # and run by scripts/sync-lifecycle.sh, which supplies the fresh simulator, the
+  # ad-hoc signing and the seeded backup this test cannot give itself.
+  OttoLifecycleUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: Otto
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.arthurzhang.otto.lifecycle-uitests
+
 schemes:
   Otto:
     build:
       targets:
         Otto: all
+    test:
+      targets:
+        - OttoLifecycleUITests

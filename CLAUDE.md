@@ -33,6 +33,7 @@ The run ends `** TEST SUCCEEDED **` with a number of known issues, which is the 
 
 `scripts/verify.sh` is the gate before reporting any change complete: it clones the committed HEAD into a temp dir, ignoring the working tree, then runs `xcodegen generate`, every package's test suite, the app build, and `swiftlint --strict`, and prints the real per-package test counts.
 Report the numbers `verify.sh` prints, never the numbers a working-tree run prints.
+`scripts/sync-lifecycle.sh [runs]` runs `OttoLifecycleUITests`, the real app on a real mirrored store, on a simulator it creates and deletes; it tests the working tree, needs no iCloud account, and runs in CI, not in `verify.sh`.
 The non-Gregorian harness (a test bundle launched directly under `-AppleLocale th_TH@calendar=buddhist` and two other locales) is documented in the header comment of `Packages/OttoUI/Tests/OttoStoresTests/CalendarEraTests.swift`.
 
 ## Key files

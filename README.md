@@ -129,6 +129,17 @@ xcodebuild test -scheme OttoUI-Package \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
+### The sync lifecycle
+
+```sh
+scripts/sync-lifecycle.sh
+```
+
+Drives the real app through the real UI on a real mirrored store: local, mirrored,
+stopped and back, with a refused restore and a refused purge on the way. It builds
+its own throwaway simulator, and needs no iCloud account because it runs without
+one. A record leaving the device is the job of `docs/sync-verification.md`.
+
 ### The verification gate
 
 ```sh
@@ -154,5 +165,6 @@ docs/
   sync-safety.md, cloudkit-readiness.md   what has to hold before sync turns on
   sync-verification.md   the two-device runbook that finishes sync
 DECISIONS.md        calls made during implementation where the spec left room
-scripts/            verify.sh, app-icon generator, export options
+UITests/            the sync lifecycle UI test
+scripts/            verify.sh, sync-lifecycle.sh, app-icon generator, export options
 ```

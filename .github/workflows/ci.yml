@@ -72,6 +72,22 @@ jobs:
         working-directory: Packages/OttoUI
         run: xcodebuild test -scheme OttoUI-Package -destination "id=${{ steps.sim.outputs.udid }}"
 
+  sync-lifecycle:
+    # The real app on a real mirrored store, through the real UI. Unit tests
+    # cannot see this layer: a released event monitor once disabled all of sync
+    # with every one of them green. No iCloud account is involved, so a record
+    # leaving the device stays docs/sync-verification.md's job.
+    name: Sync lifecycle (simulator)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)/Contents/Developer"
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Run the lifecycle
+        run: scripts/sync-lifecycle.sh
+
   lint:
     name: SwiftLint (strict)
     runs-on: macos-26

@@ -56,9 +56,15 @@ Reading that code turned up a fourth: coalescing a burst cancelled the previous 
 
 *"`OttoStore`'s long-lived context will read stale data after an import."* Measured false, for fields and for children through a relationship already faulted, from a second context and from a second container. Pinned by `RemoteWriteVisibilityTests`. A stand-in: the real import is step 3 of the runbook.
 
-### The lifecycle harness is not committed
+### The lifecycle test is a target, by owner decision
 
-The standing rule needs an explicit decision for a new target, and an XCUITest target is one. The lifecycle run used a throwaway copy of the project with a UI-test target added there.
+The standing rule needs an explicit decision for a new target, and the owner gave one on 2026-10-31. `OttoLifecycleUITests` keeps a check on the one layer where unit tests had gone blind. It is run by `scripts/sync-lifecycle.sh`, not from Xcode, because it needs a fresh simulator with no iCloud account, an ad-hoc signed build and a seeded backup, and CI runs it as its own job.
+Its limit: with no account, no record leaves the device.
+
+### Encrypted fields: V3 stays as it is (owner decision, 2026-10-31)
+
+Otto's fields deploy unencrypted at the field level, which is permanent once the production schema is deployed: a deployed field cannot become encrypted later. Private-database data stays encrypted at rest with Apple-held keys, and Advanced Data Protection makes it end-to-end for anyone who turns it on.
+Rejected: a V4 with `.allowsCloudEncryption`, which would reopen the schema freeze and add a migration before sync can ship, for a two-user app.
 
 ## One picked time, one pass (2026-08-20)
 

@@ -1,6 +1,7 @@
 included:
   - Otto
   - Packages
+  - UITests
 
 # Globbed, not hand-listed: a fourth package's .build must be impossible to
 # forget (the same reasoning as verify.sh's derived package list).

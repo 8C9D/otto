@@ -7,7 +7,7 @@ Nothing here has been run yet. Until it has, sync is code that opens correctly, 
 
 ## Already verified, without iCloud
 
-Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account (2026-10-31). The whole lifecycle ran three times from a fresh install on the final code, through the real UI:
+Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account, through the real UI. `scripts/sync-lifecycle.sh` reruns all of it, and CI does on every PR:
 
 | Claim | Evidence |
 |---|---|
@@ -23,7 +23,7 @@ Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account (
 
 ## Setup
 
-You need two devices **on the same Apple Account**. The second user's phone does not count: each account has its own private database, so her phone can never see yours. An iPad or a second simulator signed into your account does.
+You need two devices **on the same Apple Account**. The second user's phone does not count: each account has its own private database, so her phone can never see yours. The owner's chosen pair is the iPhone plus a simulator signed into the same account.
 
 Use Debug builds from Xcode: they reach the CloudKit **Development** environment, which can be reset. TestFlight reaches Production, which cannot.
 
@@ -63,9 +63,8 @@ Use throwaway subscriptions. Export a backup from your real data first.
 
 ## Before production
 
-Only after every step above passes, and one call made first:
+Only after every step above passes. Field-level encryption is already decided: V3 deploys as it is (`DECISIONS.md`, "Encrypted fields").
 
-1. **Decide on encrypted fields.** CloudKit can encrypt fields with `.allowsCloudEncryption`, but a deployed field cannot become encrypted later, and it needs a schema change (V3 is frozen). Private-database data is already encrypted at rest with Apple-held keys; with Advanced Data Protection on, keys are the user's. This is the last moment the choice is free.
-2. **Deploy the schema** in CloudKit Console. Permanent: Production record types and fields can never be removed.
-3. Set `OTTO_CLOUDKIT_CONTAINER` for Release in `project.yml`.
-4. Repeat steps 2-4 on TestFlight builds, against Production.
+1. **Deploy the schema** in CloudKit Console. Permanent: Production record types and fields can never be removed, and a deployed field can never become encrypted.
+2. Set `OTTO_CLOUDKIT_CONTAINER` for Release in `project.yml`.
+3. Repeat steps 2-4 on TestFlight builds, against Production.
