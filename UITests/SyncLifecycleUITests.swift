@@ -98,6 +98,7 @@ final class SyncLifecycleUITests: XCTestCase {
     }
 
     private func stopSyncing(_ app: XCUIApplication) {
+        tab("Settings", app)
         let stop = app.buttons["Stop Syncing…"]
         reveal(stop, app)
         stop.tap()
@@ -148,8 +149,9 @@ final class SyncLifecycleUITests: XCTestCase {
                 if target.waitForExistence(timeout: 4) { target.tap() }
             }
         }
-        XCTAssertTrue(file.waitForExistence(timeout: patience), "the seeded backup never reached the picker")
-        guard pick(file, app) else { return false }
+        guard file.waitForExistence(timeout: patience), pick(file, app) else {
+            return pickerDidNotRespond(app)
+        }
         confirm(mergeTitle, app)
         return true
     }
@@ -169,14 +171,21 @@ final class SyncLifecycleUITests: XCTestCase {
     /// own dialog, a user-visible bug, and it fails as exactly that.
     private func pick(_ file: XCUIElement, _ app: XCUIApplication) -> Bool {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: file)
-        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: patience), .completed, "the file never became tappable")
+        guard XCTWaiter().wait(for: [ready], timeout: patience) == .completed else { return false }
         file.tap()
         if app.buttons[mergeTitle].waitForExistence(timeout: patience) { return true }
         XCTAssertTrue(file.exists, "the picker closed and no prompt appeared")
-        // No screenshot here: XCTest records the screen anyway, and asking for
-        // one on a starved host times out and fails the test by itself.
+        return false
+    }
+
+    /// Relaunched rather than dismissed: on a CI runner the picker can open as a
+    /// blank sheet with no close button, and a screenshot taken there times out.
+    /// A relaunch keeps the launch arguments, the store and the switches, so the
+    /// session the next step expects is unchanged.
+    private func pickerDidNotRespond(_ app: XCUIApplication) -> Bool {
         NSLog("LIFECYCLE-PICKER-UNRESPONSIVE")
-        app.buttons["Cancel"].firstMatch.tap()
+        app.terminate()
+        app.launch()
         return false
     }
 

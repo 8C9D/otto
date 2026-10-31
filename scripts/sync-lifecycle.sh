@@ -90,7 +90,7 @@ for run in $(seq 1 "$RUNS"); do
     grep -E "Test Case.*passed" "$log" || true
     # A green run must not claim more than it did. On a CPU-starved host the
     # system picker can stop answering, and the import steps behind it are
-    # reported rather than failed (see `pick` in the test).
+    # reported rather than failed (see `pickerDidNotRespond` in the test).
     if grep -q 'LIFECYCLE-PICKER-UNRESPONSIVE' "$log"; then
         NOT_EXERCISED="yes"
         echo "!! run $run: the system picker did not respond, so an import step did not run"
