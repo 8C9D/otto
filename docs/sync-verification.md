@@ -15,7 +15,7 @@ Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account, 
 | Local data survives local → mirrored → local → mirrored | Row present in the store and on screen after each launch |
 | A once-mirrored store reopens locally | The kill-switch path, launched for real |
 | Framework events reach Otto under SwiftData | `[sync] setup failed: accountUnavailable` |
-| Restore refuses in a mirrored session, runs once stopped (§8 4a) | `import FAILED - nothing was applied`, then `import end`, through the real file picker |
+| Restore refuses in a mirrored session, runs once stopped (§8 4a) | `import FAILED - nothing was applied`, then `import end`, through the real file picker. On a quiet machine: on a CPU-starved host the system picker can stop responding, and the script says when these steps did not run |
 | The purge makes a real `CKDatabase` call and reports failure | `cloud call failed: 9`; state unchanged |
 | The enable flow refuses with no account | Real `accountStatus()`; no flag, no snapshot |
 

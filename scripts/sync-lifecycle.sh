@@ -14,9 +14,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNS="${1:-1}"
 BUNDLE_ID="com.arthurzhang.otto"
-WORKDIR="$(mktemp -d /tmp/otto-lifecycle.XXXXXX)"
+# CI names the directory so it can upload a failed run's result bundle.
+WORKDIR="${LIFECYCLE_WORKDIR:-$(mktemp -d /tmp/otto-lifecycle.XXXXXX)}"
+mkdir -p "$WORKDIR"
 UDID=""
 PASSED="no"
+NOT_EXERCISED="no"
 
 cleanup() {
     if [[ -n "$UDID" ]]; then
@@ -85,7 +88,21 @@ for run in $(seq 1 "$RUNS"); do
         exit 1
     fi
     grep -E "Test Case.*passed" "$log" || true
+    # A green run must not claim more than it did. On a CPU-starved host the
+    # system picker can stop answering, and the import steps behind it are
+    # reported rather than failed (see `pick` in the test).
+    if grep -q 'LIFECYCLE-PICKER-UNRESPONSIVE' "$log"; then
+        NOT_EXERCISED="yes"
+        echo "!! run $run: the system picker did not respond, so an import step did not run"
+    fi
 done
 
 PASSED="yes"
 echo "== VERIFIED: $RUNS of $RUNS sync lifecycle runs passed"
+if [[ "$NOT_EXERCISED" == "yes" ]]; then
+    message="NOT exercised: at least one import through the system picker. The restore refusal stays pinned by SyncPrerequisiteTests."
+    echo "   $message"
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+        echo "::warning title=Sync lifecycle::$message"
+    fi
+fi

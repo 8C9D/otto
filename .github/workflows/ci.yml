@@ -87,6 +87,17 @@ jobs:
         run: brew install xcodegen
       - name: Run the lifecycle
         run: scripts/sync-lifecycle.sh
+        env:
+          LIFECYCLE_WORKDIR: ${{ runner.temp }}/lifecycle
+      # The result bundle holds the failure screenshot, the only record of what
+      # the screen showed: the runner is gone by the time anyone asks.
+      - name: Keep the failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-lifecycle-failure
+          path: ${{ runner.temp }}/lifecycle/run-*
+          retention-days: 7
 
   lint:
     name: SwiftLint (strict)
