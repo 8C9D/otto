@@ -131,12 +131,22 @@ Does NOT protect against: sync already in flight (it takes effect at the next la
 
 **3. The zone-purge action** (`SyncActivationService.purgeCloudZone` over the `CloudZonePurging` seam).
 Refuses unless the kill switch is engaged - purging a zone that devices still sync re-uploads local copies into the fresh zone, which is resurrection at zone scale.
-Until 6B supplies the CKDatabase implementation, the default purger THROWS rather than pretending a purge happened.
-Does NOT protect against: other devices' local copies (a cloud purge deletes nothing on any device); an offline device re-enabling later and re-creating the zone from its own data; and it cannot be exercised against a real container until 6B - **its cloud half is the one prerequisite that ships untested against production CloudKit**, which is why 6B's plan must test it against a real container before enabling sync for real data.
+`CloudKitSyncClient` supplies the CKDatabase call; a build with no container THROWS rather than pretending a purge happened. Since Wave 6B it also refuses in a session that opened mirrored, because the brake acts at the next launch.
+Does NOT protect against: other devices' local copies; an offline device re-enabling later and re-creating the zone from its own data. **"A cloud purge deletes nothing on any device" is unobserved**: forum reports describe a zone deletion triggering a full mirroring reset elsewhere. Its cloud half has never run against a real container, which is step 10 of `sync-verification.md`.
 
 **4. The sync-aware restore** (`restore(_:at:)`).
 A restore now UPSERTS every record by id and TOMBSTONES what the snapshot does not carry - children included, via an explicit diff that is the whole-database authority `save` deliberately no longer has.
 Under mirroring it syncs as ordinary edits: no mass cloud deletion, no hard-delete for offline devices to resurrect into.
-Does NOT protect against: an offline device pushing post-snapshot EDITS over restored rows when it comes back (last-writer-wins still applies field-by-field - restore rewrites data, it does not freeze it); and it should still be run behind the kill switch during an incident, which nothing currently enforces mechanically.
+It refuses unless sync is disengaged, in the session as well as the flags (§8 v2.1, first fireable in Wave 6B).
+Does NOT protect against: an offline device pushing post-snapshot EDITS over restored rows when it comes back (last-writer-wins still applies field-by-field - restore rewrites data, it does not freeze it).
 
-**The honest operational rule for 6B remains** (from the readiness audit): the export file is the only trustworthy artifact, and sync must not be enabled for real data before the kill switch and the pre-enable snapshot exist. They now exist; the four manual gates and 6B's two-device verification still stand between this code and real data.
+**The honest operational rule for 6B remains** (from the readiness audit): the export file is the only trustworthy artifact, and sync must not be enabled for real data before the kill switch and the pre-enable snapshot exist. They now exist; the manual gates and `sync-verification.md` still stand between this code and real data.
+
+## What Wave 6B added, and what it does NOT protect against
+
+Decisions and reasoning are in `DECISIONS.md`, "Wave 6B". The behaviour of the framework underneath is the part this project does not control:
+
+- **Signing out of iCloud removes synced records from the device, by design** (Apple's forums; turning iCloud off for the app counts the same). They return when the same account signs back in. Changes that had not uploaded are lost. Otto cannot prevent this; Today says so rather than reading "No subscriptions yet". The next pass then plans nothing, so reminders stop with the records.
+- **The kill switch opens a mirrored store without CloudKit options**, which Apple warns drops the tie between the store and the iCloud account: a stopped device keeps its data after a sign-out. That is what the switch is for, and the reason it is the owner's deliberate act.
+- **A device joins iCloud empty** (`SyncActivationError.cloudCopyExists`). Record names are not derived from Otto's ids, so a device with records could double everything. Two devices holding the same imported backup and enabling in the same moment can still produce twins with one id, which nothing merges; the recovery is stop, purge, restore on one device, re-enable.
+- **Honest clock skew** still orders last-writer-wins wrongly. Unchanged.

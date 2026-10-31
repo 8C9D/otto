@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.6 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** **640 tests** (275 domain + 130 persistence + 235 UI), from `scripts/verify.sh` at HEAD `bda8c27`, 2026-08-21; the simulator-only Dynamic Type suite is additional and not in that count. Next: **6B — CloudKit activation** (`docs/next-wave.md`, §8) plus the manual gates.
+**Status:** **v2.6 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** **640 tests** (275 domain + 130 persistence + 235 UI), from `scripts/verify.sh` at HEAD `bda8c27`, 2026-08-21; the simulator-only Dynamic Type suite is additional and not in that count. Next: **finish 6B**: the code landed 2026-10-31 and Release stays off; the real-container runbook is `docs/sync-verification.md`.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
@@ -314,6 +314,8 @@ The **cancel-by buffer** exists because cancelling on the conversion day is alre
 ### 5.0a One id, one record — **the merge violates it on purpose** *(added v2.2)*
 
 Wave 6B-Prep-2's fifth "can't fully articulate" flag: the rival-cancellation merge gives the winner **live copies** of the losers' evidence notes while each tombstoned loser keeps its own — so **one note id names records under two parents.** The report established it is deterministic, idempotent, lossless, and identical across both applier paths, and could not name the feature it breaks.
+
+⚠ **Corrected in Wave 6B:** the mirror does *not* derive a record's name from its identifier. Names are minted per insert and kept in the store's own metadata, so two records sharing an id do not collide in CloudKit; **they both upload and both stay.** The hazard is real and points the other way, and the rule below stands. `DECISIONS.md`, "A device joins iCloud empty".
 
 **The feature is 6B.** CloudKit addresses records by name, and the SwiftData mirror derives that name from the record's identifier. **Two live records sharing an id is not a smell there — it is a collision**, in the exact subsystem being enabled next. The candidates the report listed (a global fetch-note-by-id, a note-level dedup pass) don't exist yet; **the one that does exist is the one about to be turned on.**
 
@@ -820,7 +822,7 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 | **⭐ DEVICE TESTING** | Install on the owner's iPhone; the four manual gates | ✅ **Unblocked — no code dependency remains** |
 | **9A** ✅ | Hands-on fixes: Today permission surface, edit-form mode, export format v4 (ISO 8601 UTC) | ✅ **Done** — HEAD `ab52879`, **475 tests**; all three verified on the physical device |
 | **6B-Prep-3** ✅ | Restore dirty flag, evidence-note reparenting, derived package list, `wire_coder_outside_export` lint rule | ✅ **Done** — HEAD `5790167`, **481 tests**. Crash window **interrupted for real** in test; package-list derivation verified by **actually adding a throwaway package** and observing pickup |
-| **6B-Prep-4** ✅ | Min-of-current-and-reconstructed heal; `docs/next-wave.md` + `verify.sh` banner; remove the unasserted `watermarkReconstructions` counter | ✅ **Done** — all three are in the tree: the heal takes the minimum (`OttoStore+Watermarks.swift`, §5), `docs/next-wave.md` exists with the `verify.sh` banner that fails the run when it is missing or empty, and the counter is gone |
+| **6B-Prep-4** ✅ | Min-of-current-and-reconstructed heal; `docs/next-wave.md` + `verify.sh` banner; remove the unasserted `watermarkReconstructions` counter | ✅ **Done** — the heal takes the minimum (`OttoStore+Watermarks.swift`, §5) and the counter is gone. `docs/next-wave.md` and its `verify.sh` banner were removed with the process ledgers on 2026-09-04; this table is the record now |
 
 **⭐ `docs/next-wave.md` — the skipped-wave fix** *(adopted v2.5)*. 6B-Prep-3 was recorded correctly in this table and skipped anyway across several sessions. The fix, proposed by Wave 6B-Prep-3 itself:
 
@@ -829,13 +831,15 @@ Each wave ends in a commit and a checkpoint. Gates marked ⛔ do not pass withou
 The reasoning is the general lesson restated: the wave table already recorded the truth; what was missing was **a surface inside the loop you never skip.** Same structural move as gating `restore()` on the kill switch.
 
 **What deliberately is not built:** any attempt to have `verify.sh` validate that a wave was actually *done*. It cannot know, and **a checklist that lies is worse than none.** This wave was lost *between* sessions, not within one — a per-run banner is exactly the right grain.
-| **6B** ⬅ **NEXT** (`docs/next-wave.md`) | CloudKit enablement + two-device sync verification | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
+| **6B** ⬅ **IN PROGRESS** | CloudKit enablement + two-device sync verification. ✅ **Code landed 2026-10-31**, off in Release: mirrored mode, zone purge, post-import convergence, watermark heal for arrivals, the join rule, settling surfaces, Settings. ⛔ **Not done until `docs/sync-verification.md` passes** on two devices | ⛔ Data survives delete-and-reinstall · ⛔ all four manual gates (procedure 3, the owner's hands-on pass, is unsigned) · ⛔ 6B-Prep green · ⛔ the four prerequisites below |
 
 **⛔ Hard prerequisites for enabling CloudKit** *(added v2.0; the audit answered "what is the rollback story" with **"there is no rollback story — there is a backup story," which is not the same thing**)*. `restore()` hard-deletes and re-inserts, which under mirroring is a **mass cloud deletion plus a resurrection vector for offline devices**; sync cannot be switched off without shipping a build; and nothing can purge the zone. All four must exist first:
 
 1. **An automatic pre-enable export snapshot** — taken before the first sync, unprompted. **Boundary:** it is a *floor, not a mirror* — nothing created after it is covered, it lives on the same device as the data it protects, and the user can delete it from Files.
 2. **A runtime kill switch** for sync, so disabling it never requires an App Store release. **Boundary:** takes effect at next launch, **not mid-flight**; does nothing on other devices; removes no data anywhere. It stops the bleeding, nothing more.
 3. **A zone-purge action.** **Boundary:** a cloud purge **deletes nothing on any device**, and an offline device re-enabling later can **re-create the zone from its own data**. Its cloud half is a seam whose real implementation cannot exist until 6B — **⛔ 6B must test it against a real CloudKit container before any real data exists.**
+*Status, Wave 6B: item 4a below is done (the refusal fired in a really mirrored session on a simulator); item 3's cloud half has made a real call but has not yet run against a real container.*
+
 4a. **⛔ Test the kill-switch refusal against the real mirrored mode on day one of 6B.** `mainSyncMode != .off` is currently a comparison that **cannot be true**, so the guard is unfireable and untestable until the enum grows a second case. Wave 6B-Prep-2 shipped it knowingly and named the flaw in its own defence: *"it becomes checkable the moment the enum grows — but 'supposed to' is doing work in that sentence."* Correct. **"It will be tested once the other case exists" is a promise about a future wave's diligence**, and this project has watched that promise fail at the watermark relocation, the version-pinned guard, and the enum freeze. Day one, not eventually.
 
 4. **A sync-aware `restore()`** that does not express a restore as a mass deletion — upsert by id plus an explicit tombstone diff. **Boundary:** it freezes nothing, so an offline device's post-snapshot edits still land on restored rows by last-writer-wins when it returns.
@@ -951,6 +955,7 @@ This is why §6.3's caveat was written as *"it does not exist until it is observ
 
 ## Update log
 
+- **2026-10-31 (v2.7 — Wave 6B code)** — CloudKit mirroring built and left off in Release; schema still frozen at V3, no new dependency, package or target. **§5.0a corrected:** record names are not derived from identifiers. Found on the way: arrivals had no watermark (the founding hazard through iCloud); `reconcile` had no caller; a released event monitor silently disabled convergence, caught only by running a real mirrored store. Full record in `DECISIONS.md`; what remains is `docs/sync-verification.md`.
 - **2026-08-08 (v2.6 — Wave 10, Notification Delivery & Check-Date Fixes, complete)** — **525 tests** (246 domain + 167 UI + 112 persistence), verified twice from clean clones; five commits ending at *"Record Wave 10 and the decisions behind it"*. The compressed-timeline device run (Aug 8–10 device days) **passed the ⛔ Wave 5 gate** — the conversion announcement fired on a locked screen with the app never opened — and surfaced four real code defects, **all four in the gap between the pure planner and actual delivery**: every engine test ran against a fake whose `add` never throws, and `LiveNotificationClient` had zero coverage. The gap, not the four symptoms, was the wave's subject.
   - **⛔ G — the check-date selector picked an already-landed charge.** Cancelling on the conversion day watched the conversion charge itself, corrupting the dispute summary — the one output with an external audience. `nextChargeDateIfNotCancelled` is now the first occurrence **strictly after** the cancellation day (§5.4), pinned by a reachable-state property test: no dispute summary's charge date can equal or precede its cancellation day. Generalized: **`>= today` is an unsafe default anywhere a past occurrence can be a legitimate already-settled event** — *derive before you mutate* protects the read, not the pick.
   - **⛔ B — the remove-all-then-re-add loss window is inexpressible, not narrowed.** The reschedule is now a diff reconciliation (§6.2): a suspension mid-pass leaves a superset or the correct set, never the empty device the unified log showed at 5 ms distance. Falsified by restoring the old cycle and watching the suspension test's device state come back `[]`.

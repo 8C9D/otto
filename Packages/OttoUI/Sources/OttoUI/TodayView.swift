@@ -106,8 +106,9 @@ struct TodayView: View {
                     Text(String(localized: "iCloud is signed out"))
                         .font(.headline)
                     Text(String(localized: """
-                    Your synced subscriptions are safe in your iCloud account and come back \
-                    when you sign in. Until then Otto can't remind you about them.
+                    Otto can't sync until you sign back in. Anything that left this device \
+                    is safe in your iCloud account and returns when you do - but Otto can't \
+                    remind you about it until then.
                     """))
                     .font(.subheadline)
                 }
