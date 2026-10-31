@@ -45,6 +45,18 @@ private actor Gate {
 
 private struct StubFailure: Error {}
 
+/// Waits for async work with no handle to await. Bounded, so a regression fails
+/// here at its own line instead of hanging the run.
+private func eventually(
+    _ condition: () async -> Bool, sourceLocation: SourceLocation = #_sourceLocation
+) async {
+    for _ in 0 ..< 3_000 {
+        if await condition() { return }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    Issue.record("the condition never became true", sourceLocation: sourceLocation)
+}
+
 /// A source that stops when released, like the real one.
 private final class StreamSource: SyncEventSource, Sendable {
     let events: AsyncStream<SyncEvent>
@@ -119,7 +131,7 @@ struct SyncCoordinatorTests {
         )
 
         await coordinator.handle(event(.import, .succeeded))
-        while await gate.waitCount < 1 { await Task.yield() }
+        await eventually { await gate.waitCount >= 1 }
         // The second import begins inside the first one's delay.
         await coordinator.handle(event(.import, .started))
         await gate.open()
@@ -128,9 +140,9 @@ struct SyncCoordinatorTests {
 
         // Its finish schedules the pass the first one gave up.
         await coordinator.handle(event(.import, .succeeded))
-        while await gate.waitCount < 2 { await Task.yield() }
+        await eventually { await gate.waitCount >= 2 }
         await gate.open()
-        while await journal.entries.count < 2 { await Task.yield() }
+        await eventually { await journal.entries.count >= 2 }
         #expect(await journal.entries == ["reconcile", "afterConvergence"])
     }
 
@@ -153,9 +165,9 @@ struct SyncCoordinatorTests {
         for _ in 0 ..< 3 {
             await coordinator.handle(event(.import, .succeeded))
         }
-        while await gate.waitCount < 3 { await Task.yield() }
+        await eventually { await gate.waitCount >= 3 }
         await gate.open()
-        while await journal.entries.count < 2 { await Task.yield() }
+        await eventually { await journal.entries.count >= 2 }
         for _ in 0 ..< 50 { await Task.yield() }
         #expect(await journal.entries == ["reconcile", "afterConvergence"])
     }
@@ -195,7 +207,7 @@ struct SyncCoordinatorTests {
 
         // Import A lands. Import B starts inside A's delay, so A's pass stands down.
         await coordinator.handle(event(.import, .succeeded))
-        while await gate.waitCount < 1 { await Task.yield() }
+        await eventually { await gate.waitCount >= 1 }
         await coordinator.handle(event(.import, .started))
         await gate.open()
         for _ in 0 ..< 50 { await Task.yield() }
@@ -204,16 +216,16 @@ struct SyncCoordinatorTests {
         // B fails. A's changes are in the store and the screens must catch up,
         // but a failed import may have left a transaction half-applied.
         await coordinator.handle(event(.import, .failed(.networkUnavailable)))
-        while await gate.waitCount < 2 { await Task.yield() }
+        await eventually { await gate.waitCount >= 2 }
         await gate.open()
-        while await journal.entries.isEmpty { await Task.yield() }
+        await eventually { await !journal.entries.isEmpty }
         #expect(await journal.entries == ["afterConvergence"])
 
         // The next clean import is what reconciles.
         await coordinator.handle(event(.import, .succeeded))
-        while await gate.waitCount < 3 { await Task.yield() }
+        await eventually { await gate.waitCount >= 3 }
         await gate.open()
-        while await journal.entries.count < 3 { await Task.yield() }
+        await eventually { await journal.entries.count >= 3 }
         #expect(await journal.entries == ["afterConvergence", "reconcile", "afterConvergence"])
     }
 
@@ -234,12 +246,12 @@ struct SyncCoordinatorTests {
         )
 
         await coordinator.handle(event(.import, .succeeded))
-        while await hold.waitCount < 1 { await Task.yield() }
+        await eventually { await hold.waitCount >= 1 }
         // Mid-pass, parked inside reconcile, another import lands.
         await coordinator.handle(event(.import, .succeeded))
-        while await hold.waitCount < 2 { await Task.yield() }
+        await eventually { await hold.waitCount >= 2 }
         await hold.open()
-        while await journal.entries.filter({ $0 != "reconcile" }).count < 2 { await Task.yield() }
+        await eventually { await journal.entries.filter { $0 != "reconcile" }.count >= 2 }
         #expect(await !journal.entries.contains("cancelled"))
     }
 

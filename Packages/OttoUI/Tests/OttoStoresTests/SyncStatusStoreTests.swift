@@ -11,6 +11,18 @@ private actor EmptyTransfer: DataTransferRepository {
     func reconstructMaterializationWatermarks() async throws {}
 }
 
+/// Waits for async work with no handle to await. Bounded, so a regression fails
+/// here at its own line instead of hanging the run.
+private func eventually(
+    _ condition: () async -> Bool, sourceLocation: SourceLocation = #_sourceLocation
+) async {
+    for _ in 0 ..< 3_000 {
+        if await condition() { return }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    Issue.record("the condition never became true", sourceLocation: sourceLocation)
+}
+
 private struct StubCloud: CloudSyncClient {
     var account: CloudAccountStatus = .available
     func accountStatus() async -> CloudAccountStatus { account }
@@ -179,10 +191,10 @@ struct SyncStatusStoreTests {
         let expiry = Expiry()
         let store = try makeStore(expiry: expiry)
         #expect(store.isSettling)
-        while await expiry.armed < 1 { await Task.yield() }
+        await eventually { await expiry.armed >= 1 }
 
         await expiry.expire()
-        while store.isSettling { await Task.yield() }
+        await eventually { !store.isSettling }
         #expect(!store.isSettling)
     }
 
@@ -190,9 +202,9 @@ struct SyncStatusStoreTests {
     func newImportRestartsTheLimit() async throws {
         let expiry = Expiry()
         let store = try makeStore(expiry: expiry)
-        while await expiry.armed < 1 { await Task.yield() }
+        await eventually { await expiry.armed >= 1 }
         await expiry.expire()
-        while store.isSettling { await Task.yield() }
+        await eventually { !store.isSettling }
 
         store.apply(activity(importing: true))
         #expect(store.isSettling)
@@ -232,7 +244,7 @@ struct SyncStatusStoreTests {
         let store = try makeStore(account: .noAccount)
         #expect(store.account == nil)
         store.apply(activity(failure: .accountUnavailable))
-        while store.account == nil { await Task.yield() }
+        await eventually { store.account != nil }
         #expect(store.isAccountMissing)
     }
 
