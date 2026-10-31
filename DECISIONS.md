@@ -47,6 +47,11 @@ The flags causing the failure live in `UserDefaults`, and the only screen that c
 `CloudKitEventMonitor` was a local in `assemble()`, and only its stream was passed on. Its `deinit` removed the observer as `assemble()` returned, so the store recorded events, Otto heard none, and reconciliation would never have run on any device. Every unit test passed: a fake stream has no owner to lose. Found because a `[sync]` line was missing from a real run. `SyncCoordinator` now holds the source.
 Also from that run: the no-account error is `NSCocoaErrorDomain 134400`, not a `CKError`, and it read as an unknown failure until mapped.
 
+### What review found
+
+An independent review of the finished branch found three defects, each confirmed against the code before being fixed: one shared failure let a successful import report "up to date" over uploads blocked by a full iCloud, so failures are now tracked per direction; a pass that stood down for a later import was lost if that import failed, so it stays owed, and reconciliation alone waits for a clean import; and an open detail screen held its snapshot through a remote change, so the model refreshes the ones still open.
+Reading that code turned up a fourth: coalescing a burst cancelled the previous pass's task, which could already be running, and a cancelled pass trips the scheduler's checkpoints and reports failure. Coalescing is now by generation, never by cancellation.
+
 ### Withdrawn
 
 *"`OttoStore`'s long-lived context will read stale data after an import."* Measured false, for fields and for children through a relationship already faulted, from a second context and from a second container. Pinned by `RemoteWriteVisibilityTests`. A stand-in: the real import is step 3 of the runbook.

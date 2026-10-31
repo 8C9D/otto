@@ -92,7 +92,7 @@ struct SyncStatusStoreTests {
         var activity = SyncActivity()
         activity.isImporting = importing
         activity.hasFinishedImport = finished
-        activity.lastFailure = failure
+        activity.importFailure = failure
         return activity
     }
 
@@ -234,5 +234,50 @@ struct SyncStatusStoreTests {
         store.apply(activity(failure: .accountUnavailable))
         while store.account == nil { await Task.yield() }
         #expect(store.isAccountMissing)
+    }
+
+    // MARK: - Another device's changes reaching the screens
+
+    @Test("an open detail screen catches up: it holds a snapshot nothing else would refresh")
+    func convergenceRefreshesOpenDetails() async throws {
+        let subscriptions = MockSubscriptionRepository()
+        let model = AppModel(repositories: AppModel.Repositories(
+            subscriptions: subscriptions,
+            billingEvents: MockBillingEventRepository(),
+            cancellations: MockCancellationRepository(),
+            priceChanges: MockPriceChangeRepository(),
+            paymentMethods: MockPaymentMethodRepository(),
+            transfer: EmptyTransfer()
+        ), dates: .fixed(today: try day(2026, 10, 31)))
+        var subscription = try makeSubscription(index: 1, cycleStartDay: try day(2026, 1, 15))
+        try await subscriptions.save(subscription)
+        let detail = model.detailStore(for: subscription.id)
+        await detail.refresh()
+
+        subscription.name = "Renamed on another device"
+        try await subscriptions.save(subscription)
+        await model.syncDidConverge()
+
+        #expect(detail.state.value?.subscription.name == "Renamed on another device")
+    }
+
+    @Test("a detail screen that closed is let go: the model must not keep it alive")
+    func closedDetailsAreReleased() async throws {
+        let model = AppModel(repositories: AppModel.Repositories(
+            subscriptions: MockSubscriptionRepository(),
+            billingEvents: MockBillingEventRepository(),
+            cancellations: MockCancellationRepository(),
+            priceChanges: MockPriceChangeRepository(),
+            paymentMethods: MockPaymentMethodRepository(),
+            transfer: EmptyTransfer()
+        ), dates: .fixed(today: try day(2026, 10, 31)))
+        weak var released: SubscriptionDetailStore?
+        do {
+            let detail = model.detailStore(for: UUID())
+            released = detail
+            #expect(released != nil)
+        }
+        #expect(released == nil)
+        await model.syncDidConverge()
     }
 }

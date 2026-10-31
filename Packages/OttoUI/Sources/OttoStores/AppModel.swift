@@ -64,6 +64,14 @@ public final class AppModel {
 
     private let repositories: Repositories
 
+    /// Detail screens own value snapshots, so a remote change has no other way
+    /// to reach one that is open. Weak: the screen owns its store, and popping
+    /// it should release it.
+    private struct OpenDetailStore {
+        weak var store: SubscriptionDetailStore?
+    }
+    @ObservationIgnored private var openDetailStores: [OpenDetailStore] = []
+
     // MARK: - Export state (F8 / R0-10(b))
     //
     // Stored here because an extension cannot hold stored properties;
@@ -154,6 +162,9 @@ public final class AppModel {
         await subscriptionsStore.refresh()
         await insightsStore.refresh()
         await paymentMethodsStore.refresh()
+        for open in openDetailStores {
+            await open.store?.refresh()
+        }
     }
 
     // MARK: - Wave 5 flows
@@ -291,7 +302,7 @@ public final class AppModel {
 
     /// A fresh detail store for one subscription's screen.
     public func detailStore(for subscriptionID: UUID) -> SubscriptionDetailStore {
-        SubscriptionDetailStore(
+        let store = SubscriptionDetailStore(
             subscriptionID: subscriptionID,
             subscriptionRepository: repositories.subscriptions,
             billingEventRepository: repositories.billingEvents,
@@ -299,6 +310,9 @@ public final class AppModel {
             priceChangeRepository: repositories.priceChanges,
             paymentMethodRepository: repositories.paymentMethods
         )
+        openDetailStores.removeAll { $0.store == nil }
+        openDetailStores.append(OpenDetailStore(store: store))
+        return store
     }
 
     /// A form model for adding (nil) or editing, seeded with the settings

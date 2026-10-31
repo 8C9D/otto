@@ -15,9 +15,12 @@ private actor Journal {
 private struct SpyReconciliation: ReconciliationRepository {
     let journal: Journal
     var failure: (any Error)?
+    /// Parks the pass here, so a test can act while it is running.
+    var hold: Gate?
 
     func reconcile(at instant: Date) async throws -> ReconciliationSummary {
         await journal.add("reconcile")
+        await hold?.wait()
         if let failure { throw failure }
         return ReconciliationSummary()
     }
@@ -176,20 +179,115 @@ struct SyncCoordinatorTests {
         withExtendedLifetime(coordinator) {}
     }
 
-    @Test("activity tracks both directions, and a success clears the last failure")
+    @Test("a pass still owed when a later import FAILS is paid, without reconciling over the failure")
+    func failedImportPaysTheOwedPass() async throws {
+        let journal = Journal()
+        let gate = Gate()
+        let (stream, _) = AsyncStream.makeStream(of: SyncEvent.self)
+        let coordinator = SyncCoordinator(
+            source: StreamSource(stream),
+            reconciliation: SpyReconciliation(journal: journal),
+            now: { Self.instant },
+            sleep: { _ in await gate.wait() },
+            afterConvergence: { await journal.add("afterConvergence") },
+            onActivity: { _ in }
+        )
+
+        // Import A lands. Import B starts inside A's delay, so A's pass stands down.
+        await coordinator.handle(event(.import, .succeeded))
+        while await gate.waitCount < 1 { await Task.yield() }
+        await coordinator.handle(event(.import, .started))
+        await gate.open()
+        for _ in 0 ..< 50 { await Task.yield() }
+        #expect(await journal.entries.isEmpty)
+
+        // B fails. A's changes are in the store and the screens must catch up,
+        // but a failed import may have left a transaction half-applied.
+        await coordinator.handle(event(.import, .failed(.networkUnavailable)))
+        while await gate.waitCount < 2 { await Task.yield() }
+        await gate.open()
+        while await journal.entries.isEmpty { await Task.yield() }
+        #expect(await journal.entries == ["afterConvergence"])
+
+        // The next clean import is what reconciles.
+        await coordinator.handle(event(.import, .succeeded))
+        while await gate.waitCount < 3 { await Task.yield() }
+        await gate.open()
+        while await journal.entries.count < 3 { await Task.yield() }
+        #expect(await journal.entries == ["afterConvergence", "reconcile", "afterConvergence"])
+    }
+
+    @Test("a new import never cancels a pass already running: cancelled passes report themselves failed")
+    func runningPassIsNotCancelled() async throws {
+        let journal = Journal()
+        let hold = Gate()
+        let (stream, _) = AsyncStream.makeStream(of: SyncEvent.self)
+        let coordinator = SyncCoordinator(
+            source: StreamSource(stream),
+            reconciliation: SpyReconciliation(journal: journal, hold: hold),
+            now: { Self.instant },
+            sleep: { _ in },
+            afterConvergence: {
+                await journal.add(Task.isCancelled ? "cancelled" : "afterConvergence")
+            },
+            onActivity: { _ in }
+        )
+
+        await coordinator.handle(event(.import, .succeeded))
+        while await hold.waitCount < 1 { await Task.yield() }
+        // Mid-pass, parked inside reconcile, another import lands.
+        await coordinator.handle(event(.import, .succeeded))
+        while await hold.waitCount < 2 { await Task.yield() }
+        await hold.open()
+        while await journal.entries.filter({ $0 != "reconcile" }).count < 2 { await Task.yield() }
+        #expect(await !journal.entries.contains("cancelled"))
+    }
+
+    @Test("activity tracks both directions")
     func activityTracksTheLifecycle() async throws {
         let journal = await run([
             event(.import, .started),
             event(.export, .started),
-            event(.import, .failed(.quotaExceeded)),
+            event(.import, .failed(.networkUnavailable)),
             event(.export, .succeeded)
         ])
         let activities = await journal.activities
         #expect(activities.map(\.isImporting) == [true, true, false, false])
         #expect(activities.map(\.isExporting) == [false, true, true, false])
-        #expect(activities[2].lastFailure == .quotaExceeded)
-        #expect(activities[3].lastFailure == nil)
         #expect(activities[3].lastSuccessAt == Self.instant)
+    }
+
+    @Test("an import succeeding says nothing about uploads: a full iCloud stays reported until an export recovers")
+    func failuresBelongToTheirDirection() async throws {
+        let journal = await run([
+            event(.export, .failed(.quotaExceeded)),
+            event(.import, .succeeded),
+            event(.export, .succeeded)
+        ])
+        let activities = await journal.activities
+        #expect(activities[1].lastFailure == .quotaExceeded)
+        #expect(activities[2].lastFailure == nil)
+    }
+
+    @Test("an export succeeding doesn't clear a failed import either")
+    func importFailureSurvivesAnExport() async throws {
+        let journal = await run([
+            event(.import, .failed(.networkUnavailable)),
+            event(.export, .succeeded)
+        ])
+        #expect(await journal.activities.last?.lastFailure == .networkUnavailable)
+    }
+
+    @Test("a setup failure outranks both directions and clears once any step completes")
+    func setupFailureClearsOnProgress() async throws {
+        let journal = await run([
+            event(.export, .failed(.quotaExceeded)),
+            event(.setup, .failed(.accountUnavailable)),
+            event(.export, .succeeded)
+        ])
+        let activities = await journal.activities
+        #expect(activities[1].lastFailure == .accountUnavailable)
+        #expect(activities[2].lastFailure == nil)
     }
 
     @Test("only a finished IMPORT means this device has caught up; an export says nothing about what's inbound")
