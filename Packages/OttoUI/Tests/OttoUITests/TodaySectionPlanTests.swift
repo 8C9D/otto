@@ -91,7 +91,9 @@ struct TodaySectionPlanTests {
         hasNext30Days: Bool = false,
         hasLater: Bool = false,
         scheduleOutcome: ScheduleOutcome? = nil,
-        lastPassFailed: Bool = false
+        lastPassFailed: Bool = false,
+        syncSettling: Bool = false,
+        syncAccountMissing: Bool = false
     ) -> [TodaySection] {
         TodaySection.plan(TodaySection.Input(
             subscriptionsEmpty: subscriptionsEmpty,
@@ -101,8 +103,48 @@ struct TodaySectionPlanTests {
             hasNext30Days: hasNext30Days,
             hasLater: hasLater,
             scheduleOutcome: scheduleOutcome,
-            lastPassFailed: lastPassFailed
+            lastPassFailed: lastPassFailed,
+            syncSettling: syncSettling,
+            syncAccountMissing: syncAccountMissing
         ))
+    }
+
+    @Test("while records are arriving, the two damage cards give way to one honest line")
+    func settlingSoftensTheCards() {
+        let sections = plan(permission: .authorized, unreadableCount: 3, hasReadRepairs: true, syncSettling: true)
+        #expect(sections.contains(.syncSettling))
+        #expect(!sections.contains(.unreadableRecords))
+        #expect(!sections.contains(.readRepairs))
+    }
+
+    @Test("once settled, the same state shows both cards: softening is not hiding")
+    func settledShowsTheCards() {
+        let sections = plan(permission: .authorized, unreadableCount: 3, hasReadRepairs: true)
+        #expect(sections.contains(.unreadableRecords))
+        #expect(sections.contains(.readRepairs))
+        #expect(!sections.contains(.syncSettling))
+    }
+
+    @Test("a joining device doesn't claim to have no subscriptions while they're on their way")
+    func settlingReplacesTheEmptyState() {
+        let sections = plan(subscriptionsEmpty: true, permission: .authorized, syncSettling: true)
+        #expect(sections == [.syncSettling])
+    }
+
+    @Test("a signed-out device says why it's empty, and the permission surface survives")
+    func signedOutExplainsTheEmptyList() {
+        let sections = plan(subscriptionsEmpty: true, permission: .denied, syncAccountMissing: true)
+        #expect(sections == [.notificationStatus, .syncAccountMissing])
+    }
+
+    @Test("settling drops only the needs-review rows; every other reason to act stays")
+    func settlingFiltersNeedsReviewOnly() throws {
+        let subscription = try UsageRepairFixtures.subscription(status: .cancelled, lastUsedDate: nil)
+        let date = try #require(CalendarDay(year: 2026, month: 8, day: 1))
+        let review = TodayEntry(subscription: subscription, reason: .needsReview, date: date)
+        let due = TodayEntry(subscription: subscription, reason: .verificationDue, date: date)
+        #expect(TodaySection.needsActionEntries([review, due], settling: true) == [due])
+        #expect(TodaySection.needsActionEntries([review, due], settling: false) == [review, due])
     }
 
     @Test("a first-launch user with zero subscriptions can reach the permission request from Today")

@@ -3,6 +3,74 @@
 Rulings made during implementation, with rationale and the alternatives they displaced.
 Spec-level rules live in `docs/Subscription-Tracker-Spec.md`; this file records the calls a wave made where the spec left room.
 
+## Wave 6B - CloudKit, built and switched on nowhere (2026-10-31)
+
+The code half of 6B. Sync opens, syncs and stops in Debug builds; Release names no container, so nothing reaches production. Every real-container step is `docs/sync-verification.md`, and until that passes 6B is not done.
+
+### Release stays off by naming no container
+
+`OTTO_CLOUDKIT_CONTAINER` is set per configuration; empty means this build cannot mirror, whatever the flags say. TestFlight reaches Production, which refuses everything until the schema is deployed, and that deploy is permanent, so the switch had to be a deliberate one-line change after verification rather than a state a user could stumble into.
+Rejected: a compile flag (a second mechanism, and the identifier still has to live somewhere); hiding only the Settings row (flags left by a Debug install would still open mirrored).
+
+### A device joins iCloud empty
+
+iCloud record names are minted per insert and are not derived from Otto's `id` (spec §5.0a corrected). So one backup imported on two devices, or a reinstall that imports before enabling, uploads every record twice under one id, permanently.
+A convergence rule cannot fix that: two identical twins have no field that orders them the same way on both devices, so each could tombstone a different one and the record would vanish. `enableSync` refuses instead when iCloud has a copy and this device has records.
+Rejected: read-time dedup by id (every read path, and the live filter has to run after it, or a tombstoned twin un-deletes); an in-app "replace with iCloud's copy" (deleting store files from inside the app, for a case a reinstall already covers).
+Residual: two devices holding the same imported backup, enabling in the same moment before either zone exists.
+
+### A nil watermark means the record arrived
+
+Watermarks never sync, so a device that received subscriptions has none, and nil meant "start from today": the founding hazard, reached through iCloud, on the exact path sync exists for. Once sync has been on here, a nil watermark starts at the edge of the synced ledger, or with no rows at the later of the anchor and the entry day, matching what the creating device did.
+Keyed on the flag as well as the session, because the kill switch turns the session off and the record is still an arrival. A device that has never synced keeps the pinned pre-v1.5 behaviour.
+Erring early can write twins of rows still in flight; reconciliation merges them, and that is the safe direction.
+
+### Convergence runs after a finished import, and only then
+
+`reconcile(at:)` had no caller. `SyncCoordinator` runs it two seconds after a successful import, unless another import began, then re-plans reminders and refreshes the screens. One user save reaches CloudKit as one atomic zone write, so a finished import holds whole transactions; mid-import, a §4a repair could read a record whose partner is still arriving as a conflict.
+Residual: an export split across CloudKit batches can still show that shape to a finished import. Small transactions do not split in practice; unmeasured.
+
+### The purge has the restore guard's trap, so it has the restore guard
+
+The kill switch acts at the next launch, so a session that opened mirrored would recreate the zone it had just deleted. `purgeCloudZone` now refuses in that session. On success the device returns to plain off: there is no cloud copy left to resume, so turning sync on again is a fresh start with its own snapshot.
+
+### Settling is bounded
+
+While records arrive, Today swaps the damage cards for one line, which hides real damage too. So it expires five minutes after the last import began, and an import that never finishes falls back to showing every card.
+
+### A mirrored store that won't open falls back to the local one
+
+The flags causing the failure live in `UserDefaults`, and the only screen that changes them is behind the launch. Without the fallback, one bad sync state locks the owner out of their data.
+
+### What the simulator found
+
+`CloudKitEventMonitor` was a local in `assemble()`, and only its stream was passed on. Its `deinit` removed the observer as `assemble()` returned, so the store recorded events, Otto heard none, and reconciliation would never have run on any device. Every unit test passed: a fake stream has no owner to lose. Found because a `[sync]` line was missing from a real run. `SyncCoordinator` now holds the source.
+Also from that run: the no-account error is `NSCocoaErrorDomain 134400`, not a `CKError`, and it read as an unknown failure until mapped.
+
+### What review found
+
+An independent review of the finished branch found three defects, each confirmed against the code before being fixed: one shared failure let a successful import report "up to date" over uploads blocked by a full iCloud, so failures are now tracked per direction; a pass that stood down for a later import was lost if that import failed, so it stays owed, and reconciliation alone waits for a clean import; and an open detail screen held its snapshot through a remote change, so the model refreshes the ones still open.
+Reading that code turned up a fourth: coalescing a burst cancelled the previous pass's task, which could already be running, and a cancelled pass trips the scheduler's checkpoints and reports failure. Coalescing is now by generation, never by cancellation.
+
+### Withdrawn
+
+*"`OttoStore`'s long-lived context will read stale data after an import."* Measured false, for fields and for children through a relationship already faulted, from a second context and from a second container. Pinned by `RemoteWriteVisibilityTests`. A stand-in: the real import is step 3 of the runbook.
+
+### The lifecycle test is a target, by owner decision
+
+The standing rule needs an explicit decision for a new target, and the owner gave one on 2026-10-31. `OttoLifecycleUITests` keeps a check on the one layer where unit tests had gone blind. It is run by `scripts/sync-lifecycle.sh`, not from Xcode, because it needs a fresh simulator with no iCloud account, an ad-hoc signed build and a seeded backup, and CI runs it as its own job.
+Its limit: with no account, no record leaves the device.
+
+Its first CI run failed at the file picker, as one local run in nine had, and the failure was measured rather than retried away. On a quiet machine, 30 of 30 picks reached Otto's prompt. With every core saturated, 0 of 15; under moderate load, 0 of 9 across three tap styles and 0 of 2 with a 200 s wait, while the picker's own navigation and close button kept working. In none of those picks did the picker close without the prompt.
+So the stall is inside the system picker on a starved host. Why it stalls is not established: the picker is out of process, and this is as far down as Otto can see.
+Otto's prompt is what the test exists to check, so the two cases are split. A picker that never responds, or never loads, is reported and the steps behind it do not run: the Gate 1 rule, reported and never able to turn a job red for a reason that is not about the app. The script prints what a run did not exercise and CI raises a warning, so a green run cannot overclaim. A picker that closes with no prompt still fails. On CI this probably means the imports often do not run; the restore refusal stays pinned by the persistence suite, and the import steps are still real on a quiet machine.
+CI uploads a failed run's result bundle, because the first CI failure left no screen to read. The next one showed the same stall on the runner: picker open on the file, nothing over it. The one after showed a worse form, a blank sheet that never loaded, so a run that meets either relaunches and carries on.
+
+### Encrypted fields: V3 stays as it is (owner decision, 2026-10-31)
+
+Otto's fields deploy unencrypted at the field level, which is permanent once the production schema is deployed: a deployed field cannot become encrypted later. Private-database data stays encrypted at rest with Apple-held keys, and Advanced Data Protection makes it end-to-end for anyone who turns it on.
+Rejected: a V4 with `.allowsCloudEncryption`, which would reopen the schema freeze and add a migration before sync can ship, for a two-user app.
+
 ## One picked time, one pass (2026-08-20)
 
 Gate 3's carried P3 - one settings notification-time change running the full scheduling pass twice, duplicated pass/ledger/reconcile lines in the device log - was fixed at `0787150` rather than held for round 6, because the mechanism reproduced host-side exactly and the fix is local to `SettingsStore`.

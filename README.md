@@ -8,8 +8,9 @@ Otto never acts on your behalf: it never cancels anything, never logs in to a
 vendor, and never touches a payment method. It reminds, records, and verifies.
 
 Swift 6 across three local Swift packages and a thin app target, with a
-host-run test suite of 640 cases. CloudKit sync is designed in and switched
-off.
+host-run test suite of 699 cases. CloudKit sync is built, runs in Debug
+builds, and stays off in Release until it has been verified against a real
+container.
 
 ## Why it exists
 
@@ -89,10 +90,10 @@ UI says out loud when the 64-slot budget cannot cover every reminder.
 | --- | --- |
 | Language | Swift 6, strict concurrency `complete`, iOS 26 deployment target |
 | UI | SwiftUI, Dynamic Type verified at every size class |
-| Data | SwiftData, versioned schema with migrations; CloudKit private-database sync designed in and currently off |
+| Data | SwiftData, versioned schema with migrations; CloudKit private-database sync built, off in Release pending two-device verification |
 | Notifications | UserNotifications, planned and reconciled on-device; no server |
 | Project | XcodeGen (`project.yml`), three local Swift packages |
-| Tests | Swift Testing, 640 cases across the three packages plus a simulator-only Dynamic Type suite |
+| Tests | Swift Testing, 699 cases across the three packages plus a simulator-only Dynamic Type suite |
 | Tooling | SwiftLint `--strict`, `scripts/verify.sh` clean-clone gate, GitHub Actions |
 
 ## Build and run
@@ -125,8 +126,19 @@ host; it runs on a simulator:
 ```sh
 cd Packages/OttoUI
 xcodebuild test -scheme OttoUI-Package \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
+
+### The sync lifecycle
+
+```sh
+scripts/sync-lifecycle.sh
+```
+
+Drives the real app through the real UI on a real mirrored store: local, mirrored,
+stopped and back, with a refused restore and a refused purge on the way. It builds
+its own throwaway simulator, and needs no iCloud account because it runs without
+one. A record leaving the device is the job of `docs/sync-verification.md`.
 
 ### The verification gate
 
@@ -151,6 +163,8 @@ Packages/
 docs/
   Subscription-Tracker-Spec.md   the product and technical spec, source of truth
   sync-safety.md, cloudkit-readiness.md   what has to hold before sync turns on
+  sync-verification.md   the two-device runbook that finishes sync
 DECISIONS.md        calls made during implementation where the spec left room
-scripts/            verify.sh, app-icon generator, export options
+UITests/            the sync lifecycle UI test
+scripts/            verify.sh, sync-lifecycle.sh, app-icon generator, export options
 ```

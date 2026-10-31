@@ -99,4 +99,6 @@ echo
 echo "   NOT counted: the OttoUI Dynamic Type suite is UIKit-hosted and compiles"
 echo "   to nothing under swift test on a mac host. It runs only on a simulator"
 echo "   (the CI simulator job, or xcodebuild test locally) - do not report its"
-echo "   tests as covered by this script's total."
+echo "   tests as covered by this script's total. Neither does this run the sync"
+echo "   lifecycle UI test: that is scripts/sync-lifecycle.sh, and the CI job of"
+echo "   the same name."

@@ -1,35 +1,46 @@
 import OttoDomain
 import OttoPersistence
+import OttoRepositories
 import OttoServices
 import OttoStores
 import OttoUI
 import SwiftUI
 
 // The composition root - the ONE place that names a concrete persistence type.
-// Everything below the root sees repository protocols and domain values, so the
-// Wave 6 CloudKit swap happens here and nowhere else. Wave 4 adds the second
-// concrete assembly: the notification engine and its lifecycle triggers.
+// Everything below the root sees repository protocols and domain values, so
+// CloudKit is chosen here and nowhere else. Wave 4 adds the second concrete
+// assembly: the notification engine and its lifecycle triggers.
 @main
 struct OttoApp: App {
     /// Building the container can fail (disk, migration); the result is carried
     /// explicitly rather than crashing the launch or pretending it worked.
     private let bootstrap: Result<AppModel, any Error>
     private let coordinator: NotificationCoordinator?
+    private let sync: SyncStatusStore?
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         do {
             let assembled = try Self.assemble()
             coordinator = assembled.coordinator
+            sync = assembled.model.sync
             bootstrap = .success(assembled.model)
         } catch {
             coordinator = nil
+            sync = nil
             bootstrap = .failure(error)
         }
     }
 
     private static func assemble() throws -> (model: AppModel, coordinator: NotificationCoordinator) {
-        let containers = try OttoContainerFactory.localContainers()
+        let cloudContainer = cloudContainerIdentifier
+        try initializeCloudKitSchemaIfAsked(cloudContainer: cloudContainer)
+        // Before the container opens: `setup` fires as a mirrored store loads.
+        let syncEvents = CloudKitEventMonitor()
+        let syncState = SyncState.load()
+        let containers = try OttoContainerFactory.localContainers(
+            syncState: syncState, cloudContainerIdentifier: cloudContainer
+        )
         let store = OttoStore(containers: containers)
         let dates = DateProvider.live
 
@@ -48,18 +59,14 @@ struct OttoApp: App {
         let notifications = NotificationStatusStore(
             scheduler: scheduler, client: client, dates: dates
         )
-        let model = AppModel(
-            repositories: AppModel.Repositories(
-                subscriptions: store,
-                billingEvents: store,
-                cancellations: store,
-                priceChanges: store,
-                paymentMethods: store,
-                transfer: store
-            ),
-            notifications: notifications,
-            dates: dates
+        let sync = makeSyncStatus(
+            store: store, containers: containers, syncState: syncState,
+            cloudContainer: cloudContainer, dates: dates
         )
+        let model = makeModel(store: store, notifications: notifications, sync: sync, dates: dates)
+        if containers.syncSessionMode == .mirrored {
+            startConvergence(source: syncEvents, store: store, model: model, sync: sync, dates: dates)
+        }
 
         let coordinator = NotificationCoordinator(
             scheduler: scheduler,
@@ -79,6 +86,86 @@ struct OttoApp: App {
         // BGTaskScheduler registration must complete before launch finishes.
         coordinator.start()
         return (model, coordinator)
+    }
+
+    /// Which CloudKit container this build syncs to, or nil when it doesn't.
+    /// Set per configuration in `project.yml`: a Release stays off until its
+    /// schema is deployed to production (`docs/sync-verification.md`).
+    private static var cloudContainerIdentifier: String? {
+        let value = Bundle.main.object(forInfoDictionaryKey: "OttoCloudKitContainer") as? String
+        return value?.isEmpty == false ? value : nil
+    }
+
+    /// The one-time step before a production schema deploy
+    /// (`docs/sync-verification.md`): launch a Debug build, signed into iCloud,
+    /// with this argument. Compiled out of Release.
+    private static func initializeCloudKitSchemaIfAsked(cloudContainer: String?) throws {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-OttoInitializeCloudKitSchema"), let cloudContainer {
+            try OttoContainerFactory.initializeCloudKitSchema(containerIdentifier: cloudContainer)
+        }
+        #endif
+    }
+
+    private static func makeModel(
+        store: OttoStore,
+        notifications: NotificationStatusStore,
+        sync: SyncStatusStore,
+        dates: DateProvider
+    ) -> AppModel {
+        AppModel(
+            repositories: AppModel.Repositories(
+                subscriptions: store,
+                billingEvents: store,
+                cancellations: store,
+                priceChanges: store,
+                paymentMethods: store,
+                transfer: store
+            ),
+            notifications: notifications,
+            sync: sync,
+            dates: dates
+        )
+    }
+
+    private static func makeSyncStatus(
+        store: OttoStore,
+        containers: OttoContainers,
+        syncState: SyncState,
+        cloudContainer: String?,
+        dates: DateProvider
+    ) -> SyncStatusStore {
+        let cloud: any CloudSyncClient = cloudContainer.map(CloudKitSyncClient.init(containerIdentifier:))
+            ?? UnavailableCloudSyncClient()
+        return SyncStatusStore(
+            activation: SyncActivationService(
+                transfer: store, cloud: cloud, sessionMode: containers.syncSessionMode
+            ),
+            cloud: cloud,
+            initialState: syncState,
+            sessionMode: containers.syncSessionMode,
+            isAvailable: cloudContainer != nil,
+            mirroredOpenFailed: containers.mirroredOpenFailed,
+            dates: dates
+        )
+    }
+
+    /// Runs for the life of the process; the `Task` is what retains it.
+    private static func startConvergence(
+        source: any SyncEventSource,
+        store: OttoStore,
+        model: AppModel,
+        sync: SyncStatusStore,
+        dates: DateProvider
+    ) {
+        let convergence = SyncCoordinator(
+            source: source,
+            reconciliation: store,
+            now: dates.now,
+            afterConvergence: { [weak model] in await model?.syncDidConverge() },
+            onActivity: { [weak sync] activity in await sync?.apply(activity) }
+        )
+        Task { await convergence.run() }
     }
 
     private static func wire(
@@ -124,6 +211,9 @@ struct OttoApp: App {
             // The app-foreground reschedule trigger (spec §6.2).
             if phase == .active {
                 coordinator?.appDidBecomeActive()
+                // A sign-out happens in the Settings app, so returning here is
+                // when this device can first find out.
+                Task { await sync?.refreshAccount() }
             }
         }
     }

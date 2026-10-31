@@ -60,6 +60,12 @@ public enum OttoLog {
     /// and a path can carry their name or a vendor's.
     public static let dataTransfer = Logger(subsystem: subsystem, category: "transfer")
 
+    /// CloudKit mirroring: each import and export's outcome, what the
+    /// convergence pass merged, and account changes. Counts and error codes
+    /// only - which is everything `docs/sync-verification.md` reads from a
+    /// device, and nothing that says what the user pays for.
+    public static let sync = Logger(subsystem: subsystem, category: "sync")
+
     /// The §5.4 cancellation and verification lifecycle (F11).
     ///
     /// The other boundary round 1 named and nothing recorded. A cancellation
@@ -151,6 +157,9 @@ public enum RescheduleTrigger: String, Sendable {
     case notificationAction
     case timeZoneChange
     case significantTimeChange
+    /// A CloudKit import landed: another device's changes can move every
+    /// reminder this device holds, and nothing else would tell it.
+    case cloudSync
     /// A create, edit, delete, or notification-time change routed through the
     /// store layer.
     case stateChange

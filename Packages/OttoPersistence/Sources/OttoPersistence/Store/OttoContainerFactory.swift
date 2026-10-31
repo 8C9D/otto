@@ -1,6 +1,8 @@
+import CoreData
 import Foundation
 import OttoRepositories
 import SwiftData
+import os
 
 /// The two containers the app runs on (spec §5.3, Wave 6A): the main store
 /// (user data - the schema CloudKit will eventually sync) and the device-state
@@ -17,68 +19,169 @@ public struct OttoContainers: Sendable {
     /// kill switch acts at the next launch, so mid-session flags and the live
     /// container can disagree in exactly the window an incident occupies.
     let mainSyncMode: OttoContainerFactory.MainStoreSyncMode
+    /// The asked-for mirrored store failed to open and this session fell back
+    /// to the local one. The app must still open: the flags that caused the
+    /// failure live in `UserDefaults`, and the only screen that can change
+    /// them is behind this launch.
+    public let mirroredOpenFailed: Bool
+
+    /// What this launch's main store is actually doing, for everything above
+    /// the factory.
+    public var syncSessionMode: SyncSessionMode { mainSyncMode.sessionMode }
 }
 
 /// Builds the app's containers without exposing any model type.
 ///
 /// Every configuration passes `cloudKitDatabase: .none` deliberately: the app's
-/// entitlements already carry an iCloud container (Wave 0), and `.automatic`
-/// would silently switch sync on. CloudKit stays off until Wave 6B (spec §8);
-/// `mainStoreSyncMode(for:)` below is the single decision point that keeps it
-/// off - and the runtime kill switch already sits on that path, so disabling
-/// sync will never require shipping a build. The device-state store's `.none`
-/// is permanent.
+/// entitlements carry an iCloud container (Wave 0), and `.automatic` would
+/// silently switch sync on. `mainStoreSyncMode(for:cloudContainerIdentifier:)`
+/// below is the single decision point that can turn mirroring on - and the
+/// runtime kill switch sits on that path, so disabling sync never requires
+/// shipping a build. The device-state store's `.none` is permanent.
 public enum OttoContainerFactory {
+
+    private static let syncOpenLogger = Logger(subsystem: "com.arthurzhang.otto", category: "sync")
 
     /// What the main store's configuration should do about sync. An enum
     /// rather than `ModelConfiguration.CloudKitDatabase` so the decision is
-    /// equatable and testable; today it has exactly one case.
+    /// equatable and testable.
     enum MainStoreSyncMode: Hashable {
         case off
+        case cloudKitPrivate(containerIdentifier: String)
 
         var cloudKitDatabase: ModelConfiguration.CloudKitDatabase {
             switch self {
             case .off: .none
+            case .cloudKitPrivate(let containerIdentifier): .private(containerIdentifier)
+            }
+        }
+
+        var sessionMode: SyncSessionMode {
+            switch self {
+            case .off: .off
+            case .cloudKitPrivate: .mirrored
             }
         }
     }
 
-    /// THE sync decision (spec §8, Wave 6B-Prep). The kill switch and the
-    /// enable flag are consulted on the real path now, while every branch
-    /// still answers `.off` - so when Wave 6B adds the cloud case, the guard
-    /// rails are already load-bearing and already tested, not freshly wired
-    /// on the day they first matter.
-    static func mainStoreSyncMode(for state: SyncState) -> MainStoreSyncMode {
-        // The kill switch wins over everything, including future enablement.
-        guard state.isEnabled, !state.killSwitchEngaged else { return .off }
-        // Wave 6B replaces this line - and ONLY this line - with the private
-        // CloudKit database mode. Until then, enabled-and-unkilled still
-        // means off, because there is nothing safe to turn on.
-        return .off
+    /// THE sync decision (spec §8, Wave 6B). Three things must all hold: the
+    /// user turned sync on, the kill switch is not engaged, and this BUILD
+    /// names a container. The last is what keeps a release off until its
+    /// CloudKit schema is deployed to production - a nil identifier means
+    /// "this build has nowhere to sync to", whatever the flags say.
+    static func mainStoreSyncMode(
+        for state: SyncState, cloudContainerIdentifier: String?
+    ) -> MainStoreSyncMode {
+        // The kill switch wins over everything.
+        guard state.isEnabled, !state.killSwitchEngaged,
+              let cloudContainerIdentifier, !cloudContainerIdentifier.isEmpty
+        else { return .off }
+        return .cloudKitPrivate(containerIdentifier: cloudContainerIdentifier)
     }
 
     /// The on-disk stores the app runs against. The main store keeps its
     /// original default location; the device-state store lives beside it as
     /// `OttoDeviceState.store`.
+    ///
+    /// `cloudContainerIdentifier` defaults to nil so that no caller can reach
+    /// mirroring by omission: the composition root is the one place that
+    /// passes it. Mirroring needs the file left exactly where it was - the same
+    /// default location - because turning sync on must not move anyone's data.
     public static func localContainers(
-        syncState: SyncState = .load()
+        syncState: SyncState = .load(),
+        cloudContainerIdentifier: String? = nil
     ) throws -> OttoContainers {
-        let deviceConfiguration = ModelConfiguration(
-            "OttoDeviceState", schema: deviceStateSchema, cloudKitDatabase: .none
-        )
-        let syncMode = mainStoreSyncMode(for: syncState)
-        return try containers(
+        try opening(
+            mainStoreSyncMode(for: syncState, cloudContainerIdentifier: cloudContainerIdentifier)
+        ) { mode, failed in
+            try localContainers(syncMode: mode, mirroredOpenFailed: failed)
+        }
+    }
+
+    /// Opens `mode`, falling back to the local store if a mirrored open fails.
+    /// Only the mirrored open gets a second try: if the LOCAL store cannot
+    /// open, that is the failure the launch screen exists to report.
+    static func opening(
+        _ mode: MainStoreSyncMode,
+        with open: (MainStoreSyncMode, _ mirroredOpenFailed: Bool) throws -> OttoContainers
+    ) throws -> OttoContainers {
+        do {
+            return try open(mode, false)
+        } catch {
+            guard mode != .off else { throw error }
+            syncOpenLogger.error("""
+                mirrored store failed to open; continuing locally: \(String(describing: error), privacy: .public)
+                """)
+            return try open(.off, true)
+        }
+    }
+
+    private static func localContainers(
+        syncMode: MainStoreSyncMode, mirroredOpenFailed: Bool
+    ) throws -> OttoContainers {
+        try containers(
             mainConfiguration: ModelConfiguration(
                 schema: mainSchema,
                 cloudKitDatabase: syncMode.cloudKitDatabase
             ),
-            deviceConfiguration: deviceConfiguration,
-            mainSyncMode: syncMode
+            deviceConfiguration: ModelConfiguration(
+                "OttoDeviceState", schema: deviceStateSchema, cloudKitDatabase: .none
+            ),
+            mainSyncMode: syncMode,
+            mirroredOpenFailed: mirroredOpenFailed
         )
     }
 
-    /// Isolated in-memory stores for tests.
+    /// Pushes the whole V3 schema to the CloudKit DEVELOPMENT environment.
+    ///
+    /// Required once before the schema is deployed to production: the framework
+    /// otherwise creates record fields lazily, from values actually exported,
+    /// so an attribute that happened to be nil on every record never reaches
+    /// the schema - and production rejects it the first time it is non-nil.
+    /// SwiftData has no equivalent, so this drops to the `CoreData` container
+    /// over the same model, on a throwaway store: the placeholder records it
+    /// uploads must never touch the user's.
+    ///
+    /// Debug-only by its one caller; it needs a signed-in iCloud account.
+    public static func initializeCloudKitSchema(containerIdentifier: String) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OttoCloudKitSchema-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        guard let model = NSManagedObjectModel.makeManagedObjectModel(for: OttoSchemaV3.models) else {
+            throw SchemaInitializationError.modelUnavailable
+        }
+        let description = NSPersistentStoreDescription(url: directory.appendingPathComponent("schema.store"))
+        description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+            containerIdentifier: containerIdentifier
+        )
+        description.shouldAddStoreAsynchronously = false
+        description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+
+        let container = NSPersistentCloudKitContainer(name: "OttoSchemaInitialization", managedObjectModel: model)
+        container.persistentStoreDescriptions = [description]
+        var loadError: (any Error)?
+        container.loadPersistentStores { _, error in loadError = error }
+        if let loadError { throw loadError }
+        try container.initializeCloudKitSchema()
+        for store in container.persistentStoreCoordinator.persistentStores {
+            try container.persistentStoreCoordinator.remove(store)
+        }
+    }
+
+    enum SchemaInitializationError: Error {
+        case modelUnavailable
+    }
+
+    /// Isolated in-memory stores for tests. `recordingSyncMode` states the mode
+    /// the store BELIEVES it opened with, without any CloudKit behind it: the
+    /// guards read that value, and a host test has no iCloud to open a real one.
     public static func inMemoryContainers() throws -> OttoContainers {
+        try inMemoryContainers(recordingSyncMode: .off)
+    }
+
+    static func inMemoryContainers(recordingSyncMode: MainStoreSyncMode) throws -> OttoContainers {
         try containers(
             mainConfiguration: ModelConfiguration(
                 schema: mainSchema, isStoredInMemoryOnly: true, cloudKitDatabase: .none
@@ -86,7 +189,7 @@ public enum OttoContainerFactory {
             deviceConfiguration: ModelConfiguration(
                 schema: deviceStateSchema, isStoredInMemoryOnly: true, cloudKitDatabase: .none
             ),
-            mainSyncMode: .off
+            mainSyncMode: recordingSyncMode
         )
     }
 
@@ -114,7 +217,8 @@ public enum OttoContainerFactory {
     private static func containers(
         mainConfiguration: ModelConfiguration,
         deviceConfiguration: ModelConfiguration,
-        mainSyncMode: MainStoreSyncMode
+        mainSyncMode: MainStoreSyncMode,
+        mirroredOpenFailed: Bool = false
     ) throws -> OttoContainers {
         // The V2→V3 stage needs the device store's location BEFORE the main
         // container opens: the watermark carry-over happens inside the
@@ -133,6 +237,9 @@ public enum OttoContainerFactory {
             for: deviceStateSchema,
             configurations: [deviceConfiguration]
         )
-        return OttoContainers(main: main, deviceState: deviceState, mainSyncMode: mainSyncMode)
+        return OttoContainers(
+            main: main, deviceState: deviceState,
+            mainSyncMode: mainSyncMode, mirroredOpenFailed: mirroredOpenFailed
+        )
     }
 }

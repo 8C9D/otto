@@ -85,6 +85,24 @@ struct SettingsExportWithdrawalTests {
         #expect(model.preparedExport(.json) == nil)
     }
 
+    /// ⛔ The one mutation no screen started: another device's changes landed.
+    /// Nothing else would tell this model the prepared file went stale.
+    @Test("⛔ another device's changes withdraw every export prepared before them")
+    func syncConvergenceWithdrawsAPreparedExport() async throws {
+        let transfer = CountingTransfer()
+        let client = CountingClient()
+        let model = makeModel(
+            transfer: transfer, client: client, suite: "otto.tests.settingsexport.sync",
+            today: try #require(Self.today)
+        )
+        try await model.prepareExport(.json)
+        #expect(model.preparedExport(.json) != nil)
+
+        await model.syncDidConverge()
+
+        #expect(model.preparedExport(.json) == nil)
+    }
+
     /// ⛔ The hook itself, on the model shape that used to skip it.
     ///
     /// `subscriptionsStore.onMutation` was installed only inside

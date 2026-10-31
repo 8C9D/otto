@@ -43,15 +43,7 @@ extension OttoStore: BillingEventRepository {
             throw RepositoryError.subscriptionNotFound(subscription.id)
         }
 
-        // The window reaches back to the stored watermark (spec §5.3, v1.5), so a
-        // charge date that fell between passes - the founding scenario's
-        // conversion - still gets its row. The STORED watermark governs, not the
-        // passed value's: the caller's snapshot may predate the last pass. Since
-        // Wave 6A it lives in the device-state store (spec §5.3), one row per
-        // subscription. A nil watermark is a pre-v1.5 row; it materializes from
-        // today once and carries a watermark from this pass on.
-        let storedWatermark = try deviceWatermark(for: subscription.id)
-        let windowStart = min(storedWatermark ?? today, today)
+        let windowStart = try materializationWindowStart(for: subscription, today: today)
         let windowEnd = today.adding(days: horizonDays + maxReminderLeadDays)
 
         // An indefinitely paused subscription has no derivable resume date, so
@@ -243,6 +235,61 @@ extension OttoStore: BillingEventRepository {
     ) async throws {
         guard let stored = try deviceWatermark(for: subscriptionID), day < stored else { return }
         try setDeviceWatermark(day, for: subscriptionID)
+    }
+
+    /// The window reaches back to the stored watermark (spec §5.3, v1.5), so a
+    /// charge date that fell between passes - the founding scenario's
+    /// conversion - still gets its row. The STORED watermark governs, not the
+    /// passed value's: the caller's snapshot may predate the last pass. Since
+    /// Wave 6A it lives in the device-state store (spec §5.3), one row per
+    /// subscription.
+    ///
+    /// A nil watermark depends on how the record got here. On a device that has
+    /// never synced it is a pre-v1.5 row: it materializes from today once and
+    /// carries a watermark from this pass on. On a device where sync has been
+    /// on, it means the record ARRIVED - watermarks never sync - and today is
+    /// the founding hazard reached through iCloud: a reinstall pulls the
+    /// subscriptions back, and every charge between the lost device's last pass
+    /// and now would silently never get a row.
+    private func materializationWindowStart(
+        for subscription: Subscription, today: CalendarDay
+    ) throws -> CalendarDay {
+        if let stored = try deviceWatermark(for: subscription.id) {
+            return min(stored, today)
+        }
+        guard syncHasBeenOnHere else { return today }
+        return min(try watermarkForArrival(of: subscription), today)
+    }
+
+    /// Whether a nil watermark here can mean "arrived by sync". The persisted
+    /// flag as well as the session's mode: the kill switch turns the mode off
+    /// but leaves the flag alone, and a record that arrived just before it was
+    /// engaged is still an arrival on the next launch.
+    private var syncHasBeenOnHere: Bool {
+        mainSyncMode != .off || syncState().isEnabled
+    }
+
+    /// Where a pass should start for a subscription that arrived with no
+    /// watermark on this device (spec §5.3): the edge of its synced ledger, the
+    /// same definition `reconstructWatermarksNow` uses. With no rows yet, the
+    /// later of the anchor and the day it was entered - the entry
+    /// initialisation's rule, because the device that created it never
+    /// backfilled history before that, and this one must not invent it.
+    ///
+    /// Erring early is safe: if the ledger is still arriving, this pass writes
+    /// twins of rows already on their way, and the post-sync reconciliation
+    /// merges them, keeping the older row and any confirmation on either.
+    private func watermarkForArrival(of subscription: Subscription) throws -> CalendarDay {
+        let ledgerEdge = try storedEvents(subscriptionID: subscription.id)
+            .filter { $0.deletedAt == nil }
+            .compactMap(\.expectedDate)
+            .compactMap(CalendarDay.init(yyyymmdd:))
+            .max()
+        if let ledgerEdge { return ledgerEdge }
+        guard let entryDay = CalendarDay(utcDayOf: subscription.createdAt) else {
+            return subscription.cycleStartDay
+        }
+        return max(subscription.cycleStartDay, entryDay)
     }
 
     private func storedEvent(id: UUID) throws -> StoredBillingEvent? {

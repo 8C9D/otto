@@ -211,3 +211,15 @@ extension CalendarDay: CustomStringConvertible {
         String(format: "%04d-%02d-%02d", year, month, day)
     }
 }
+
+extension CalendarDay {
+    /// The UTC day of a stored instant. A fixed calendar over a stored value,
+    /// not a clock read, so every device computes the same day. Nil only if
+    /// the calendar produces impossible components, in which case the caller
+    /// must leave the record alone rather than invent a date.
+    public init?(utcDayOf instant: Date) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        self.init(dateComponents: calendar.dateComponents([.year, .month, .day], from: instant))
+    }
+}

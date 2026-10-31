@@ -45,6 +45,8 @@ public final class AppModel {
     /// Permission and coverage state (Wave 4). Nil in previews and store tests
     /// that construct the model without a notification engine.
     public let notifications: NotificationStatusStore?
+    /// iCloud sync's state (Wave 6B). Nil in previews and store tests.
+    public let sync: SyncStatusStore?
     /// The Wave 5 flows - trial confirmation, cancellation, verification. Built
     /// over the same repositories, so the screens and the notification actions
     /// share one implementation of every state change.
@@ -61,6 +63,14 @@ public final class AppModel {
     public var requestedSubscriptionID: UUID?
 
     private let repositories: Repositories
+
+    /// Detail screens own value snapshots, so a remote change has no other way
+    /// to reach one that is open. Weak: the screen owns its store, and popping
+    /// it should release it.
+    private struct OpenDetailStore {
+        weak var store: SubscriptionDetailStore?
+    }
+    @ObservationIgnored private var openDetailStores: [OpenDetailStore] = []
 
     // MARK: - Export state (F8 / R0-10(b))
     //
@@ -81,11 +91,13 @@ public final class AppModel {
     public init(
         repositories: Repositories,
         notifications: NotificationStatusStore? = nil,
+        sync: SyncStatusStore? = nil,
         settings: SettingsStore? = nil,
         dates: DateProvider = .live
     ) {
         self.repositories = repositories
         self.notifications = notifications
+        self.sync = sync
         self.flows = SubscriptionFlowService(
             subscriptions: repositories.subscriptions,
             cancellations: repositories.cancellations,
@@ -134,6 +146,24 @@ public final class AppModel {
                 await notifications?.reschedule()
                 self?.withdrawPreparedExports()
             }
+        }
+    }
+
+    // MARK: - Sync (Wave 6B)
+
+    /// Another device's changes landed and the store has converged. This is the
+    /// one mutation no screen started, so nothing else would refresh them, and
+    /// any export prepared before it now describes a database that is gone.
+    /// Reminders are re-planned first, so the lists reload over the same
+    /// ledger the plan was built from.
+    public func syncDidConverge() async {
+        withdrawPreparedExports()
+        await notifications?.reschedule(trigger: .cloudSync)
+        await subscriptionsStore.refresh()
+        await insightsStore.refresh()
+        await paymentMethodsStore.refresh()
+        for open in openDetailStores {
+            await open.store?.refresh()
         }
     }
 
@@ -272,7 +302,7 @@ public final class AppModel {
 
     /// A fresh detail store for one subscription's screen.
     public func detailStore(for subscriptionID: UUID) -> SubscriptionDetailStore {
-        SubscriptionDetailStore(
+        let store = SubscriptionDetailStore(
             subscriptionID: subscriptionID,
             subscriptionRepository: repositories.subscriptions,
             billingEventRepository: repositories.billingEvents,
@@ -280,6 +310,9 @@ public final class AppModel {
             priceChangeRepository: repositories.priceChanges,
             paymentMethodRepository: repositories.paymentMethods
         )
+        openDetailStores.removeAll { $0.store == nil }
+        openDetailStores.append(OpenDetailStore(store: store))
+        return store
     }
 
     /// A form model for adding (nil) or editing, seeded with the settings

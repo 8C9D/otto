@@ -56,12 +56,9 @@ struct TodayView: View {
     private func section(_ section: TodaySection, overview: TodayOverview) -> some View {
         switch section {
         case .notificationStatus:
-            // An app whose entire value is notifications must not fail silently
-            // when it can't send them: denied is loud, at the top, permanently
-            // (Wave 4 constraint 3).
-            if let notifications = model.notifications {
-                notificationStatusSection(notifications)
-            }
+            notificationSection
+        case .syncAccountMissing, .syncSettling:
+            syncBannerSection(section)
         case .unreadableRecords:
             unreadableRecordsSection(count: model.subscriptionsStore.unreadableCount)
         case .readRepairs:
@@ -69,7 +66,9 @@ struct TodayView: View {
         case .noSubscriptionsYet:
             noSubscriptionsSection
         case .needsAction:
-            needsActionSection(overview.needsAction)
+            needsActionSection(TodaySection.needsActionEntries(
+                overview.needsAction, settling: model.sync?.isSettling ?? false
+            ))
         case .next30Days:
             entriesSection(String(localized: "Next 30 days"), entries: overview.next30Days)
         case .later:
@@ -78,6 +77,56 @@ struct TodayView: View {
             coverageSection
         case .coverageGap:
             coverageGapSection
+        }
+    }
+
+    /// An app whose entire value is notifications must not fail silently when
+    /// it can't send them: denied is loud, at the top, permanently (Wave 4
+    /// constraint 3).
+    @ViewBuilder
+    private var notificationSection: some View {
+        if let notifications = model.notifications {
+            notificationStatusSection(notifications)
+        }
+    }
+
+    @ViewBuilder
+    private func syncBannerSection(_ section: TodaySection) -> some View {
+        if section == .syncAccountMissing {
+            syncAccountMissingSection
+        } else {
+            syncSettlingSection
+        }
+    }
+
+    private var syncAccountMissingSection: some View {
+        Section {
+            Label {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(String(localized: "iCloud is signed out"))
+                        .font(.headline)
+                    Text(String(localized: """
+                    Otto can't sync until you sign back in. Anything that left this device \
+                    is safe in your iCloud account and returns when you do - but Otto can't \
+                    remind you about it until then.
+                    """))
+                    .font(.subheadline)
+                }
+            } icon: {
+                Image(systemName: "icloud.slash")
+                    .foregroundStyle(.red)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var syncSettlingSection: some View {
+        Section {
+            Label(
+                String(localized: "Getting your subscriptions from iCloud. Some may still be on their way."),
+                systemImage: "icloud.and.arrow.down"
+            )
+            .font(.subheadline)
         }
     }
 

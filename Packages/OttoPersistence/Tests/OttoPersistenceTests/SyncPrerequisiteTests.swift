@@ -7,6 +7,8 @@ import Testing
 
 // Spec §8 (Wave 6B-Prep): the store-side prerequisites for enabling CloudKit,
 // built and tested while there is nothing to lose.
+private struct OpenFailure: Error {}
+
 extension SerializedPersistenceTests {
     @Suite("Sync prerequisites at the store (spec §8)")
     struct SyncPrerequisiteTests {
@@ -82,22 +84,102 @@ extension SerializedPersistenceTests {
             #expect(all.first?.deletedAt == Date(timeIntervalSince1970: 9_000))
         }
 
-        @Test("the kill switch decides the main store's sync mode, and it always wins")
+        @Test("mirroring takes the flag, a released brake AND a build with a container - and the kill switch always wins")
         func killSwitchGovernsSyncMode() {
-            // Today every branch is .off - there is nothing safe to turn on
-            // until 6B - but the guard rails are on the real path already.
-            #expect(OttoContainerFactory.mainStoreSyncMode(for: SyncState()) == .off)
-            #expect(OttoContainerFactory.mainStoreSyncMode(
-                for: SyncState(isEnabled: true, killSwitchEngaged: false)
-            ) == .off)
-            // The line 6B will care about: an engaged kill switch beats an
-            // enabled sync, unconditionally.
-            #expect(OttoContainerFactory.mainStoreSyncMode(
-                for: SyncState(isEnabled: true, killSwitchEngaged: true)
-            ) == .off)
-            #expect(OttoContainerFactory.mainStoreSyncMode(
-                for: SyncState(isEnabled: false, killSwitchEngaged: true)
-            ) == .off)
+            let container = "iCloud.com.arthurzhang.otto"
+            let mirrored = OttoContainerFactory.MainStoreSyncMode.cloudKitPrivate(containerIdentifier: container)
+            let mode = OttoContainerFactory.mainStoreSyncMode(for:cloudContainerIdentifier:)
+
+            // Spec §8 4a's day-one test: the enum has its second case, so the
+            // decision can now actually answer something other than .off.
+            #expect(mode(SyncState(isEnabled: true, killSwitchEngaged: false), container) == mirrored)
+            #expect(mode(SyncState(), container) == .off)
+            // An engaged kill switch beats an enabled sync, unconditionally.
+            #expect(mode(SyncState(isEnabled: true, killSwitchEngaged: true), container) == .off)
+            #expect(mode(SyncState(isEnabled: false, killSwitchEngaged: true), container) == .off)
+            // A build that names no container cannot mirror, whatever the
+            // flags say - it is what holds a release off production.
+            #expect(mode(SyncState(isEnabled: true, killSwitchEngaged: false), nil) == .off)
+            #expect(mode(SyncState(isEnabled: true, killSwitchEngaged: false), "") == .off)
+        }
+
+        @Test("the mirrored mode maps to the private database and reports itself as mirrored")
+        func mirroredModeReachesThePrivateDatabase() {
+            let mode = OttoContainerFactory.MainStoreSyncMode.cloudKitPrivate(containerIdentifier: "iCloud.example")
+            #expect(mode.sessionMode == .mirrored)
+            #expect(OttoContainerFactory.MainStoreSyncMode.off.sessionMode == .off)
+            // `.private`'s associated value has no public reader, so its
+            // description is the only thing a test can hold it to.
+            #expect(String(describing: mode.cloudKitDatabase).contains("iCloud.example"))
+        }
+
+        @Test("restore refuses in a session that opened mirrored, even after the kill switch is thrown")
+        func restoreRefusesInAMirroredSession() async throws {
+            // §8 4a: `mainSyncMode != .off` could not be true until the enum
+            // grew, so this guard had never once fired. The flags say restore
+            // is fine - the switch is engaged - but it acts at the NEXT launch,
+            // and this session's store is still mirroring.
+            let containers = try containerCreationLock.withLock {
+                try OttoContainerFactory.inMemoryContainers(
+                    recordingSyncMode: .cloudKitPrivate(containerIdentifier: "iCloud.example")
+                )
+            }
+            let store = OttoStore(
+                containers: containers,
+                syncState: { SyncState(isEnabled: true, killSwitchEngaged: true) }
+            )
+            await #expect(throws: RepositoryError.restoreRequiresSyncDisengaged) {
+                try await store.restore(OttoDataSnapshot(), at: Date(timeIntervalSince1970: 9_000), watermarks: .keep)
+            }
+            #expect(containers.syncSessionMode == .mirrored)
+        }
+
+        @Test("a mirrored open that fails falls back to the local store and says so; a local failure still throws")
+        func failedMirroredOpenFallsBack() throws {
+            let mirrored = OttoContainerFactory.MainStoreSyncMode.cloudKitPrivate(containerIdentifier: "iCloud.example")
+            var attempts: [(OttoContainerFactory.MainStoreSyncMode, Bool)] = []
+
+            let opened = try OttoContainerFactory.opening(mirrored) { mode, failed in
+                attempts.append((mode, failed))
+                guard mode == .off else { throw OpenFailure() }
+                return try containerCreationLock.withLock {
+                    let memory = try OttoContainerFactory.inMemoryContainers()
+                    return OttoContainers(
+                        main: memory.main, deviceState: memory.deviceState,
+                        mainSyncMode: mode, mirroredOpenFailed: failed
+                    )
+                }
+            }
+            #expect(attempts.map(\.0) == [mirrored, .off])
+            #expect(opened.mirroredOpenFailed)
+            #expect(opened.syncSessionMode == .off)
+
+            // A LOCAL failure has nothing to fall back to: one attempt, thrown.
+            var localAttempts = 0
+            #expect(throws: OpenFailure.self) {
+                try OttoContainerFactory.opening(.off) { _, _ in
+                    localAttempts += 1
+                    throw OpenFailure()
+                }
+            }
+            #expect(localAttempts == 1)
+        }
+
+        @Test("the framework's own no-account setup error reads as a missing account, not an unknown failure")
+        func noAccountSetupErrorMaps() {
+            // As recorded in `ANSCKEVENT` by a real mirrored store, signed out.
+            let error = NSError(domain: NSCocoaErrorDomain, code: 134_400)
+            #expect(CloudKitEventMonitor.failure(from: error) == .accountUnavailable)
+            #expect(CloudKitEventMonitor.failure(from: NSError(domain: NSCocoaErrorDomain, code: 134_401))
+                == .other(code: 134_401))
+        }
+
+        @Test("an event with no end date has started; only an ended one can succeed or fail")
+        func eventPhases() {
+            let ended = Date(timeIntervalSince1970: 1)
+            #expect(CloudKitEventMonitor.phase(endDate: nil, succeeded: false, error: nil) == .started)
+            #expect(CloudKitEventMonitor.phase(endDate: ended, succeeded: true, error: nil) == .succeeded)
+            #expect(CloudKitEventMonitor.phase(endDate: ended, succeeded: false, error: nil) == .failed(.other(code: 0)))
         }
 
         @Test("the sync switches persist and load without a container")
