@@ -157,6 +157,9 @@ public enum RescheduleTrigger: String, Sendable {
     case notificationAction
     case timeZoneChange
     case significantTimeChange
+    /// A CloudKit import landed: another device's changes can move every
+    /// reminder this device holds, and nothing else would tell it.
+    case cloudSync
     /// A create, edit, delete, or notification-time change routed through the
     /// store layer.
     case stateChange

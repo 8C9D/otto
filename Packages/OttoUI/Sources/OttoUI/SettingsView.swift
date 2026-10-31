@@ -9,8 +9,7 @@ import UIKit
 
 /// Settings (spec §7.1 item 9, Wave 8): the reminder defaults, the notification
 /// time, the notification permission state, export/import - the CloudKit
-/// escape hatch lives HERE, as a first-class feature - and the iCloud sync
-/// placeholder Wave 6 fills in.
+/// escape hatch lives HERE, as a first-class feature - and iCloud sync.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
@@ -21,7 +20,7 @@ struct SettingsView: View {
                 NotificationPermissionSection()
                 ExportSection()
                 ImportSection()
-                SyncPlaceholderSection()
+                SyncSettingsSection()
             }
             .navigationTitle(String(localized: "Settings"))
         }
@@ -357,20 +356,5 @@ private struct ImportSection: View {
         if counts.removed > 0 { parts.append(String(localized: "\(counts.removed) removed")) }
         guard !parts.isEmpty else { return nil }
         return "\(name): \(parts.joined(separator: ", "))"
-    }
-}
-
-// MARK: - iCloud placeholder
-
-private struct SyncPlaceholderSection: View {
-    var body: some View {
-        Section {
-            LabeledContent(String(localized: "iCloud sync"), value: String(localized: "Off"))
-        } footer: {
-            Text(String(localized: """
-            Sync and automatic backup arrive in a later update. Until then, the \
-            JSON export above is your backup - a good habit after big changes.
-            """))
-        }
     }
 }

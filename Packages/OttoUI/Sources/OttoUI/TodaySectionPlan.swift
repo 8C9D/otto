@@ -18,6 +18,14 @@ enum TodaySection: Hashable {
     /// including an empty one - a first-launch user with nothing entered yet
     /// must be able to reach the permission request from Today.
     case notificationStatus
+    /// Mirroring with no iCloud account: the framework took the synced records
+    /// off this device, so an empty Today must not read as "you have nothing".
+    case syncAccountMissing
+    /// Records are still arriving from iCloud. Stands in for the two
+    /// needs-review cards and the empty state, which would each state a
+    /// transient as a fact (the readiness audit's row 4). Bounded by
+    /// `SyncStatusStore.isSettling`, so it cannot hide damage for long.
+    case syncSettling
     case unreadableRecords
     case readRepairs
     /// Spec §7.1's empty state, INSIDE the list so the surfaces above survive.
@@ -57,6 +65,8 @@ enum TodaySection: Hashable {
         /// updated" before the first pass has finished would be a false alarm
         /// on every launch.
         var lastPassFailed = false
+        var syncSettling = false
+        var syncAccountMissing = false
     }
 
     /// The whole mapping, from the model the view holds.
@@ -79,7 +89,8 @@ enum TodaySection: Hashable {
             subscriptionsEmpty: subscriptionsEmpty,
             unreadableCount: model.subscriptionsStore.unreadableCount,
             hasReadRepairs: !model.subscriptionsStore.readRepairs.isEmpty,
-            notifications: model.notifications
+            notifications: model.notifications,
+            sync: model.sync
         )
     }
 
@@ -98,7 +109,8 @@ enum TodaySection: Hashable {
         subscriptionsEmpty: Bool,
         unreadableCount: Int,
         hasReadRepairs: Bool,
-        notifications: NotificationStatusStore?
+        notifications: NotificationStatusStore?,
+        sync: SyncStatusStore? = nil
     ) -> Input {
         Input(
             subscriptionsEmpty: subscriptionsEmpty,
@@ -108,8 +120,33 @@ enum TodaySection: Hashable {
             hasNext30Days: !overview.next30Days.isEmpty,
             hasLater: !overview.later.isEmpty,
             scheduleOutcome: notifications?.outcome,
-            lastPassFailed: notifications?.lastPassFailed ?? false
+            lastPassFailed: notifications?.lastPassFailed ?? false,
+            syncSettling: sync?.isSettling ?? false,
+            syncAccountMissing: sync?.isAccountMissing ?? false
         )
+    }
+
+    /// Needs-action rows to show. While settling, a "marked cancelled, but
+    /// nothing is watching it" row usually means its cancellation episode has
+    /// not arrived yet (the audit's Q3.3), and reading that as an alarm is the
+    /// same mistake as the unreadable card.
+    static func needsActionEntries(_ entries: [TodayEntry], settling: Bool) -> [TodayEntry] {
+        guard settling else { return entries }
+        return entries.filter { $0.reason != .needsReview }
+    }
+
+    /// The two damage cards, or the one line that stands in for them while
+    /// records may simply still be arriving.
+    private static func reviewCards(_ input: Input) -> [TodaySection] {
+        if input.syncSettling { return [.syncSettling] }
+        var cards: [TodaySection] = []
+        if input.unreadableCount > 0 {
+            cards.append(.unreadableRecords)
+        }
+        if input.hasReadRepairs {
+            cards.append(.readRepairs)
+        }
+        return cards
     }
 
     static func plan(_ input: Input) -> [TodaySection] {
@@ -117,14 +154,16 @@ enum TodaySection: Hashable {
         if let permission = input.permission, permission != .authorized {
             sections.append(.notificationStatus)
         }
-        if input.unreadableCount > 0 {
-            sections.append(.unreadableRecords)
+        if input.syncAccountMissing {
+            sections.append(.syncAccountMissing)
         }
-        if input.hasReadRepairs {
-            sections.append(.readRepairs)
-        }
+        sections += reviewCards(input)
         guard !input.subscriptionsEmpty else {
-            sections.append(.noSubscriptionsYet)
+            // Either banner above already says why this list is empty, and
+            // "No subscriptions yet" would contradict it.
+            if !input.syncSettling, !input.syncAccountMissing {
+                sections.append(.noSubscriptionsYet)
+            }
             return sections
         }
         sections.append(.needsAction)

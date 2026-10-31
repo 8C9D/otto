@@ -7,6 +7,8 @@ import Testing
 
 // Spec §8 (Wave 6B-Prep): the store-side prerequisites for enabling CloudKit,
 // built and tested while there is nothing to lose.
+private struct OpenFailure: Error {}
+
 extension SerializedPersistenceTests {
     @Suite("Sync prerequisites at the store (spec §8)")
     struct SyncPrerequisiteTests {
@@ -134,7 +136,6 @@ extension SerializedPersistenceTests {
 
         @Test("a mirrored open that fails falls back to the local store and says so; a local failure still throws")
         func failedMirroredOpenFallsBack() throws {
-            struct OpenFailure: Error {}
             let mirrored = OttoContainerFactory.MainStoreSyncMode.cloudKitPrivate(containerIdentifier: "iCloud.example")
             var attempts: [(OttoContainerFactory.MainStoreSyncMode, Bool)] = []
 

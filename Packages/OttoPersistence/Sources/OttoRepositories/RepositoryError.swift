@@ -21,8 +21,8 @@ extension RepositoryError: LocalizedError {
         case .restoreRequiresSyncDisengaged:
             return String(
                 localized: """
-                Sync is still on. Turn on the sync kill switch in Settings and \
-                relaunch the app, then run the restore again.
+                iCloud sync is still running. Choose Stop Syncing in Settings, \
+                close and reopen Otto, then run the import again.
                 """,
                 comment: "Shown when a restore or import is refused because sync has not been disengaged"
             )

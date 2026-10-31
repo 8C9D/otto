@@ -45,6 +45,8 @@ public final class AppModel {
     /// Permission and coverage state (Wave 4). Nil in previews and store tests
     /// that construct the model without a notification engine.
     public let notifications: NotificationStatusStore?
+    /// iCloud sync's state (Wave 6B). Nil in previews and store tests.
+    public let sync: SyncStatusStore?
     /// The Wave 5 flows - trial confirmation, cancellation, verification. Built
     /// over the same repositories, so the screens and the notification actions
     /// share one implementation of every state change.
@@ -81,11 +83,13 @@ public final class AppModel {
     public init(
         repositories: Repositories,
         notifications: NotificationStatusStore? = nil,
+        sync: SyncStatusStore? = nil,
         settings: SettingsStore? = nil,
         dates: DateProvider = .live
     ) {
         self.repositories = repositories
         self.notifications = notifications
+        self.sync = sync
         self.flows = SubscriptionFlowService(
             subscriptions: repositories.subscriptions,
             cancellations: repositories.cancellations,
@@ -135,6 +139,21 @@ public final class AppModel {
                 self?.withdrawPreparedExports()
             }
         }
+    }
+
+    // MARK: - Sync (Wave 6B)
+
+    /// Another device's changes landed and the store has converged. This is the
+    /// one mutation no screen started, so nothing else would refresh them, and
+    /// any export prepared before it now describes a database that is gone.
+    /// Reminders are re-planned first, so the lists reload over the same
+    /// ledger the plan was built from.
+    public func syncDidConverge() async {
+        withdrawPreparedExports()
+        await notifications?.reschedule(trigger: .cloudSync)
+        await subscriptionsStore.refresh()
+        await insightsStore.refresh()
+        await paymentMethodsStore.refresh()
     }
 
     // MARK: - Wave 5 flows
