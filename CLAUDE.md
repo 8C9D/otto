@@ -26,7 +26,7 @@ xcodebuild build -project Otto.xcodeproj -scheme Otto -destination 'generic/plat
 The OttoUI Dynamic Type suite is UIKit-hosted and compiles to nothing on a mac host, so it runs only on a simulator, and only from `Packages/OttoUI/` rather than the repo root:
 
 ```sh
-cd Packages/OttoUI && xcodebuild test -scheme OttoUI-Package -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+cd Packages/OttoUI && xcodebuild test -scheme OttoUI-Package -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 The run ends `** TEST SUCCEEDED **` with a number of known issues, which is the expected state.

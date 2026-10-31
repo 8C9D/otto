@@ -126,7 +126,7 @@ host; it runs on a simulator:
 ```sh
 cd Packages/OttoUI
 xcodebuild test -scheme OttoUI-Package \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 ### The verification gate

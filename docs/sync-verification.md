@@ -7,7 +7,7 @@ Nothing here has been run yet. Until it has, sync is code that opens correctly, 
 
 ## Already verified, without iCloud
 
-Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account (2026-10-31):
+Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account (2026-10-31). The whole lifecycle ran three times from a fresh install on the final code, through the real UI:
 
 | Claim | Evidence |
 |---|---|
