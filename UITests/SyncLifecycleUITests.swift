@@ -173,12 +173,9 @@ final class SyncLifecycleUITests: XCTestCase {
         file.tap()
         if app.buttons[mergeTitle].waitForExistence(timeout: patience) { return true }
         XCTAssertTrue(file.exists, "the picker closed and no prompt appeared")
+        // No screenshot here: XCTest records the screen anyway, and asking for
+        // one on a starved host times out and fails the test by itself.
         NSLog("LIFECYCLE-PICKER-UNRESPONSIVE")
-        XCTContext.runActivity(named: "The system picker never responded; this import did not run") { activity in
-            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            screen.lifetime = .keepAlways
-            activity.add(screen)
-        }
         app.buttons["Cancel"].firstMatch.tap()
         return false
     }

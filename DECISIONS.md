@@ -64,7 +64,7 @@ Its limit: with no account, no record leaves the device.
 Its first CI run failed at the file picker, as one local run in nine had, and the failure was measured rather than retried away. On a quiet machine, 30 of 30 picks reached Otto's prompt. With every core saturated, 0 of 15; under moderate load, 0 of 9 across three tap styles and 0 of 2 with a 200 s wait, while the picker's own navigation and close button kept working. In none of those picks did the picker close without the prompt.
 So the stall is inside the system picker on a starved host. Why it stalls is not established: the picker is out of process, and this is as far down as Otto can see.
 Otto's prompt is what the test exists to check, so the two cases are split. A picker that never responds is reported and the steps behind it do not run: the Gate 1 rule, reported and never able to turn a job red for a reason that is not about the app. The script prints what a run did not exercise and CI raises a warning, so a green run cannot overclaim. A picker that closes with no prompt still fails. On CI this probably means the imports often do not run; the restore refusal stays pinned by the persistence suite, and the import steps are still real on a quiet machine.
-CI uploads a failed run's result bundle, because the first CI failure left no screen to read.
+CI uploads a failed run's result bundle, because the first CI failure left no screen to read. The next one showed the same stall on the runner: picker open on the file, nothing over it.
 
 ### Encrypted fields: V3 stays as it is (owner decision, 2026-10-31)
 
