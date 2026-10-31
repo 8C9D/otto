@@ -167,13 +167,7 @@ extension Subscription {
 
     /// Last-resort close day for an episode with no calendar field at all (a
     /// doubly-degenerate pre-Wave-7 pair): the UTC day of its `createdAt`.
-    /// A fixed calendar over a stored instant, not a clock read - both devices
-    /// compute the same day. Nil only if the calendar produces impossible
-    /// components, in which case the caller leaves the episode alone rather
-    /// than inventing a date.
     private static func utcDay(of instant: Date) -> CalendarDay? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        return CalendarDay(dateComponents: calendar.dateComponents([.year, .month, .day], from: instant))
+        CalendarDay(utcDayOf: instant)
     }
 }

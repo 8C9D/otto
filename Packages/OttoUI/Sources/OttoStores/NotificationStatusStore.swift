@@ -40,11 +40,11 @@ public final class NotificationStatusStore {
 
     /// Runs a full scheduling pass and publishes the result. The store layer's
     /// mutation paths call this, and the app's lifecycle triggers land here too.
-    public func reschedule() async {
+    public func reschedule(trigger: RescheduleTrigger = .stateChange) async {
         do {
             let outcome = try await scheduler.reschedule(
                 now: dates.now(), today: dates.today(), timeZone: dates.timeZone(),
-                trigger: .stateChange
+                trigger: trigger
             )
             apply(outcome)
         } catch {
