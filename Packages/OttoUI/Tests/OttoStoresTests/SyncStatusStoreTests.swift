@@ -13,8 +13,9 @@ private actor EmptyTransfer: DataTransferRepository {
 
 /// Waits for async work with no handle to await. Bounded, so a regression fails
 /// here at its own line instead of hanging the run.
+@MainActor
 private func eventually(
-    _ condition: () async -> Bool, sourceLocation: SourceLocation = #_sourceLocation
+    _ condition: @MainActor () async -> Bool, sourceLocation: SourceLocation = #_sourceLocation
 ) async {
     for _ in 0 ..< 3_000 {
         if await condition() { return }
