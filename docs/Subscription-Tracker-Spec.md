@@ -1,7 +1,7 @@
 # Otto — Product & Technical Spec
 ### Subscription and free-trial tracker · iOS
 
-**Status:** **v2.6 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** **640 tests** (275 domain + 130 persistence + 235 UI), from `scripts/verify.sh` at HEAD `bda8c27`, 2026-08-21; the simulator-only Dynamic Type suite is additional and not in that count. Next: **finish 6B**: the code landed 2026-10-31 and Release stays off; the real-container runbook is `docs/sync-verification.md`.
+**Status:** **v2.6 — MAIN SCHEMA FROZEN (V3).** ⭐ **Otto runs on the owner's iPhone with three real subscriptions ($N/yr).** **699 tests** (275 domain + 140 persistence + 284 UI), from `scripts/verify.sh`, 2026-10-31; the simulator-only Dynamic Type suite is additional and not in that count. Next: **finish 6B**: the code landed 2026-10-31 and Release stays off; the real-container runbook is `docs/sync-verification.md`.
 **App name:** Otto · **Bundle ID:** `com.arthurzhang.otto` (permanent)
 **Created:** 2026-08-06
 **Owner:** The owner
