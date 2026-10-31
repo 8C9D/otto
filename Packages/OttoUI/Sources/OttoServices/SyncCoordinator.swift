@@ -31,7 +31,12 @@ public struct SyncActivity: Hashable, Sendable {
 /// finds nothing to do: every rule is idempotent, so this cannot ping-pong.
 public actor SyncCoordinator {
 
-    private let events: AsyncStream<SyncEvent>
+    /// Held, not just read from: the real source stops observing when it is
+    /// released, so taking only its stream left a coordinator that looked fine
+    /// and heard nothing - the store had recorded events, this never ran, and
+    /// no test could see it, because a fake stream has no owner to lose. Found
+    /// by running a mirrored store on a simulator.
+    private let source: any SyncEventSource
     private let reconciliation: any ReconciliationRepository
     private let now: @Sendable () -> Date
     private let settleDelay: Duration
@@ -43,7 +48,7 @@ public actor SyncCoordinator {
     private var pendingConvergence: Task<Void, Never>?
 
     public init(
-        events: AsyncStream<SyncEvent>,
+        source: any SyncEventSource,
         reconciliation: any ReconciliationRepository,
         now: @escaping @Sendable () -> Date,
         settleDelay: Duration = .seconds(2),
@@ -51,7 +56,7 @@ public actor SyncCoordinator {
         afterConvergence: @escaping @Sendable () async -> Void,
         onActivity: @escaping @Sendable (SyncActivity) async -> Void
     ) {
-        self.events = events
+        self.source = source
         self.reconciliation = reconciliation
         self.now = now
         self.settleDelay = settleDelay
@@ -62,7 +67,7 @@ public actor SyncCoordinator {
 
     /// Consumes events until the stream ends, which in the app is never.
     public func run() async {
-        for await event in events {
+        for await event in source.events {
             await handle(event)
         }
         // A test's finite stream: let the last scheduled pass finish.

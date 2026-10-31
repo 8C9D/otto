@@ -42,6 +42,15 @@ private actor Gate {
 
 private struct StubFailure: Error {}
 
+/// A source that stops when released, like the real one.
+private final class StreamSource: SyncEventSource, Sendable {
+    let events: AsyncStream<SyncEvent>
+
+    init(_ events: AsyncStream<SyncEvent>) {
+        self.events = events
+    }
+}
+
 @Suite("The post-import pass (spec §5.3, §6.2, Wave 6B)")
 struct SyncCoordinatorTests {
     private static let instant = Date(timeIntervalSince1970: 50_000)
@@ -57,7 +66,7 @@ struct SyncCoordinatorTests {
         events.forEach { continuation.yield($0) }
         continuation.finish()
         let coordinator = SyncCoordinator(
-            events: stream,
+            source: StreamSource(stream),
             reconciliation: SpyReconciliation(journal: journal, failure: reconcileFailure),
             now: { Self.instant },
             sleep: { _ in },
@@ -98,7 +107,7 @@ struct SyncCoordinatorTests {
         let gate = Gate()
         let (stream, _) = AsyncStream.makeStream(of: SyncEvent.self)
         let coordinator = SyncCoordinator(
-            events: stream,
+            source: StreamSource(stream),
             reconciliation: SpyReconciliation(journal: journal),
             now: { Self.instant },
             sleep: { _ in await gate.wait() },
@@ -128,7 +137,7 @@ struct SyncCoordinatorTests {
         let gate = Gate()
         let (stream, _) = AsyncStream.makeStream(of: SyncEvent.self)
         let coordinator = SyncCoordinator(
-            events: stream,
+            source: StreamSource(stream),
             reconciliation: SpyReconciliation(journal: journal),
             now: { Self.instant },
             sleep: { _ in
@@ -146,6 +155,25 @@ struct SyncCoordinatorTests {
         while await journal.entries.count < 2 { await Task.yield() }
         for _ in 0 ..< 50 { await Task.yield() }
         #expect(await journal.entries == ["reconcile", "afterConvergence"])
+    }
+
+    @Test("the coordinator keeps its source alive: a released monitor stops observing, silently")
+    func coordinatorRetainsItsSource() async {
+        let (stream, _) = AsyncStream.makeStream(of: SyncEvent.self)
+        weak var released: StreamSource?
+        let coordinator: SyncCoordinator = {
+            let source = StreamSource(stream)
+            released = source
+            return SyncCoordinator(
+                source: source,
+                reconciliation: SpyReconciliation(journal: Journal()),
+                now: { Self.instant },
+                afterConvergence: {},
+                onActivity: { _ in }
+            )
+        }()
+        #expect(released != nil)
+        withExtendedLifetime(coordinator) {}
     }
 
     @Test("activity tracks both directions, and a success clears the last failure")

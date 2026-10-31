@@ -11,6 +11,9 @@ import OttoRepositories
 /// missed it. The stream buffers, so the consumer can attach later; only the
 /// newest events are kept, because the coordinator acts on the latest state.
 ///
+/// **Observing ends when this is released**, so whoever consumes `events` must
+/// hold the monitor itself, not just the stream.
+///
 /// SwiftData never exposes the underlying container, so the observer takes
 /// every container's events (`object: nil`). Otto has exactly one mirrored
 /// store, which is what makes that sound.
@@ -63,9 +66,17 @@ public final class CloudKitEventMonitor: SyncEventSource, Sendable {
         return .failed(failure(from: error))
     }
 
+    static let noAccountSetupErrorCode = 134_400
+
     static func failure(from error: (any Error)?) -> SyncFailure {
         guard let error else { return .other(code: 0) }
         let nsError = error as NSError
+        // Not a `CKError`: the framework's own report that setup found no
+        // account. Read from `ANSCKEVENT` on a signed-out simulator; it has no
+        // public constant.
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == noAccountSetupErrorCode {
+            return .accountUnavailable
+        }
         guard nsError.domain == CKError.errorDomain else { return .other(code: nsError.code) }
         switch CKError.Code(rawValue: nsError.code) {
         case .notAuthenticated, .accountTemporarilyUnavailable, .managedAccountRestricted, .badContainer:

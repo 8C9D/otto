@@ -165,6 +165,23 @@ extension SerializedPersistenceTests {
             #expect(localAttempts == 1)
         }
 
+        @Test("the framework's own no-account setup error reads as a missing account, not an unknown failure")
+        func noAccountSetupErrorMaps() {
+            // As recorded in `ANSCKEVENT` by a real mirrored store, signed out.
+            let error = NSError(domain: NSCocoaErrorDomain, code: 134_400)
+            #expect(CloudKitEventMonitor.failure(from: error) == .accountUnavailable)
+            #expect(CloudKitEventMonitor.failure(from: NSError(domain: NSCocoaErrorDomain, code: 134_401))
+                == .other(code: 134_401))
+        }
+
+        @Test("an event with no end date has started; only an ended one can succeed or fail")
+        func eventPhases() {
+            let ended = Date(timeIntervalSince1970: 1)
+            #expect(CloudKitEventMonitor.phase(endDate: nil, succeeded: false, error: nil) == .started)
+            #expect(CloudKitEventMonitor.phase(endDate: ended, succeeded: true, error: nil) == .succeeded)
+            #expect(CloudKitEventMonitor.phase(endDate: ended, succeeded: false, error: nil) == .failed(.other(code: 0)))
+        }
+
         @Test("the sync switches persist and load without a container")
         func syncStateRoundTrips() throws {
             let defaults = try #require(UserDefaults(suiteName: "sync-state-tests"))

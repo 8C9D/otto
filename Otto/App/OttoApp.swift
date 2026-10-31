@@ -63,21 +63,9 @@ struct OttoApp: App {
             store: store, containers: containers, syncState: syncState,
             cloudContainer: cloudContainer, dates: dates
         )
-        let model = AppModel(
-            repositories: AppModel.Repositories(
-                subscriptions: store,
-                billingEvents: store,
-                cancellations: store,
-                priceChanges: store,
-                paymentMethods: store,
-                transfer: store
-            ),
-            notifications: notifications,
-            sync: sync,
-            dates: dates
-        )
+        let model = makeModel(store: store, notifications: notifications, sync: sync, dates: dates)
         if containers.syncSessionMode == .mirrored {
-            startConvergence(events: syncEvents.events, store: store, model: model, sync: sync, dates: dates)
+            startConvergence(source: syncEvents, store: store, model: model, sync: sync, dates: dates)
         }
 
         let coordinator = NotificationCoordinator(
@@ -119,6 +107,27 @@ struct OttoApp: App {
         #endif
     }
 
+    private static func makeModel(
+        store: OttoStore,
+        notifications: NotificationStatusStore,
+        sync: SyncStatusStore,
+        dates: DateProvider
+    ) -> AppModel {
+        AppModel(
+            repositories: AppModel.Repositories(
+                subscriptions: store,
+                billingEvents: store,
+                cancellations: store,
+                priceChanges: store,
+                paymentMethods: store,
+                transfer: store
+            ),
+            notifications: notifications,
+            sync: sync,
+            dates: dates
+        )
+    }
+
     private static func makeSyncStatus(
         store: OttoStore,
         containers: OttoContainers,
@@ -143,14 +152,14 @@ struct OttoApp: App {
 
     /// Runs for the life of the process; the `Task` is what retains it.
     private static func startConvergence(
-        events: AsyncStream<SyncEvent>,
+        source: any SyncEventSource,
         store: OttoStore,
         model: AppModel,
         sync: SyncStatusStore,
         dates: DateProvider
     ) {
         let convergence = SyncCoordinator(
-            events: events,
+            source: source,
             reconciliation: store,
             now: dates.now,
             afterConvergence: { [weak model] in await model?.syncDidConverge() },
