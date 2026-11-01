@@ -157,6 +157,7 @@ struct SyncSettingsSection: View {
         case .accountUnavailable: return String(localized: "Signed out")
         case .networkUnavailable: return String(localized: "Waiting for a connection")
         case .quotaExceeded: return String(localized: "iCloud storage full")
+        case .partial: return String(localized: "Changes not uploading")
         case .other: return String(localized: "Trouble syncing")
         case nil: break
         }
@@ -204,6 +205,13 @@ struct SyncSettingsSection: View {
             return String(localized: """
             Your iCloud storage is full, so changes made here aren't reaching iCloud \
             or your other devices. Nothing is lost on this device.
+            """)
+        }
+        // "Usually", because that is all the framework's event lets Otto know.
+        if model.sync?.activity.lastFailure == .partial {
+            return String(localized: """
+            Some changes made here aren't reaching iCloud or your other devices, \
+            usually because your iCloud storage is full. They stay on this device.
             """)
         }
         return String(localized: """

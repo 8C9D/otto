@@ -1,3 +1,4 @@
+import CloudKit
 import Foundation
 import OttoDomain
 import OttoRepositories
@@ -172,6 +173,14 @@ extension SerializedPersistenceTests {
             #expect(CloudKitEventMonitor.failure(from: error) == .accountUnavailable)
             #expect(CloudKitEventMonitor.failure(from: NSError(domain: NSCocoaErrorDomain, code: 134_401))
                 == .other(code: 134_401))
+        }
+
+        @Test("a partial failure reads as partial, the shape a real full iCloud reports")
+        func partialFailureIsReported() {
+            // Exactly what the framework handed over on a full account: a domain
+            // and a code, and an empty `userInfo`.
+            let error = NSError(domain: CKError.errorDomain, code: CKError.Code.partialFailure.rawValue)
+            #expect(CloudKitEventMonitor.failure(from: error) == .partial)
         }
 
         @Test("an event with no end date has started; only an ended one can succeed or fail")

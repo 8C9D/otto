@@ -19,6 +19,9 @@ public enum SyncFailure: Hashable, Sendable {
     case networkUnavailable
     /// The user's iCloud storage is full, so changes stop leaving this device.
     case quotaExceeded
+    /// Some records in a batch failed, and the event cannot say why. On a full
+    /// iCloud this is what arrives: the quota is on each record, out of reach.
+    case partial
     /// Anything else, by its `CKError` code - the log's diagnosis, not the
     /// user's problem to decode.
     case other(code: Int)

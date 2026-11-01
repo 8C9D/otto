@@ -102,7 +102,14 @@ struct OttoApp: App {
     private static func initializeCloudKitSchemaIfAsked(cloudContainer: String?) throws {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-OttoInitializeCloudKitSchema"), let cloudContainer {
-            try OttoContainerFactory.initializeCloudKitSchema(containerIdentifier: cloudContainer)
+            do {
+                try OttoContainerFactory.initializeCloudKitSchema(containerIdentifier: cloudContainer)
+                OttoLog.sync.notice("schema initialized")
+            } catch {
+                // The launch screen can only say the store failed to open.
+                OttoLog.sync.error("schema initialization failed: \(String(describing: error), privacy: .public)")
+                throw error
+            }
         }
         #endif
     }
