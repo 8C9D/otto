@@ -68,6 +68,14 @@ public final class CloudKitEventMonitor: SyncEventSource, Sendable {
 
     static let noAccountSetupErrorCode = 134_400
 
+    /// What failed, as far as the event can say.
+    ///
+    /// **The event carries a domain and a code, nothing else.** The framework
+    /// rebuilds `error` from those two columns of its event table, so its
+    /// `userInfo` is empty: read off a real full iCloud, whose records each
+    /// failed `quotaExceeded` while the event reported bare `partialFailure`.
+    /// So the per-record reasons a `CKError` normally carries cannot be read
+    /// here, and `.partial` says only what is known.
     static func failure(from error: (any Error)?) -> SyncFailure {
         guard let error else { return .other(code: 0) }
         let nsError = error as NSError
@@ -85,6 +93,8 @@ public final class CloudKitEventMonitor: SyncEventSource, Sendable {
             return .networkUnavailable
         case .quotaExceeded:
             return .quotaExceeded
+        case .partialFailure:
+            return .partial
         default:
             return .other(code: nsError.code)
         }

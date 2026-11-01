@@ -21,6 +21,18 @@ Real app, real `NSCloudKitMirroringDelegate`, simulator with no iCloud account, 
 
 **Not covered by any of that:** a single record ever leaving the device.
 
+## Verified with a real iCloud account
+
+Debug build on a simulator signed into a real account, Development environment (2026-10-31). An ad-hoc signed simulator build reaches CloudKit, so the steps below need no provisioning profile.
+
+| Claim | Evidence |
+|---|---|
+| The mirrored store reaches a real container | `setup succeeded`, `import succeeded`, `export succeeded` |
+| A real import runs convergence, then re-plans reminders | `converged ledger=0 …`, then `pass begin trigger=cloudSync` |
+| A failed upload reaches Settings | `export failed: partial`; the row reads "Changes not uploading" |
+
+**Still not covered: a record has not landed in iCloud.** That account's iCloud storage rejected every record with `Quota Exceeded`, so step 1 failed and every step from it onward waits on free space.
+
 ## Setup
 
 You need two devices **on the same Apple Account**. The second user's phone does not count: each account has its own private database, so her phone can never see yours. The owner's chosen pair is the iPhone plus a simulator signed into the same account.
@@ -34,6 +46,8 @@ log stream --device --predicate 'subsystem == "com.arthurzhang.otto" AND categor
 ```
 
 or filter Xcode's console on `[sync]`. Device logs carry opaque ids and counts only.
+
+The account needs free iCloud storage: Development records count against it, and with none left every record fails `Quota Exceeded`. In that state the schema step ends on "Otto couldn't open its data", and the cause is in the `[sync]` log.
 
 Use throwaway subscriptions. Export a backup from your real data first.
 

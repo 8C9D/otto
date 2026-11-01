@@ -8,7 +8,7 @@ Otto never acts on your behalf: it never cancels anything, never logs in to a
 vendor, and never touches a payment method. It reminds, records, and verifies.
 
 Swift 6 across three local Swift packages and a thin app target, with a
-host-run test suite of 699 cases. CloudKit sync is built, runs in Debug
+host-run test suite of 700 cases. CloudKit sync is built, runs in Debug
 builds, and stays off in Release until it has been verified against a real
 container.
 
@@ -93,7 +93,7 @@ UI says out loud when the 64-slot budget cannot cover every reminder.
 | Data | SwiftData, versioned schema with migrations; CloudKit private-database sync built, off in Release pending two-device verification |
 | Notifications | UserNotifications, planned and reconciled on-device; no server |
 | Project | XcodeGen (`project.yml`), three local Swift packages |
-| Tests | Swift Testing, 699 cases across the three packages plus a simulator-only Dynamic Type suite |
+| Tests | Swift Testing, 700 cases across the three packages plus a simulator-only Dynamic Type suite |
 | Tooling | SwiftLint `--strict`, `scripts/verify.sh` clean-clone gate, GitHub Actions |
 
 ## Build and run

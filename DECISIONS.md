@@ -52,6 +52,12 @@ Also from that run: the no-account error is `NSCocoaErrorDomain 134400`, not a `
 An independent review of the finished branch found three defects, each confirmed against the code before being fixed: one shared failure let a successful import report "up to date" over uploads blocked by a full iCloud, so failures are now tracked per direction; a pass that stood down for a later import was lost if that import failed, so it stays owed, and reconciliation alone waits for a clean import; and an open detail screen held its snapshot through a remote change, so the model refreshes the ones still open.
 Reading that code turned up a fourth: coalescing a burst cancelled the previous pass's task, which could already be running, and a cancelled pass trips the scheduler's checkpoints and reports failure. Coalescing is now by generation, never by cancellation.
 
+### What the first real account found
+
+An ad-hoc signed simulator build reached the real container, and the event pipeline ran end to end: setup, import, export, convergence, a `cloudSync` pass.
+That account's iCloud storage was full, which showed something no mock could: **a framework event carries a domain and a code, and nothing else.** Every record failed `quotaExceeded` while the event said `partialFailure` with an empty `userInfo`, because the framework rebuilds `error` from two columns of its event table. A search through the per-record errors passed its unit test against a hand-built `CKError` and could not fire on the real thing, so it was removed.
+Settings therefore says what is known: "Changes not uploading", usually because iCloud storage is full. Rejected: writing a probe record to test the quota, which adds a record type to the production schema to improve one sentence.
+
 ### Withdrawn
 
 *"`OttoStore`'s long-lived context will read stale data after an import."* Measured false, for fields and for children through a relationship already faulted, from a second context and from a second container. Pinned by `RemoteWriteVisibilityTests`. A stand-in: the real import is step 3 of the runbook.
